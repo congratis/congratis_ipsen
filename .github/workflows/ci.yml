@@ -45,7 +45,12 @@ jobs:
         run: cp .env.example .env
       - name: Validate production Compose configuration
         run: docker compose config --quiet
+      - name: Tag application image for Compose
+        run: docker tag congratis:ci congratis:rethinkdb
       - name: Build Nginx edge image
         run: docker compose build nginx
       - name: Validate Nginx bootstrap configuration
         run: docker compose run --rm -e NGINX_TEST_ONLY=1 nginx
+      - name: Stop Compose stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans
