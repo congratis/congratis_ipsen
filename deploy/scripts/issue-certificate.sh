@@ -2,11 +2,11 @@
 set -Eeuo pipefail
 
 cd "$(dirname "$0")/../.."
-set -a
-# shellcheck disable=SC1091
-. ./.env
-set +a
 
+# DOMAIN and LETSENCRYPT_EMAIL are simple .env values; do not source the
+# whole file because it also contains secrets such as RETHINKDB_PASSWORD.
+DOMAIN="$(sed -n 's/^DOMAIN=//p' .env | head -n1)"
+LETSENCRYPT_EMAIL="$(sed -n 's/^LETSENCRYPT_EMAIL=//p' .env | head -n1)"
 : "${DOMAIN:?Set DOMAIN in .env}"
 : "${LETSENCRYPT_EMAIL:?Set LETSENCRYPT_EMAIL in .env}"
 
