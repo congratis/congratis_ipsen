@@ -259,9 +259,7 @@ impl Store {
             .table(TABLE)
             .get_all(r.args((
                 token_hash,
-                reql::cmd::get_all::Options {
-                    index: Some(TOKEN_INDEX.into()),
-                },
+                token_index_options(),
             )))
             .limit(1)
             .run::<_, Ornament>(&self.session);
