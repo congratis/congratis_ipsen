@@ -141,6 +141,7 @@ async function callTool(name, args) {
 
   let command = REMOTE_COMMANDS[name];
   if (name === "service_logs") {
+    if (Object.keys(args).some(key => !["service", "lines"].includes(key))) throw new Error("Unexpected service_logs argument");
     const { service, lines = 50 } = args;
     if (!SERVICES.has(service)) throw new Error("Unsupported service");
     if (!Number.isInteger(lines) || lines < 1 || lines > 200) throw new Error("lines must be an integer from 1 to 200");
