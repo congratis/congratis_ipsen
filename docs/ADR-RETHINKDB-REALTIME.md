@@ -17,12 +17,13 @@ A separate unofficial `unreql` project exists, but its repository is small and i
 
 RethinkDB guarantees atomic writes per document, not across multiple documents. The old PostgreSQL model split participants and greetings across tables and relied on a SQL transaction. That model must not be ported literally.
 
-Use one document per ornament in a table named `ornaments`. The SHA-256 token hash is the **primary key** (`id`); `ornament_number` is a secondary unique index:
+Use one document per ornament in a table named `ornaments`. The ornament number is the primary key (`id`), so the database itself prevents two documents from owning the same ornament. The SHA-256 token hash is a secondary index:
 
 ```json
 {
-  "id": "<sha256-token-hash>",
+  "id": 1,
   "ornament_number": 1,
+  "token_hash": "<sha256-token-hash>",
   "used": false,
   "display_name": null,
   "message": null,
@@ -31,13 +32,13 @@ Use one document per ornament in a table named `ornaments`. The SHA-256 token ha
 }
 ```
 
-This key choice is intentional: invitation redemption can address exactly one document with `get(token_hash)`, avoiding a lookup through a secondary index followed by a separate write. The redemption query must use a single-document conditional ReQL `update` function (or equivalent `replace`) that checks the current document's `used` state and, only when false, sets `used = true`, writes the greeting fields, and records `used_at`. The conditional check and mutation must be part of the same atomic single-document write. Do not perform a read-then-write sequence, and do not use a filtered multi-document selection as the atomicity boundary.
+RethinkDB secondary indexes are not unique constraints. Do not describe `token_hash` as a unique index. Tokens are generated from 256 random bits; the generator rejects duplicate hashes within its batch and refuses to run against a non-empty invitation table. The primary key guarantees unique ornament assignment.
 
-Treat a write as successful only when the ReQL write result reports exactly one replaced document and zero errors; inspect `errors` and `first_error` because ReQL may report per-document write errors in the result rather than raising an exception. Add a concurrent integration test proving that two simultaneous submissions for the same token result in exactly one success and one conflict.
+Redemption locates the invitation with `get_all(token_hash, index: "token_hash").limit(1)` and applies one conditional ReQL update function to the resulting single-document selection. The function checks the current `used` value and, only when false, writes `used = true`, the greeting fields, and `used_at`. The check and mutation are evaluated as one atomic single-document write. Never split this into a read-then-write sequence. The `limit(1)` is required: do not update an unbounded filtered selection.
 
-The generator creates one document for each ornament and stores only the hash as the primary key. The unique ornament index prevents duplicate ornament assignments.
+Treat a write as successful only when the ReQL write result reports exactly one replaced document and zero errors. An already-used or unknown token must produce a conflict (zero replacements); inspect `errors` and `first_error` because ReQL may report per-document write errors in the result rather than raising an exception. Add a concurrent integration test proving that two simultaneous submissions for the same token result in exactly one success and one conflict.
 
-The invitation generator must not print the raw token in a separate CSV column if the personal URL already contains it. Keep the raw token only in the one-time invitation output; persist only its SHA-256 hash.
+The generator creates one document for each ornament number and stores only the hash. It emits the raw token only inside the personal URL; it must not print a separate raw-token CSV column. RethinkDB does not provide a multi-document transaction, so invitation batch creation must be treated as a one-time provisioning operation and failures must be surfaced rather than silently retried against a partially populated table.
 
 ## Real-time delivery
 
