@@ -1,9 +1,9 @@
 name: Rust CI
 on:
   push:
-    branches: [main, feat/admin-invitations]
+    branches: [main, feat/admin-invitations, feat/rethinkdb-sse, feat/mcp-ssh-gateway]
   pull_request:
-    branches: [main]
+    branches: [main, feat/rethinkdb-sse]
 concurrency:
   group: congratis-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
