@@ -22,6 +22,7 @@ struct Config {
     identity_file: String,
     known_hosts_file: String,
     use_sudo: bool,
+    default_timeout_ms: u64,
     max_command_bytes: usize,
     max_output_bytes: usize,
 }
@@ -42,6 +43,7 @@ impl Config {
         let use_sudo = env::var("SSH_SUDO").unwrap_or_else(|_| "true".into()) == "true";
         Ok(Self {
             host, user, port, identity_file, known_hosts_file, use_sudo,
+            default_timeout_ms: env_num("SSH_COMMAND_TIMEOUT_MS", DEFAULT_TIMEOUT_MS)?,
             max_command_bytes: env_num("SSH_MAX_COMMAND_BYTES", DEFAULT_MAX_COMMAND_BYTES)?,
             max_output_bytes: env_num("SSH_MAX_OUTPUT_BYTES", DEFAULT_MAX_OUTPUT_BYTES)?,
         })
@@ -168,7 +170,7 @@ async fn run_exec(config: &Config, command: &str, timeout_ms: u64) -> Result<Str
     else { Ok(format!("{stdout}\n[stderr]\n{}{stderr_suffix}", stderr.trim())) }
 }
 
-fn tool_definition() -> Value {
+fn tool_definition(default_timeout_ms: u64) -> Value {
     json!({
         "name": "exec",
         "description": "Execute an arbitrary shell command on the configured Congratis VPS over SSH. Commands run as the dedicated SSH user; with SSH_SUDO=true (default), they run through non-interactive sudo as root. This is full administrative access: commands can modify or destroy production data and services. Use only commands explicitly authorized by the operator.",
@@ -176,7 +178,7 @@ fn tool_definition() -> Value {
             "type": "object",
             "properties": {
                 "command": { "type": "string", "description": "Shell command to execute on the remote VPS." },
-                "timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 300000, "default": 30000 }
+                "timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 300000, "default": default_timeout_ms }
             },
             "required": ["command"],
             "additionalProperties": false
@@ -198,7 +200,7 @@ async fn handle(message: Value, config: &Config) -> Option<Value> {
         })),
         "notifications/initialized" | "notifications/cancelled" => return None,
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": [tool_definition()] })),
+        "tools/list" => Ok(json!({ "tools": [tool_definition(config.default_timeout_ms)] })),
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             if name != "exec" {
@@ -206,7 +208,7 @@ async fn handle(message: Value, config: &Config) -> Option<Value> {
             } else {
                 let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
                 let command = args.get("command").and_then(Value::as_str);
-                let timeout_ms = args.get("timeout_ms").and_then(Value::as_u64).unwrap_or(DEFAULT_TIMEOUT_MS);
+                let timeout_ms = args.get("timeout_ms").and_then(Value::as_u64).unwrap_or(config.default_timeout_ms);
                 if args.as_object().map(|o| o.keys().any(|k| k != "command" && k != "timeout_ms")).unwrap_or(true) {
                     Err(anyhow!("unexpected or invalid tool arguments"))
                 } else if let Some(command) = command {
@@ -222,7 +224,7 @@ async fn handle(message: Value, config: &Config) -> Option<Value> {
                             Ok(json!({ "content": [{ "type": "text", "text": output }] }))
                         }
                         Err(error) => {
-                            audit("exec_failed", json!({"target": config.host, "error": error.to_string()}));
+                            audit("exec_failed", json!({"target": config.host, "failure": "command_failed"}));
                             Ok(json!({ "isError": true, "content": [{ "type": "text", "text": error.to_string() }] }))
                         }
                     }
