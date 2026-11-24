@@ -292,17 +292,26 @@ impl Store {
         Ok(())
     }
 
-    /// Delete an invitation or its submitted greeting by ornament number.
-    pub async fn delete_ornament(&self, number: i16) -> Result<bool> {
+    /// Delete an invitation, or a submitted greeting after explicit admin confirmation.
+    /// The conditional replace prevents a stale "unused" view from deleting a greeting
+    /// that was submitted just before the admin action.
+    pub async fn delete_ornament(&self, number: i16, confirm_used: bool) -> Result<bool> {
         if !(1..=20).contains(&number) {
             bail!("ornament number must be between 1 and 20");
         }
+        let delete_if_allowed = reql::func!(|document| {
+            r.branch(
+                document.clone().get_field("used").eq(false).or(r.expr(confirm_used)),
+                r.expr(Value::Null),
+                document
+            )
+        });
         let result = self
             .first::<WriteResult>(
                 r.db(self.database.as_str())
                     .table(TABLE)
                     .get(number)
-                    .delete(),
+                    .replace(delete_if_allowed),
             )
             .await?
             .ok_or_else(|| anyhow!("RethinkDB returned no ornament deletion result"))?;
