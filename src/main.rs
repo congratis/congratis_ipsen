@@ -12,8 +12,8 @@ use futures::stream;
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{convert::Infallible, env, net::SocketAddr, time::Duration};
-use tokio::sync::broadcast;
+use std::{convert::Infallible, env, net::SocketAddr, sync::Arc, time::Duration};
+use tokio::sync::{broadcast, Mutex};
 use christmas_greetings::store::{GreetingEvent, Ornament, RealtimeEvent, Store};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
@@ -23,6 +23,7 @@ struct AppState {
     store: Store,
     events: broadcast::Sender<RealtimeEvent>,
     admin_token: Option<String>,
+    admin_mutations: Arc<Mutex<()>>,
 }
 
 #[derive(Serialize)]
@@ -70,6 +71,11 @@ struct AdminLogin {
 #[derive(Deserialize)]
 struct CreateInvitations {
     count: usize,
+}
+
+#[derive(Deserialize)]
+struct DeleteOrnament {
+    confirm_used: bool,
 }
 
 #[derive(Serialize)]
@@ -253,6 +259,7 @@ async fn admin_create_invitations(
     Json(payload): Json<CreateInvitations>,
 ) -> Result<impl IntoResponse, ApiError> {
     authorize_admin(&headers, &state.admin_token)?;
+    let _mutation_guard = state.admin_mutations.lock().await;
     if !(1..=20).contains(&payload.count) {
         return Err(ApiError(StatusCode::BAD_REQUEST, "Количество должно быть от 1 до 20"));
     }
@@ -294,16 +301,18 @@ async fn admin_delete_invitation(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(number): Path<i16>,
+    Json(payload): Json<DeleteOrnament>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize_admin(&headers, &state.admin_token)?;
-    let deleted = state.store.delete_ornament(number).await.map_err(|error| {
+    let _mutation_guard = state.admin_mutations.lock().await;
+    let deleted = state.store.delete_ornament(number, payload.confirm_used).await.map_err(|error| {
         tracing::error!(?error, ornament_number = number, "admin failed to delete invitation");
         ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось удалить приглашение")
     })?;
     if !deleted {
         return Err(ApiError(
             StatusCode::CONFLICT,
-            "Приглашение или поздравление не найдено",
+            "Приглашение не найдено или уже изменилось; обновите список",
         ));
     }
     Ok(Json(serde_json::json!({ "deleted": true, "ornament_number": number })))
@@ -333,7 +342,12 @@ async fn main() -> anyhow::Result<()> {
         feed_store.supervise_changefeed(feed_events).await;
     });
 
-    let state = AppState { store, events, admin_token };
+    let state = AppState {
+        store,
+        events,
+        admin_token,
+        admin_mutations: Arc::new(Mutex::new(())),
+    };
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/events", get(sse_events))
