@@ -32,7 +32,7 @@
 
 ## Важное ограничение
 
-Ветка `feat/rethinkdb-sse` содержит RethinkDB, атомарное погашение приглашений, Changefeed/SSE и Nginx в Docker. Перед реальным запуском на Ubuntu 24.04 LTS укажите домен, настройте DNS и firewall, получите Let's Encrypt сертификат и завершите production smoke-test. Не публикуйте RethinkDB или порт приложения напрямую.
+Ветка `feat/rethinkdb-sse` содержит RethinkDB, атомарное погашение приглашений, Changefeed/SSE и Nginx в Docker. Для production-развёртывания используйте Ubuntu 26.04 LTS; установите Docker Engine скриптом `deploy/scripts/install-docker-ubuntu.sh`. Перед реальным запуском укажите домен, настройте DNS и firewall, получите Let's Encrypt сертификат и завершите production smoke-test. Не публикуйте RethinkDB или порт приложения напрямую.
 
 Не коммитьте `.env` или файл с приглашениями. Первый выпуск TLS: `bash deploy/scripts/issue-certificate.sh`. Автоматическое продление настраивается systemd unit/timer из `deploy/systemd/`.
 
