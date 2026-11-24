@@ -1,6 +1,6 @@
 # ADR: RethinkDB and real-time updates
 
-Status: Accepted for implementation, pending driver integration tests
+Status: Core data, atomic-claim and Changefeed integration tests pass; Nginx/TLS deployment validation in progress
 Date: 2026-11-24
 
 ## Decision
@@ -48,7 +48,7 @@ The generator creates one document for each ornament number and stores only the 
 - Axum exposes `GET /api/events` as SSE.
 - The browser uses `EventSource` and updates only the affected ornament.
 - On initial load and every SSE reconnect, the browser fetches a fresh `GET /api/greetings` snapshot. Changefeeds are unidirectional and do not guarantee delivery; SSE reconnection alone is not a durable event log.
-- If the feed disconnects, reconnect with bounded exponential backoff and emit health/metrics signals.
+- If the feed disconnects or overflows, reconnect with bounded exponential backoff and emit tracing logs. Operational metrics/alerts remain a deployment follow-up.
 
 ## Container topology
 
@@ -62,19 +62,13 @@ RethinkDB starts with `--initial-password`; use a long random secret from the VP
 ## Required implementation gates
 
 1. Pin the official RethinkDB image to a tested 2.4.x tag and pin `reql = 0.11.2`.
-2. Confirm the Rust driver's conditional update API can express the atomic `get(token_hash).update(function)` query; keep the integration race test as the release gate.
-2. Install `protobuf-compiler` in the Rust builder if required by the driver build.
-3. Add integration tests against a real RethinkDB service in CI:
-   - initialize database and tables idempotently;
-   - insert and read ornament documents;
-   - claim one invitation successfully;
-   - race two submissions for the same invitation and prove exactly one succeeds;
-   - verify a Changefeed sees a committed greeting;
-   - verify feed reconnect and snapshot recovery.
-4. Replace SQLx migrations and SQL queries; remove PostgreSQL/SQLx dependencies and Supabase-specific environment variables.
-5. Update token generator to use RethinkDB and the one-document-per-ornament model.
-6. Add SSE frontend integration and browser reconnect behavior.
-7. Only after all gates pass, switch production Compose to the new RethinkDB topology.
+2. Keep the real-server atomic invitation race test as a release gate: exactly one of two concurrent claims must replace the document.
+3. Keep real-server tests for idempotent initialization, insert/read, claim and Changefeed delivery.
+4. Add automated coverage for feed reconnect/overflow recovery and browser snapshot reconciliation.
+5. Keep SQLx/PostgreSQL dependencies, migrations and Supabase-specific configuration out of the application build.
+6. Keep invitation provisioning one-time and verify duplicate ornament numbers and duplicate token hashes are rejected.
+7. Validate Nginx configuration, TLS bootstrap, SSE buffering and certificate renewal in CI.
+8. Complete the Ubuntu 24.04 VPS smoke test, including HTTPS, health, invitation submission, live browser update, restart recovery and backup/restore before production release.
 
 ## Operational caveats
 
