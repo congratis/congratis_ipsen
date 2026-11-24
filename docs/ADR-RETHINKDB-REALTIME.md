@@ -1,6 +1,6 @@
 # ADR: RethinkDB and real-time updates
 
-Status: CI green on 2026-11-24 (Rust, real RethinkDB integration, Docker, Compose, Nginx HTTP/TLS and reverse-proxy smoke); Ubuntu 24.04 VPS smoke test pending
+Status: CI green on 2026-11-24 (Rust, real RethinkDB integration, Docker, Compose, Nginx HTTP/TLS and reverse-proxy smoke); Ubuntu 26.04 LTS Docker installer and deployment guide added; VPS smoke test pending
 Date: 2026-11-24
 
 ## Decision
