@@ -43,5 +43,7 @@ jobs:
         run: docker build --tag congratis:ci .
       - name: Prepare Compose validation environment
         run: cp .env.example .env
-      - name: Validate Compose configuration
+      - name: Validate legacy production Compose configuration
         run: docker compose config --quiet
+      - name: Validate RethinkDB application Compose configuration
+        run: docker compose -f docker-compose.rethinkdb.yml config --quiet
