@@ -45,7 +45,6 @@ function connectRealtime(){
   // EventSource fires onopen after the initial connection and every reconnect.
   // A fresh snapshot repairs any events missed while the browser was offline.
   source.onopen=()=>load();
-connectRealtime();
 }
 if(token){document.getElementById('greetingForm').dataset.token=token;showModal(formModal)}
 document.getElementById('greetingForm').addEventListener('submit',async e=>{
@@ -61,3 +60,4 @@ document.getElementById('greetingForm').addEventListener('submit',async e=>{
   }catch(err){note.textContent=err.message;button.disabled=false}
 });
 load();
+connectRealtime();
