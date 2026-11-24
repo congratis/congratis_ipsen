@@ -60,4 +60,4 @@ jobs:
         run: bash -n deploy/scripts/*.sh && sh -n deploy/nginx/entrypoint.sh
       - name: Stop Compose stack
         if: always()
-        run: docker compose down --volumes --remove-orphans
+        run: if [ -f .env ]; then docker compose down --volumes --remove-orphans; fi
