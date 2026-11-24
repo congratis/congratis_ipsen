@@ -1,144 +1,152 @@
-# Production deployment (Ubuntu 26.04 LTS)
+# Production deployment — Congratis
 
-This guide deploys Congratis (RethinkDB + Rust/Axum + Nginx) on Ubuntu 26.04 LTS, codename `resolute`. The application and database run in containers; Nginx is the only service publishing host ports (80/443).
+Target host: Ubuntu 26.04 LTS (\`resolute\`).
+Domain: \`congratis.online\`.
+Application stack: Rust/Axum + RethinkDB 2.4.4 + Nginx in Docker Compose.
+
+Only Nginx publishes host ports 80/443. The Rust app and RethinkDB stay on private Docker networks.
 
 ## 1. VPS prerequisites
 
-- Ubuntu 26.04 LTS (`resolute`) on `amd64` or `arm64`.
-- A DNS A record for `congratis.ru` pointing to this VPS. Add an AAAA record only if IPv6 is configured, routed and filtered correctly.
-- Inbound TCP 22 restricted to your administration IP, and TCP 80/443 reachable from the Internet. Prefer the VPS provider's network firewall/security group.
-- At least 2 GB RAM and 20 GB free disk space recommended for the initial build, images, database and backups.
+- Ubuntu 26.04 LTS, amd64 or arm64.
+- DNS A record for \`congratis.online\` pointing to the VPS IPv4 address.
+- Inbound TCP 22 (restricted to your administration IP), TCP 80 and TCP 443.
+- Persistent disk space for Docker images, database data and backups.
+- This VPS currently has about 1.6 GiB RAM and no swap. Add 2 GiB swap before building Rust release images to reduce the risk of an out-of-memory build. Swap is a safety net, not a replacement for RAM.
 
-Docker Engine officially supports Ubuntu 26.04 LTS. Install it from Docker's signed APT repository using the included script:
+Use the VPS provider firewall/security group as the primary inbound firewall. Docker-published ports can bypass ordinary UFW filtering depending on the ruleset. Do not publish ports 8080, 28015, 29015 or the RethinkDB admin UI.
 
-```sh
-cd /opt
-git clone https://github.com/congratis/congratis_ipsen.git congratis
+## 2. Install Docker
+
+The repository includes an installer that explicitly checks for Ubuntu 26.04 (\`resolute\`) and supported CPU architecture:
+
+\`\`\`sh
 cd /opt/congratis
-git switch feat/rethinkdb-sse
-bash deploy/scripts/install-docker-ubuntu.sh
-```
-
-The installer checks the OS release and CPU architecture, configures Docker's official APT signing key and repository, installs Engine + Buildx + Compose v2, and enables the Docker service. It does not add users to the `docker` group or overwrite an existing `/etc/docker/daemon.json`.
-
-Check the installation:
-
-```sh
+sudo bash deploy/scripts/install-docker-ubuntu.sh
 docker version
 docker compose version
 systemctl is-active docker
-```
+\`\`\`
 
-**Firewall note:** Docker-published ports can bypass host UFW rules. Use the provider firewall to expose only SSH (restricted to your IP), HTTP 80 and HTTPS 443. Do not publish 8080, 28015, 29015 or the RethinkDB admin UI. If you use a host firewall, validate the effective Docker forwarding rules separately; do not assume a UFW deny rule protects a published container port.
+The script installs Docker Engine, Buildx and the Compose plugin from Docker's signed Ubuntu APT repository. It preserves an existing \`/etc/docker/daemon.json\`.
 
-## 2. Configure Congratis
+## 3. Prepare the application
 
-Clone only once. If the repository is already present, update it instead of cloning again:
+Run commands from the repository directory:
 
-```sh
-mkdir -p /opt/congratis
+\`\`\`sh
 cd /opt/congratis
 git fetch origin
 git switch feat/rethinkdb-sse
 git pull --ff-only origin feat/rethinkdb-sse
-if [ ! -f .env ]; then cp .env.example .env; fi
-```
-
-Edit `.env` and set:
-
-- `RETHINKDB_PASSWORD`: a long random secret (generate with `openssl rand -hex 32`).
-- `DOMAIN=congratis.ru`.
-- `LETSENCRYPT_EMAIL`: a monitored email address.
-- `PUBLIC_BASE_URL=https://congratis.ru`.
-
-Generate the password without printing it to shell history:
-
-```sh
-openssl rand -hex 32
-```
-
-Put the value in `.env`, restrict its permissions, and never commit it:
-
-```sh
+cp -n .env.example .env
 chmod 600 .env
-```
+\`\`\`
 
-Before starting Certbot, confirm public DNS resolves to this server:
+Edit \`.env\` and set:
 
-```sh
-getent ahostsv4 congratis.ru
-curl -4 https://ifconfig.me
-```
+- \`RETHINKDB_PASSWORD\`: generate a long random secret with \`openssl rand -hex 32\`; put it in the file without committing it.
+- \`DOMAIN=congratis.online\`.
+- \`LETSENCRYPT_EMAIL\`: a real email address that you monitor.
+- \`PUBLIC_BASE_URL=https://congratis.online\`.
 
-The IPv4 address returned by DNS must be `46.243.187.13` for the current VPS. If DNS does not resolve or points elsewhere, stop here and fix the A record at the DNS provider. Do not request a Let's Encrypt certificate yet.
+The application connects to RethinkDB using the Docker service hostname \`rethinkdb\`, not \`127.0.0.1\`. Compose also explicitly sets this hostname for the app and probe containers.
 
-Validate and start the stack:
+Never print or share the contents of \`.env\`. The file is ignored by Git.
 
-```sh
+## 4. Verify DNS before TLS
+
+The authoritative NIC.RU nameservers should return:
+
+- \`congratis.online A 46.243.187.13\`
+- \`www.congratis.online CNAME congratis.online\`
+
+Check authoritative answers:
+
+\`\`\`sh
+dig @ns8-l2.nic.ru congratis.online A +norecurse
+dig @ns4-l2.nic.ru congratis.online A +norecurse
+dig @ns8-l2.nic.ru www.congratis.online A +norecurse
+\`\`\`
+
+Then check public recursive resolvers from a network that can reach them:
+
+\`\`\`sh
+dig @1.1.1.1 congratis.online A
+dig @8.8.8.8 congratis.online A
+\`\`\`
+
+Do not request a Let's Encrypt certificate until public DNS resolves to this VPS and inbound TCP 80 is reachable. If recursive DNS is unavailable from the VPS, test from another network; do not treat a timeout as proof that the DNS record is wrong.
+
+## 5. Validate and start the HTTP stack
+
+\`\`\`sh
+cd /opt/congratis
 docker compose config --quiet
 docker compose up -d --build
 docker compose ps
 docker compose logs --tail=100 rethinkdb app nginx
-```
+\`\`\`
 
-At first, Nginx serves the HTTP bootstrap configuration. Check `http://congratis.ru` and `http://congratis.ru/api/health` after DNS is correct.
+Nginx starts with the HTTP-only bootstrap template when no certificate exists. After DNS is correct, test:
 
-## 3. Issue the first TLS certificate
+\`\`\`sh
+curl -fsS http://congratis.online/api/health
+\`\`\`
 
-Only after the public A record points to this VPS and inbound TCP 80 is reachable:
+The health endpoint checks the application's connection to RethinkDB.
 
-```sh
+## 6. Issue the first TLS certificate
+
+Only after the HTTP health endpoint is reachable from the public Internet:
+
+\`\`\`sh
 bash deploy/scripts/issue-certificate.sh
-curl -fsS https://congratis.ru/api/health
-```
+curl -fsS https://congratis.online/api/health
+\`\`\`
 
-Certbot uses the shared ACME webroot. Nginx restarts and selects its HTTPS configuration when the certificate files exist. HTTP redirects to HTTPS while ACME challenge files remain reachable.
+Certbot uses the shared ACME webroot. Nginx restarts and selects the HTTPS template after the certificate files exist. The HTTP challenge path remains available while other HTTP requests redirect to HTTPS.
 
-## 4. Verify one-time invitations and live updates
+## 7. Provision invitations
 
-Do not generate the real 20 invitation links until the smoke test is complete. First test with a disposable invitation in a non-production test database or a dedicated test deployment. The production invitation generator is intentionally one-shot and refuses to populate an already initialized table.
+The invitation generator is a one-time operation. Do not run it until the site has passed its smoke tests and you are ready to distribute the 20 personal links.
 
-For the production event after smoke testing:
-
-```sh
+\`\`\`sh
 docker compose exec app generate-tokens 20
-```
+\`\`\`
 
-Store the output securely and distribute each personal URL only to its intended recipient. The database stores only SHA-256 token hashes. Never run the generator again against a populated table.
+Store the output securely and distribute each personal URL only to its intended recipient. The database stores token hashes, not raw tokens. The generator refuses to initialize a non-empty table; do not rerun it as part of routine deployment.
 
-## 5. Certificate renewal
+## 8. Certificate renewal
 
-Install the systemd renewal service and timer:
+Install the included systemd service and timer:
 
-```sh
+\`\`\`sh
 sudo cp deploy/systemd/congratis-certbot-renew.service /etc/systemd/system/
 sudo cp deploy/systemd/congratis-certbot-renew.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now congratis-certbot-renew.timer
 systemctl list-timers congratis-certbot-renew.timer
-```
+\`\`\`
 
-The timer checks daily. The script runs Certbot renewal and reloads Nginx. The service expects the deployment at `/opt/congratis`.
+The service expects the repository at \`/opt/congratis\`.
 
-## 6. Operations and recovery
+## 9. Operations
 
-- Health: `GET /api/health` (checks RethinkDB connectivity).
-- Snapshot: `GET /api/greetings`.
-- Live events: `GET /api/events` (SSE).
-- Logs: `docker compose logs -f app nginx rethinkdb`.
-- Nginx config: `docker compose exec nginx nginx -t`.
-- Update: `git pull --ff-only` then `docker compose up -d --build`.
+\`\`\`sh
+# Status and logs
+docker compose ps
+docker compose logs -f app nginx rethinkdb
 
-RethinkDB persists in the named `rethinkdb_data` volume. Back up regularly with RethinkDB's dump/restore tools and test restoring to a separate temporary database/host. Back up the Let's Encrypt volume and `.env` securely as well. A Docker restart is not a backup; a single VPS is not highly available.
+# Health and Nginx configuration
+curl -fsS https://congratis.online/api/health
+docker compose exec nginx nginx -t
 
-Never run `docker compose down -v` on production: it deletes the database and certificate volumes. Do not delete Docker volumes during routine updates.
+# Update after reviewing the Git changes
+git pull --ff-only origin feat/rethinkdb-sse
+docker compose up -d --build
+\`\`\`
 
-## 7. Ubuntu 26.04-specific checks
+RethinkDB data is stored in the named \`rethinkdb_data\` volume. Back up the database regularly using RethinkDB dump/restore tools and test restoring to a separate temporary instance. Securely back up \`.env\` and the Let's Encrypt volume as well.
 
-Ubuntu 26.04 uses the `resolute` codename. The installer deliberately fails closed on another release instead of silently configuring an unverified repository. Docker Engine uses the host's cgroup v2/systemd environment; this stack does not require legacy cgroup v1. After installation, verify:
-
-```sh
-docker info --format '{{.CgroupVersion}} {{.CgroupDriver}}'
-```
-
-Expected output should report cgroup version `2`. If Docker reports a different cgroup version or fails to start, stop deployment and inspect `journalctl -u docker -n 100 --no-pager`.
+**Never run \`docker compose down -v\` on production.** It deletes the persistent database and certificate volumes. A Docker restart is not a backup, and a single VPS is not highly available.
