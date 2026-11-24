@@ -27,8 +27,8 @@ server {
     index index.html;
     client_max_body_size 1m;
 
-    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_certificate ${CERT_ROOT}/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key ${CERT_ROOT}/live/${DOMAIN}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 1d;
