@@ -48,6 +48,13 @@ function connectRealtime(){
   source.addEventListener('greeting',event=>{
     try{applyGreeting(JSON.parse(event.data))}catch(e){console.warn('Invalid greeting event',e)}
   });
+  source.addEventListener('ornament_removed',event=>{
+    try{
+      const {ornament_number}=JSON.parse(event.data);
+      greetings=greetings.filter(item=>item.ornament_number!==ornament_number);
+      render();
+    }catch(e){console.warn('Invalid removal event',e)}
+  });
   source.addEventListener('resync',()=>load());
   // Fetch after the stream is open to close the snapshot/subscribe race.
   // EventSource fires onopen again after every automatic reconnect.
