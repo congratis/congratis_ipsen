@@ -7,14 +7,16 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::{env, net::SocketAddr};
+use store::Store;
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
+mod store;
+
 #[derive(Clone)]
 struct AppState {
-    pool: PgPool,
+    store: Store,
 }
 
 #[derive(Serialize)]
@@ -49,21 +51,23 @@ fn hash_token(token: &str) -> String {
 }
 
 async fn health(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    sqlx::query("SELECT 1")
-        .execute(&state.pool)
+    state
+        .store
+        .ping()
         .await
-        .map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE, "database unavailable"))?;
+        .map_err(|error| {
+            tracing::error!(?error, "RethinkDB health check failed");
+            ApiError(StatusCode::SERVICE_UNAVAILABLE, "database unavailable")
+        })?;
 
     Ok((StatusCode::OK, Json(serde_json::json!({ "status": "ok" }))))
 }
 
-async fn list_greetings(State(state): State<AppState>) -> Result<Json<Vec<Greeting>>, ApiError> {
-    let rows = sqlx::query_as::<_, (i16, String, String)>(
-        "SELECT ornament_number, display_name, message FROM greetings ORDER BY ornament_number",
-    )
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|_| {
+async fn list_greetings(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<Greeting>>, ApiError> {
+    let ornaments = state.store.list_greetings().await.map_err(|error| {
+        tracing::error!(?error, "failed to load greetings");
         ApiError(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Не удалось загрузить поздравления",
@@ -71,14 +75,15 @@ async fn list_greetings(State(state): State<AppState>) -> Result<Json<Vec<Greeti
     })?;
 
     Ok(Json(
-        rows.into_iter()
-            .map(
-                |(ornament_number, display_name, message)| Greeting {
-                    ornament_number,
-                    display_name,
-                    message,
-                },
-            )
+        ornaments
+            .into_iter()
+            .filter_map(|ornament| {
+                Some(Greeting {
+                    ornament_number: ornament.ornament_number,
+                    display_name: ornament.display_name?,
+                    message: ornament.message?,
+                })
+            })
             .collect(),
     ))
 }
@@ -110,54 +115,18 @@ async fn submit(
         ));
     }
 
-    let mut tx = state.pool.begin().await.map_err(|_| {
-        ApiError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Ошибка базы данных",
-        )
-    })?;
-
-    // Atomic claim: concurrent submissions cannot both consume the same invitation.
-    let participant = sqlx::query_as::<_, (uuid::Uuid, i16)>(
-        "UPDATE participants SET used_at = NOW() WHERE token_hash = $1 AND used_at IS NULL RETURNING id, ornament_number",
-    )
-    .bind(hash_token(token))
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Ошибка базы данных"))?;
-
-    let Some((participant_id, ornament_number)) = participant else {
-        tx.rollback().await.ok();
-        return Err(ApiError(
+    let ornament_number = state
+        .store
+        .claim_invitation(&hash_token(token), name, message)
+        .await
+        .map_err(|error| {
+            tracing::error!(?error, "failed to claim invitation");
+            ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Ошибка базы данных")
+        })?
+        .ok_or(ApiError(
             StatusCode::CONFLICT,
             "Эта персональная ссылка уже использована или недействительна",
-        ));
-    };
-
-    if let Err(error) = sqlx::query(
-        "INSERT INTO greetings (participant_id, ornament_number, display_name, message) VALUES ($1, $2, $3, $4)",
-    )
-    .bind(participant_id)
-    .bind(ornament_number)
-    .bind(name)
-    .bind(message)
-    .execute(&mut *tx)
-    .await
-    {
-        tracing::error!(?error, "failed to insert greeting");
-        tx.rollback().await.ok();
-        return Err(ApiError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Не удалось сохранить поздравление",
-        ));
-    }
-
-    tx.commit().await.map_err(|_| {
-        ApiError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Не удалось завершить сохранение",
-        )
-    })?;
+        ))?;
 
     Ok((
         StatusCode::CREATED,
@@ -177,16 +146,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let database_url = env::var("DATABASE_URL")
-        .expect("DATABASE_URL is required; configure Supabase PostgreSQL connection string");
-    let pool = PgPoolOptions::new()
-        .max_connections(10)
-        .connect(&database_url)
-        .await?;
-
-    sqlx::migrate!("./migrations").run(&pool).await?;
-
-    let state = AppState { pool };
+    let store = Store::connect().await?;
+    let state = AppState { store };
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/greetings", get(list_greetings).post(submit))
@@ -198,7 +159,7 @@ async fn main() -> anyhow::Result<()> {
     let port: u16 = env::var("PORT").unwrap_or_else(|_| "8080".into()).parse()?;
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("Christmas Greetings listening on http://{addr}");
+    tracing::info!("Congratis listening on http://{addr}");
     axum::serve(listener, app).await?;
 
     Ok(())
@@ -210,8 +171,9 @@ mod tests {
 
     #[test]
     fn token_hash_is_stable_and_hex_encoded() {
-        let first = hash_token("a".repeat(64).as_str());
-        let second = hash_token("a".repeat(64).as_str());
+        let token = "a".repeat(64);
+        let first = hash_token(&token);
+        let second = hash_token(&token);
 
         assert_eq!(first, second);
         assert_eq!(first.len(), 64);
