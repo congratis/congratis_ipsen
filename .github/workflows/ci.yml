@@ -56,6 +56,17 @@ jobs:
         run: docker compose run --rm -e NGINX_TEST_ONLY=1 nginx
       - name: Validate Nginx TLS configuration
         run: docker compose run --rm -e NGINX_TEST_ONLY=1 -e NGINX_FORCE_HTTPS=1 nginx
+      - name: Smoke-test running Nginx reverse proxy
+        run: |
+          docker compose up -d nginx
+          for attempt in $(seq 1 30); do
+            if docker compose exec -T nginx wget -q -O /dev/null http://127.0.0.1/api/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs nginx app rethinkdb
+          exit 1
       - name: Validate deployment scripts
         run: bash -n deploy/scripts/*.sh && sh -n deploy/nginx/entrypoint.sh
       - name: Stop Compose stack
