@@ -17,11 +17,18 @@ async fn main() -> anyhow::Result<()> {
         .user(user)
         .password(password);
     let session = r.connect(options).await?;
-    let mut databases = r.db_list().run::<_, String>(&session);
-    let mut names = Vec::new();
-    while let Some(result) = databases.next().await {
-        names.push(result?);
-    }
-    println!("Connected to RethinkDB; databases: {}", serde_json::to_string(&names)?);
+
+    // db_list returns one array value, not a stream of individual strings.
+    let mut result = r.db_list().run::<_, Vec<String>>(&session);
+    let databases = result
+        .next()
+        .await
+        .transpose()?
+        .ok_or_else(|| anyhow::anyhow!("RethinkDB returned no db_list result"))?;
+
+    println!(
+        "Connected to RethinkDB; databases: {}",
+        serde_json::to_string(&databases)?
+    );
     Ok(())
 }
