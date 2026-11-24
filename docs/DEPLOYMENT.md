@@ -16,8 +16,8 @@ Do not expose ports 8080, 28015, 29015 or the RethinkDB admin UI to the Internet
 Clone the repository to `/opt/congratis` and check out the intended release branch:
 
 ```sh
-sudo mkdir -p /opt
-sudo chown "$USER":"$USER" /opt
+sudo mkdir -p /opt/congratis
+sudo chown "$USER":"$USER" /opt/congratis
 git clone <repository-url> /opt/congratis
 cd /opt/congratis
 git switch feat/rethinkdb-sse
@@ -55,7 +55,7 @@ bash deploy/scripts/issue-certificate.sh
 The script uses the shared ACME webroot, obtains a Let's Encrypt certificate, then restarts Nginx. On restart, Nginx detects the certificate and loads the HTTPS configuration. Verify:
 
 ```sh
-curl -fsS "https://$DOMAIN/api/health"
+curl -fsS "https://YOUR_DOMAIN/api/health"
 ```
 
 The HTTP listener then redirects normal traffic to HTTPS while continuing to serve ACME challenge files.
