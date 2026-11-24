@@ -64,6 +64,12 @@ pub struct GreetingEvent {
     pub message: String,
 }
 
+#[derive(Debug, Clone)]
+pub enum RealtimeEvent {
+    Greeting(GreetingEvent),
+    Removed { ornament_number: i16 },
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Ornament {
     pub id: i16,
@@ -286,32 +292,23 @@ impl Store {
         Ok(())
     }
 
-    /// Atomically delete an invitation only while it is still unused.
-    pub async fn delete_unused_invitation(&self, number: i16) -> Result<bool> {
+    /// Delete an invitation or its submitted greeting by ornament number.
+    pub async fn delete_ornament(&self, number: i16) -> Result<bool> {
         if !(1..=20).contains(&number) {
             bail!("ornament number must be between 1 and 20");
         }
-
-        let delete_if_unused = reql::func!(|document| {
-            r.branch(
-                document.clone().get_field("used").eq(false),
-                r.expr(Value::Null),
-                document
-            )
-        });
         let result = self
             .first::<WriteResult>(
                 r.db(self.database.as_str())
                     .table(TABLE)
                     .get(number)
-                    .replace(delete_if_unused),
+                    .delete(),
             )
             .await?
-            .ok_or_else(|| anyhow!("RethinkDB returned no invitation deletion result"))?;
-
+            .ok_or_else(|| anyhow!("RethinkDB returned no ornament deletion result"))?;
         if result.errors != 0 {
             bail!(
-                "RethinkDB invitation deletion failed: {}",
+                "RethinkDB ornament deletion failed: {}",
                 result.first_error.unwrap_or_else(|| "unknown write error".into())
             );
         }
@@ -379,7 +376,7 @@ impl Store {
         Ok(Some(claimed.ornament_number))
     }
 
-    pub async fn supervise_changefeed(self, sender: broadcast::Sender<GreetingEvent>) {
+    pub async fn supervise_changefeed(self, sender: broadcast::Sender<RealtimeEvent>) {
         let mut backoff_seconds = 1u64;
         loop {
             let outcome = match self.connection.connect().await {
@@ -399,7 +396,7 @@ impl Store {
 
     pub async fn subscribe_changefeed(
         &self,
-        sender: &broadcast::Sender<GreetingEvent>,
+        sender: &broadcast::Sender<RealtimeEvent>,
         ready: watch::Sender<bool>,
     ) -> Result<()> {
         let session = self.connection.connect().await?;
@@ -409,7 +406,7 @@ impl Store {
     async fn consume_changefeed(
         &self,
         session: &Session,
-        sender: &broadcast::Sender<GreetingEvent>,
+        sender: &broadcast::Sender<RealtimeEvent>,
         ready: Option<&watch::Sender<bool>>,
     ) -> Result<()> {
         let mut options = reql::cmd::changes::Options::default();
@@ -439,6 +436,13 @@ impl Store {
                 continue;
             };
             if new_value.is_null() {
+                if let Some(old_value) = change.get("old_val").filter(|value| !value.is_null()) {
+                    if let Ok(ornament) = serde_json::from_value::<Ornament>(old_value.clone()) {
+                        let _ = sender.send(RealtimeEvent::Removed {
+                            ornament_number: ornament.ornament_number,
+                        });
+                    }
+                }
                 continue;
             }
 
@@ -453,11 +457,11 @@ impl Store {
                 continue;
             };
 
-            let _ = sender.send(GreetingEvent {
+            let _ = sender.send(RealtimeEvent::Greeting(GreetingEvent {
                 ornament_number: ornament.ornament_number,
                 display_name,
                 message,
-            });
+            }));
         }
 
         Ok(())
