@@ -487,3 +487,60 @@ impl Store {
         Ok(())
     }
 }
+
+
+#[cfg(test)]
+mod admin_invitation_tests {
+    use super::Store;
+    use anyhow::{ensure, Result};
+    use std::env;
+
+    #[tokio::test]
+    async fn admin_invitation_create_and_delete_flow() -> Result<()> {
+        if env::var("RETHINKDB_TESTS").as_deref() != Ok("1") {
+            return Ok(());
+        }
+
+        let database = env::var("RETHINKDB_DB").unwrap_or_default();
+        ensure!(
+            database.ends_with("_ci"),
+            "RETHINKDB_TESTS=1 is only allowed with a database ending in _ci"
+        );
+
+        let store = Store::connect().await?;
+
+        // This test owns the isolated *_ci database and starts from an empty table.
+        for ornament in store.list_ornaments().await? {
+            store.delete_ornament(ornament.ornament_number, true).await?;
+        }
+        ensure!(store.list_ornaments().await?.is_empty());
+
+        let unused_hash = "a".repeat(64);
+        let used_hash = "b".repeat(64);
+        store
+            .create_invitations(&[(1, unused_hash.clone()), (2, used_hash.clone())])
+            .await?;
+
+        let created = store.list_ornaments().await?;
+        ensure!(created.len() == 2);
+        ensure!(created.iter().all(|item| !item.used));
+
+        // An unused invitation can be removed without the used-confirmation flag.
+        ensure!(store.delete_ornament(1, false).await?);
+
+        // A submitted greeting cannot be removed by a stale admin view.
+        ensure!(
+            store
+                .claim_invitation(&used_hash, "CI test", "Greeting for integration test")
+                .await?
+                == Some(2)
+        );
+        ensure!(!store.delete_ornament(2, false).await?);
+
+        // Explicit confirmation permits deletion of the submitted greeting.
+        ensure!(store.delete_ornament(2, true).await?);
+        ensure!(store.list_ornaments().await?.is_empty());
+
+        Ok(())
+    }
+}
