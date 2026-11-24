@@ -2,6 +2,10 @@ const ornamentsEl = document.getElementById('ornaments');
 const greetingModal = document.getElementById('greetingModal');
 const formModal = document.getElementById('formModal');
 const token = new URLSearchParams(location.search).get('token');
+const accessToken = new URLSearchParams(location.hash.slice(1)).get('access');
+const treeContent = document.getElementById('treeContent');
+const accessPanel = document.getElementById('accessPanel');
+const accessMessage = document.getElementById('accessMessage');
 let greetings = [];
 let realtimeSequence = 0;
 let realtimeEvents = [];
@@ -79,7 +83,7 @@ function connectRealtime(){
   // EventSource fires onopen again after every automatic reconnect.
   source.onopen=()=>load();
 }
-if(token){document.getElementById('greetingForm').dataset.token=token;showModal(formModal)}
+if(token){document.getElementById('greetingForm').dataset.token=token;}
 document.getElementById('greetingForm').addEventListener('submit',async e=>{
   e.preventDefault();
   const form=e.currentTarget,note=document.getElementById('formNote'),button=form.querySelector('button[type=submit]');
@@ -92,4 +96,30 @@ document.getElementById('greetingForm').addEventListener('submit',async e=>{
     await load();setTimeout(()=>hideModal(formModal),1300);
   }catch(err){note.textContent=err.message;button.disabled=false}
 });
-connectRealtime();
+async function initializeParticipantView(){
+  accessPanel.hidden=false;
+  treeContent.hidden=true;
+  accessMessage.textContent='Проверяем доступ…';
+  try{
+    if(accessToken){
+      const exchange=await fetch('/api/participant/exchange',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        credentials:'same-origin',
+        body:JSON.stringify({token:accessToken})
+      });
+      const exchangeBody=await exchange.json().catch(()=>({}));
+      if(!exchange.ok)throw new Error(exchangeBody.message||'Персональная ссылка недействительна');
+      history.replaceState({},'',location.pathname+location.search);
+    }
+    const session=await fetch('/api/participant/session',{credentials:'same-origin'});
+    if(!session.ok)throw new Error('Эта ёлка доступна только участникам. Откройте персональную ссылку, выданную администратором.');
+    accessPanel.hidden=true;
+    treeContent.hidden=false;
+    if(token)showModal(formModal);
+    connectRealtime();
+  }catch(error){
+    accessMessage.textContent=error.message;
+  }
+}
+initializeParticipantView();
