@@ -494,10 +494,12 @@ mod admin_invitation_tests {
     use super::Store;
     use anyhow::{ensure, Result};
     use std::env;
+    use std::time::Duration;
+    use tokio::sync::{broadcast, watch};
 
     #[tokio::test]
     async fn admin_invitation_create_and_delete_flow() -> Result<()> {
-        if env::var("RETHINKDB_TESTS").as_deref() != Ok("1") {
+        if env::var("RETHINKDB_TESTS").ok().as_deref() != Some("1") {
             return Ok(());
         }
 
@@ -508,6 +510,20 @@ mod admin_invitation_tests {
         );
 
         let store = Store::connect().await?;
+        let (events, mut event_rx) = broadcast::channel(32);
+        let (ready_tx, mut ready_rx) = watch::channel(false);
+        let feed_store = store.clone();
+        let feed_events = events.clone();
+        tokio::spawn(async move {
+            let _ = feed_store.subscribe_changefeed(&feed_events, ready_tx).await;
+        });
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !*ready_rx.borrow() {
+                ready_rx.changed().await?;
+            }
+            Ok::<(), tokio::sync::watch::error::RecvError>(())
+        })
+        .await??;
 
         // This test owns the isolated *_ci database and starts from an empty table.
         for ornament in store.list_ornaments().await? {
@@ -540,6 +556,19 @@ mod admin_invitation_tests {
         // Explicit confirmation permits deletion of the submitted greeting.
         ensure!(store.delete_ornament(2, true).await?);
         ensure!(store.list_ornaments().await?.is_empty());
+
+        // The public SSE feed must tell connected clients to clear the deleted slot.
+        let removal = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match event_rx.recv().await? {
+                    super::RealtimeEvent::Removed { ornament_number: 2 } => break Ok(()),
+                    _ => continue,
+                }
+            }
+        })
+        .await??;
+        let _ = removal;
+        drop(events);
 
         Ok(())
     }
