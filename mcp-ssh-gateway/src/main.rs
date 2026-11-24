@@ -282,4 +282,21 @@ mod tests {
         assert_eq!(shell_quote("echo hello"), "'echo hello'");
         assert_eq!(shell_quote("echo 'hello'"), "'echo '\\''hello'\\'''");
     }
+
+    #[tokio::test]
+    async fn read_capped_drains_stream_beyond_capture_limit() {
+        use super::read_capped;
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, reader) = tokio::io::duplex(8);
+        let writer_task = tokio::spawn(async move {
+            writer.write_all(&vec![b'x'; 128]).await.unwrap();
+        });
+
+        let (captured, truncated) = read_capped(reader, 16).await.unwrap();
+        writer_task.await.unwrap();
+
+        assert_eq!(captured, vec![b'x'; 16]);
+        assert!(truncated);
+    }
 }
