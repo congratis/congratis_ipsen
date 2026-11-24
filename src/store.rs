@@ -203,7 +203,33 @@ impl Store {
                 .await
                 .context("creating participant token_hash index")?;
         }
+        self.wait_for_participant_index().await?;
         Ok(())
+    }
+
+    async fn wait_for_participant_index(&self) -> Result<()> {
+        let mut last_error = None;
+        for _ in 0..40 {
+            let mut options = reql::cmd::get_all::Options::default();
+            options.index = Some("token_hash".into());
+            let query = r
+                .db(self.database.as_str())
+                .table(PARTICIPANTS_TABLE)
+                .get_all(r.args(("__congratis_participant_index_probe__", options)))
+                .limit(1);
+            let mut stream = query.run::<_, ParticipantAccess>(&self.session);
+            match stream.try_next().await {
+                Ok(_) => return Ok(()),
+                Err(error) => {
+                    last_error = Some(error.to_string());
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+            }
+        }
+        bail!(
+            "participant token_hash index did not become queryable: {}",
+            last_error.unwrap_or_else(|| "unknown index readiness error".into())
+        )
     }
 
     pub async fn create_participants(&self, participants: &[ParticipantAccess]) -> Result<()> {
@@ -681,6 +707,18 @@ mod admin_invitation_tests {
         })
         .await?;
         drop(events);
+
+        let participant_hash = "c".repeat(64);
+        store.create_participants(&[super::ParticipantAccess {
+            id: "ci-participant-0000000000000001".into(),
+            token_hash: participant_hash.clone(),
+            label: "CI participant".into(),
+            created_at: 1,
+            revoked: false,
+        }]).await?;
+        ensure!(store.participant_is_active(&participant_hash).await?);
+        ensure!(store.revoke_participant("ci-participant-0000000000000001").await?);
+        ensure!(!store.participant_is_active(&participant_hash).await?);
 
         Ok(())
     }
