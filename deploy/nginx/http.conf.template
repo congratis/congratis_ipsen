@@ -5,7 +5,7 @@ upstream congratis_app {
 
 server {
     listen 80;
-    server_name ${DOMAIN};
+    server_name ${DOMAIN} www.${DOMAIN};
 
     root /usr/share/nginx/html;
     index index.html;
