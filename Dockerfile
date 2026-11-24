@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 COPY --from=builder /app/target/release/christmas-greetings /usr/local/bin/christmas-greetings
 COPY --from=builder /app/target/release/generate-tokens /usr/local/bin/generate-tokens
+COPY --from=builder /app/target/release/rethinkdb-probe /usr/local/bin/rethinkdb-probe
 COPY frontend ./frontend
 ENV HOST=0.0.0.0 PORT=8080 RUST_LOG=info
 EXPOSE 8080
