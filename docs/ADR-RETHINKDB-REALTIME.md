@@ -1,6 +1,6 @@
 # ADR: RethinkDB and real-time updates
 
-Status: Core data, atomic-claim and Changefeed integration tests pass; Nginx/TLS deployment validation in progress
+Status: CI green on 2026-11-24 (Rust, real RethinkDB integration, Docker, Compose, Nginx HTTP/TLS and reverse-proxy smoke); Ubuntu 24.04 VPS smoke test pending
 Date: 2026-11-24
 
 ## Decision
