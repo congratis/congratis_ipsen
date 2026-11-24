@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{convert::Infallible, env, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{broadcast, Mutex};
-use christmas_greetings::store::{GreetingEvent, Ornament, RealtimeEvent, Store};
+use christmas_greetings::store::{GreetingEvent, Ornament, ParticipantAccess, RealtimeEvent, Store};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
@@ -126,9 +126,34 @@ fn authorize_admin(headers: &HeaderMap, configured: &Option<String>) -> Result<(
     }
 }
 
+const PARTICIPANT_COOKIE: &str = "congratis_participant";
+
+fn participant_token(headers: &HeaderMap) -> Option<String> {
+    headers.get(axum::http::header::COOKIE)?.to_str().ok()?.split(';').find_map(|part| {
+        let (name, value) = part.trim().split_once('=')?;
+        (name == PARTICIPANT_COOKIE).then(|| value.to_string())
+    })
+}
+
+async fn authorize_participant(headers: &HeaderMap, store: &Store) -> Result<(), ApiError> {
+    let token = participant_token(headers).unwrap_or_default();
+    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ApiError(StatusCode::UNAUTHORIZED, "Нужна персональная ссылка участника"));
+    }
+    let active = store.participant_is_active(&hash_token(&token)).await.map_err(|error| {
+        tracing::error!(?error, "participant access lookup failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось проверить доступ")
+    })?;
+    if active { Ok(()) } else {
+        Err(ApiError(StatusCode::UNAUTHORIZED, "Ссылка участника недействительна или отозвана"))
+    }
+}
+
 async fn sse_events(
     State(state): State<AppState>,
-) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
+    headers: HeaderMap,
+) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    authorize_participant(&headers, &state.store).await?;
     let receiver = state.events.subscribe();
     let stream = stream::unfold(receiver, |mut receiver| async move {
         let event = match receiver.recv().await {
@@ -148,11 +173,11 @@ async fn sse_events(
         Some((Ok::<Event, Infallible>(event), receiver))
     });
 
-    Sse::new(stream).keep_alive(
+    Ok(Sse::new(stream).keep_alive(
         KeepAlive::new()
             .interval(Duration::from_secs(15))
             .text("keep-alive"),
-    )
+    ))
 }
 
 async fn health(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
@@ -165,7 +190,9 @@ async fn health(State(state): State<AppState>) -> Result<impl IntoResponse, ApiE
 
 async fn list_greetings(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<Vec<Greeting>>, ApiError> {
+    authorize_participant(&headers, &state.store).await?;
     let ornaments = state.store.list_greetings().await.map_err(|error| {
         tracing::error!(?error, "failed to load greetings");
         ApiError(
@@ -190,8 +217,10 @@ async fn list_greetings(
 
 async fn submit(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<SubmitGreeting>,
 ) -> Result<impl IntoResponse, ApiError> {
+    authorize_participant(&headers, &state.store).await?;
     let token = payload.token.trim();
     let name = payload.display_name.trim();
     let message = payload.message.trim();
@@ -239,6 +268,100 @@ async fn admin_login(
         return Err(ApiError(StatusCode::UNAUTHORIZED, "Неверный пароль администратора"));
     }
     Ok(Json(serde_json::json!({ "authenticated": true })))
+}
+
+async fn participant_exchange(
+    State(state): State<AppState>,
+    Json(payload): Json<ParticipantExchange>,
+) -> Result<impl IntoResponse, ApiError> {
+    let token = payload.token.trim();
+    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректная ссылка доступа"));
+    }
+    if !state.store.participant_is_active(&hash_token(token)).await.map_err(|error| {
+        tracing::error!(?error, "participant exchange lookup failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось проверить ссылку")
+    })? {
+        return Err(ApiError(StatusCode::UNAUTHORIZED, "Ссылка участника недействительна или отозвана"));
+    }
+    let cookie = format!("{PARTICIPANT_COOKIE}={token}; Path=/; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax");
+    Ok(([(axum::http::header::SET_COOKIE, cookie)], Json(serde_json::json!({ "authenticated": true }))))
+}
+
+async fn participant_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize_participant(&headers, &state.store).await?;
+    Ok(Json(serde_json::json!({ "authenticated": true })))
+}
+
+async fn participant_logout() -> impl IntoResponse {
+    let cookie = format!("{PARTICIPANT_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax");
+    ([(axum::http::header::SET_COOKIE, cookie)], Json(serde_json::json!({ "authenticated": false })))
+}
+
+async fn admin_list_participants(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ParticipantSummary>>, ApiError> {
+    authorize_admin(&headers, &state.admin_token)?;
+    let participants = state.store.list_participants().await.map_err(|error| {
+        tracing::error!(?error, "admin failed to list participants");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить участников")
+    })?;
+    Ok(Json(participants.into_iter().map(ParticipantSummary::from).collect()))
+}
+
+async fn admin_create_participant(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<CreateParticipant>,
+) -> Result<impl IntoResponse, ApiError> {
+    authorize_admin(&headers, &state.admin_token)?;
+    let label = payload.label.trim();
+    if label.is_empty() || label.chars().count() > 80 {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Укажите имя участника (до 80 символов)"));
+    }
+    let mut access_bytes = [0u8; 32];
+    let mut id_bytes = [0u8; 16];
+    OsRng.fill_bytes(&mut access_bytes);
+    OsRng.fill_bytes(&mut id_bytes);
+    let token = hex::encode(access_bytes);
+    let id = hex::encode(id_bytes);
+    let participant = ParticipantAccess {
+        id: id.clone(),
+        token_hash: hash_token(&token),
+        label: label.to_string(),
+        created_at: chrono::Utc::now().timestamp(),
+        revoked: false,
+    };
+    state.store.create_participants(&[participant]).await.map_err(|error| {
+        tracing::error!(?error, "admin failed to create participant access");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось создать доступ")
+    })?;
+    let base = env::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "https://congratis.online".into());
+    let url = format!("{}/#access={token}", base.trim_end_matches('/'));
+    Ok((StatusCode::CREATED, Json(serde_json::json!({ "id": id, "label": label, "url": url }))))
+}
+
+async fn admin_revoke_participant(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize_admin(&headers, &state.admin_token)?;
+    if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректный идентификатор участника"));
+    }
+    let revoked = state.store.revoke_participant(&id).await.map_err(|error| {
+        tracing::error!(?error, "admin failed to revoke participant");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось отозвать доступ")
+    })?;
+    if !revoked {
+        return Err(ApiError(StatusCode::NOT_FOUND, "Участник не найден"));
+    }
+    Ok(Json(serde_json::json!({ "revoked": true })))
 }
 
 async fn admin_list_ornaments(
@@ -355,7 +478,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/health", get(health))
         .route("/api/events", get(sse_events))
         .route("/api/greetings", get(list_greetings).post(submit))
+        .route("/api/participant/exchange", post(participant_exchange))
+        .route("/api/participant/session", get(participant_session))
+        .route("/api/participant/logout", post(participant_logout))
         .route("/api/admin/login", post(admin_login))
+        .route("/api/admin/participants", get(admin_list_participants).post(admin_create_participant))
+        .route("/api/admin/participants/{id}", delete(admin_revoke_participant))
         .route("/api/admin/ornaments", get(admin_list_ornaments).post(admin_create_invitations))
         .route("/api/admin/ornaments/{number}", delete(admin_delete_invitation))
         .route("/admin", get(|| async { Redirect::permanent("/admin/") }))
