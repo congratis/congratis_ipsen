@@ -6,4 +6,4 @@ After=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/congratis
-ExecStart=/opt/congratis/deploy/scripts/renew-certificates.sh
+ExecStart=/usr/bin/env bash /opt/congratis/deploy/scripts/renew-certificates.sh
