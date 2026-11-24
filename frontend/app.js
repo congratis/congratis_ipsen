@@ -38,13 +38,14 @@ function applyGreeting(greeting){
 function connectRealtime(){
   if(!('EventSource' in window))return;
   const source=new EventSource('/api/events');
+  let hasConnected=false;
   source.addEventListener('greeting',event=>{
     try{applyGreeting(JSON.parse(event.data))}catch(e){console.warn('Invalid greeting event',e)}
   });
   source.addEventListener('resync',()=>load());
   // EventSource fires onopen after the initial connection and every reconnect.
   // A fresh snapshot repairs any events missed while the browser was offline.
-  source.onopen=()=>load();
+  source.onopen=()=>{if(hasConnected)load();hasConnected=true;};
 }
 if(token){document.getElementById('greetingForm').dataset.token=token;showModal(formModal)}
 document.getElementById('greetingForm').addEventListener('submit',async e=>{
