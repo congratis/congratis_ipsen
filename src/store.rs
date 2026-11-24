@@ -510,6 +510,12 @@ mod admin_invitation_tests {
         );
 
         let store = Store::connect().await?;
+        // This test owns the isolated *_ci database and starts from an empty table.
+        for ornament in store.list_ornaments().await? {
+            store.delete_ornament(ornament.ornament_number, true).await?;
+        }
+        ensure!(store.list_ornaments().await?.is_empty());
+
         let (events, mut event_rx) = broadcast::channel(32);
         let (ready_tx, mut ready_rx) = watch::channel(false);
         let feed_store = store.clone();
@@ -524,12 +530,6 @@ mod admin_invitation_tests {
             Ok::<(), tokio::sync::watch::error::RecvError>(())
         })
         .await??;
-
-        // This test owns the isolated *_ci database and starts from an empty table.
-        for ornament in store.list_ornaments().await? {
-            store.delete_ornament(ornament.ornament_number, true).await?;
-        }
-        ensure!(store.list_ornaments().await?.is_empty());
 
         let unused_hash = "a".repeat(64);
         let used_hash = "b".repeat(64);
