@@ -5,7 +5,7 @@ use reql::{cmd::connect::Options, r, Session};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{env, time::Duration};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 const TABLE: &str = "ornaments";
 const TOKEN_INDEX: &str = "token_hash";
@@ -333,7 +333,7 @@ impl Store {
         let mut backoff_seconds = 1u64;
         loop {
             let outcome = match self.connection.connect().await {
-                Ok(session) => self.consume_changefeed(&session, &sender).await,
+                Ok(session) => self.consume_changefeed(&session, &sender, None).await,
                 Err(error) => Err(error),
             };
 
@@ -347,10 +347,20 @@ impl Store {
         }
     }
 
+    pub async fn subscribe_changefeed(
+        &self,
+        sender: &broadcast::Sender<GreetingEvent>,
+        ready: watch::Sender<bool>,
+    ) -> Result<()> {
+        let session = self.connection.connect().await?;
+        self.consume_changefeed(&session, sender, Some(&ready)).await
+    }
+
     async fn consume_changefeed(
         &self,
         session: &Session,
         sender: &broadcast::Sender<GreetingEvent>,
+        ready: Option<&watch::Sender<bool>>,
     ) -> Result<()> {
         let mut options = reql::cmd::changes::Options::default();
         options.include_initial = Some(true);
@@ -366,6 +376,13 @@ impl Store {
             .run::<_, Value>(session);
 
         while let Some(change) = stream.try_next().await? {
+            if change.get("state").and_then(Value::as_str) == Some("ready") {
+                if let Some(ready) = ready {
+                    let _ = ready.send(true);
+                }
+                continue;
+            }
+
             if let Some(message) = change.get("error").and_then(Value::as_str) {
                 bail!("RethinkDB Changefeed overflow/error: {message}");
             }
