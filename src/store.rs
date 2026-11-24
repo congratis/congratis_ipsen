@@ -9,6 +9,12 @@ use std::{env, time::Duration};
 const TABLE: &str = "ornaments";
 const TOKEN_INDEX: &str = "token_hash";
 
+fn token_index_options() -> reql::cmd::get_all::Options {
+    let mut options = reql::cmd::get_all::Options::default();
+    options.index = Some(TOKEN_INDEX.into());
+    options
+}
+
 #[derive(Clone)]
 pub struct Store {
     session: Session,
@@ -208,7 +214,7 @@ impl Store {
         // The conditional update function and its state change execute in one
         // atomic single-document write; no read-then-write race is possible.
         let update = reql::func!(|document| {
-            r.branch(
+            r.branch(r.args((
                 document.get_field("used").eq(false),
                 document.merge(r.expr(json!({
                     "used": true,
@@ -217,7 +223,7 @@ impl Store {
                     "used_at": Utc::now().timestamp()
                 }))),
                 document
-            )
+            )))
         });
 
         let query = r
@@ -225,9 +231,7 @@ impl Store {
             .table(TABLE)
             .get_all(r.args((
                 token_hash,
-                reql::cmd::get_all::Options {
-                    index: Some(TOKEN_INDEX.into()),
-                },
+                token_index_options(),
             )))
             .limit(1)
             .update(update);
@@ -269,7 +273,13 @@ impl Store {
     }
 
     pub async fn ping(&self) -> Result<()> {
-        let _: Option<Vec<String>> = self.first(r.db_list()).await?;
+        let databases = self
+            .first::<Vec<String>>(r.db_list())
+            .await?
+            .ok_or_else(|| anyhow!("RethinkDB returned no database list"))?;
+        if !databases.iter().any(|name| name == &self.database) {
+            bail!("configured RethinkDB database is missing");
+        }
         Ok(())
     }
 }
