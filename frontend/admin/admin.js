@@ -7,6 +7,7 @@ const ornamentList = document.getElementById('ornamentList');
 const summary = document.getElementById('summary');
 const createdLinks = document.getElementById('createdLinks');
 const createdLinkList = document.getElementById('createdLinkList');
+const participantList = document.getElementById('participantList');
 let adminToken = sessionStorage.getItem(TOKEN_KEY) || '';
 
 function showLogin(message = '') {
@@ -68,9 +69,48 @@ function renderOrnaments(items) {
     ornamentList.append(card);
   }
 }
+async function refreshParticipants() {
+  const items = await api('/api/admin/participants');
+  participantList.replaceChildren();
+  if (!items.length) {
+    participantList.textContent = 'Пока нет выданных ссылок.';
+    return;
+  }
+  items.forEach(item => {
+    const card = document.createElement('article');
+    card.className = `ornament-row ${item.revoked ? 'is-empty' : 'is-free'}`;
+    const name = document.createElement('strong');
+    name.className = 'ornament-number';
+    name.textContent = item.label;
+    const details = document.createElement('div');
+    details.className = 'ornament-details';
+    const state = document.createElement('strong');
+    state.textContent = item.revoked ? 'Доступ отозван' : 'Доступ активен';
+    const created = document.createElement('span');
+    created.textContent = `Создано: ${formatDate(item.created_at)}`;
+    details.append(state, created);
+    card.append(name, details);
+    if (!item.revoked) {
+      const revoke = document.createElement('button');
+      revoke.type = 'button';
+      revoke.className = 'danger-button';
+      revoke.textContent = 'Отозвать';
+      revoke.addEventListener('click', async () => {
+        if (!confirm(`Отозвать доступ участника «${item.label}»? Все его текущие сессии перестанут работать.`)) return;
+        try {
+          await api(`/api/admin/participants/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+          await refreshParticipants();
+        } catch (error) { alert(error.message); }
+      });
+      card.append(revoke);
+    }
+    participantList.append(card);
+  });
+}
 async function refresh() {
   const items = await api('/api/admin/ornaments');
   renderOrnaments(items);
+  await refreshParticipants();
 }
 async function deleteInvitation(number, used) {
   const warning = used
@@ -147,6 +187,34 @@ document.getElementById('createForm').addEventListener('submit', async event => 
     button.disabled = false;
   }
 });
+document.getElementById('participantForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const label = document.getElementById('participantLabel').value.trim();
+  const status = document.getElementById('participantStatus');
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  const created = document.getElementById('participantCreated');
+  button.disabled = true;
+  created.hidden = true;
+  status.textContent = 'Создаём персональную ссылку…';
+  try {
+    const result = await api('/api/admin/participants', {
+      method: 'POST',
+      body: JSON.stringify({ label })
+    });
+    const link = document.getElementById('participantCreatedLink');
+    link.href = result.url;
+    link.textContent = result.url;
+    created.hidden = false;
+    document.getElementById('participantLabel').value = '';
+    status.textContent = 'Ссылка создана. Скопируйте её и передайте участнику.';
+    await refreshParticipants();
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+document.getElementById('refreshParticipants').addEventListener('click', () => refreshParticipants().catch(error => alert(error.message)));
 document.getElementById('refreshButton').addEventListener('click', () => refresh().catch(error => alert(error.message)));
 document.getElementById('logoutButton').addEventListener('click', () => showLogin());
 if (adminToken) {
