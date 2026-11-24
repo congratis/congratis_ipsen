@@ -8,11 +8,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{env, net::SocketAddr};
-use store::Store;
+use christmas_greetings::store::Store;
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
-mod store;
 
 #[derive(Clone)]
 struct AppState {
