@@ -68,7 +68,7 @@ RethinkDB starts with `--initial-password`; use a long random secret from the VP
 5. Keep SQLx/PostgreSQL dependencies, migrations and Supabase-specific configuration out of the application build.
 6. Keep invitation provisioning one-time and verify duplicate ornament numbers and duplicate token hashes are rejected.
 7. Validate Nginx configuration, TLS bootstrap, SSE buffering and certificate renewal in CI.
-8. Complete the Ubuntu 24.04 VPS smoke test, including HTTPS, health, invitation submission, live browser update, restart recovery and backup/restore before production release.
+8. Complete the Ubuntu 26.04 VPS smoke test, including HTTPS, health, invitation submission, live browser update, restart recovery and backup/restore before production release.
 
 ## Operational caveats
 
