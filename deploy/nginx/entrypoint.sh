@@ -19,6 +19,7 @@ else
     CERT_ROOT="/etc/letsencrypt"
 fi
 
+export CERT_ROOT
 envsubst '${DOMAIN} ${CERT_ROOT}' < "$template" > /etc/nginx/conf.d/default.conf
 nginx -t
 
