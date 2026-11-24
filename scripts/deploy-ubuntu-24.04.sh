@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/congratis/congratis_ipsen.git}"
+REPO_URL="${REPO_URL:-git@github.com:congratis/congratis_ipsen.git}"
 APP_DIR="${APP_DIR:-/opt/congratis}"
 WEB_ROOT="/var/www/congratis"
 
