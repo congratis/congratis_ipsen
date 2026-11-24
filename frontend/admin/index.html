@@ -31,6 +31,24 @@
         <div><h2>Приглашения</h2><p id="summary" class="muted">Загрузка…</p></div>
         <button id="logoutButton" class="secondary" type="button">Выйти</button>
       </div>
+      <section class="admin-panel">
+        <h3>Доступ участников к ёлке</h3>
+        <form id="participantForm" class="create-form">
+          <label for="participantLabel">Имя участника</label>
+          <div class="create-controls">
+            <input id="participantLabel" type="text" maxlength="80" required placeholder="Например, Анна">
+            <button class="primary" type="submit">Создать ссылку</button>
+          </div>
+        </form>
+        <p id="participantStatus" class="status-message" role="status"></p>
+        <div id="participantCreated" class="created-links" hidden>
+          <h4>Персональная ссылка — передайте участнику</h4>
+          <p class="muted">Ссылка показывается только один раз. Участнику нужна именно эта ссылка для просмотра ёлки.</p>
+          <a id="participantCreatedLink" target="_blank" rel="noopener noreferrer"></a>
+        </div>
+        <div class="list-heading"><h3>Участники</h3><button id="refreshParticipants" class="secondary" type="button">Обновить</button></div>
+        <div id="participantList" class="ornament-list"></div>
+      </section>
       <section class="admin-panel create-panel">
         <h3>Создать приглашения</h3>
         <form id="createForm" class="create-form">
