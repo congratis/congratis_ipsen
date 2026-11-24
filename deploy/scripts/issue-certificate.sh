@@ -13,7 +13,7 @@ LETSENCRYPT_EMAIL="$(sed -n 's/^LETSENCRYPT_EMAIL=//p' .env | head -n1)"
 docker compose run --rm certbot certonly \
   --webroot --webroot-path /var/www/certbot \
   --email "$LETSENCRYPT_EMAIL" --agree-tos --no-eff-email \
-  -d "$DOMAIN"
+  -d "$DOMAIN" -d "www.$DOMAIN"
 
 # Nginx switches from bootstrap HTTP to HTTPS after the certificate exists.
 docker compose restart nginx
