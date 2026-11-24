@@ -76,7 +76,7 @@ fn chrono_free_timestamp() -> String {
 }
 
 fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace(''', "'\\''"))
+    format!("'{}'", value.replace(char::from(39), "'\\''"))
 }
 
 async fn run_exec(config: &Config, command: &str, timeout_ms: u64) -> Result<String> {
@@ -196,7 +196,6 @@ async fn handle(message: Value, config: &Config) -> Option<Value> {
                         "ssh_user": config.user,
                         "sudo": config.use_sudo,
                         "command_bytes": command.len(),
-                        "command": command
                     }));
                     match run_exec(config, command, timeout_ms).await {
                         Ok(output) => {
@@ -254,4 +253,15 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_quote;
+
+    #[test]
+    fn shell_quote_preserves_spaces_and_quotes() {
+        assert_eq!(shell_quote("echo hello"), "'echo hello'");
+        assert_eq!(shell_quote("echo 'hello'"), "'echo '\\''hello'\\'''");
+    }
 }
