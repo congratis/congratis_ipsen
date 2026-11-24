@@ -21,6 +21,38 @@ services:
       timeout: 5s
       retries: 10
 
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: congratis:rethinkdb
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      RUST_LOG: ${RUST_LOG:-info}
+      RETHINKDB_HOST: rethinkdb
+      RETHINKDB_PORT: "28015"
+      RETHINKDB_USER: admin
+      RETHINKDB_PASSWORD: ${RETHINKDB_PASSWORD:?Set RETHINKDB_PASSWORD in .env}
+    depends_on:
+      rethinkdb:
+        condition: service_started
+    ports:
+      - "127.0.0.1:8080:8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    networks:
+      - data
+
   rethinkdb-probe:
     build:
       context: .
