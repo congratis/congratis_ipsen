@@ -79,10 +79,12 @@ services:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
+      - SETUID
+      - SETGID
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
-      - /var/cache/nginx:rw,noexec,nosuid,size=32m
+      - /var/cache/nginx:rw,noexec,nosuid,size=32m,uid=0,gid=101,mode=0770
       - /var/run:rw,noexec,nosuid,size=4m
       - /etc/nginx/conf.d:rw,noexec,nosuid,size=1m
     healthcheck:
