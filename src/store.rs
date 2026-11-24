@@ -10,6 +10,7 @@ use tokio::sync::{broadcast, watch};
 const TABLE: &str = "ornaments";
 const TOKEN_INDEX: &str = "token_hash";
 const INDEX_PROBE_TOKEN: &str = "__congratis_index_probe__";
+const PARTICIPANTS_TABLE: &str = "participant_access";
 
 fn token_index_options() -> reql::cmd::get_all::Options {
     let mut options = reql::cmd::get_all::Options::default();
@@ -80,6 +81,15 @@ pub struct Ornament {
     pub message: Option<String>,
     pub created_at: i64,
     pub used_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ParticipantAccess {
+    pub id: String,
+    pub token_hash: String,
+    pub label: String,
+    pub created_at: i64,
+    pub revoked: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -164,7 +174,108 @@ impl Store {
         }
 
         self.wait_for_token_index().await?;
+
+        let tables = self
+            .first::<Vec<String>>(r.db(self.database.as_str()).table_list())
+            .await?
+            .ok_or_else(|| anyhow!("RethinkDB returned no table list"))?;
+        if !tables.iter().any(|name| name == PARTICIPANTS_TABLE) {
+            let _: Option<Value> = self
+                .first(r.db(self.database.as_str()).table_create(PARTICIPANTS_TABLE))
+                .await
+                .context("creating participant access table")?;
+        }
+        let participant_indexes = self
+            .first::<Vec<String>>(
+                r.db(self.database.as_str())
+                    .table(PARTICIPANTS_TABLE)
+                    .index_list(),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("RethinkDB returned no participant index list"))?;
+        if !participant_indexes.iter().any(|name| name == "token_hash") {
+            let _: Option<Value> = self
+                .first(
+                    r.db(self.database.as_str())
+                        .table(PARTICIPANTS_TABLE)
+                        .index_create("token_hash"),
+                )
+                .await
+                .context("creating participant token_hash index")?;
+        }
         Ok(())
+    }
+
+    pub async fn create_participants(&self, participants: &[ParticipantAccess]) -> Result<()> {
+        if participants.is_empty() {
+            bail!("at least one participant is required");
+        }
+        let documents: Vec<Value> = participants
+            .iter()
+            .map(|participant| serde_json::to_value(participant).expect("participant serialization"))
+            .collect();
+        let result = self
+            .first::<WriteResult>(
+                r.db(self.database.as_str())
+                    .table(PARTICIPANTS_TABLE)
+                    .insert(documents),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("RethinkDB returned no participant insert result"))?;
+        if result.errors != 0 || result.inserted != participants.len() as u64 {
+            bail!(
+                "participant insert incomplete: inserted={}, errors={}, first_error={:?}",
+                result.inserted,
+                result.errors,
+                result.first_error
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn list_participants(&self) -> Result<Vec<ParticipantAccess>> {
+        let mut stream = r
+            .db(self.database.as_str())
+            .table(PARTICIPANTS_TABLE)
+            .run::<_, ParticipantAccess>(&self.session);
+        let mut participants = Vec::new();
+        while let Some(participant) = stream.try_next().await? {
+            participants.push(participant);
+        }
+        participants.sort_by_key(|participant| participant.created_at);
+        Ok(participants)
+    }
+
+    pub async fn participant_is_active(&self, token_hash: &str) -> Result<bool> {
+        let mut options = reql::cmd::get_all::Options::default();
+        options.index = Some("token_hash".into());
+        let mut stream = r
+            .db(self.database.as_str())
+            .table(PARTICIPANTS_TABLE)
+            .get_all(r.args((token_hash, options)))
+            .filter(r.hash_map("revoked", false))
+            .limit(1)
+            .run::<_, ParticipantAccess>(&self.session);
+        Ok(stream.try_next().await?.is_some())
+    }
+
+    pub async fn revoke_participant(&self, id: &str) -> Result<bool> {
+        let result = self
+            .first::<WriteResult>(
+                r.db(self.database.as_str())
+                    .table(PARTICIPANTS_TABLE)
+                    .get(id)
+                    .update(json!({ "revoked": true })),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("RethinkDB returned no participant revoke result"))?;
+        if result.errors != 0 {
+            bail!(
+                "participant revocation failed: {}",
+                result.first_error.unwrap_or_else(|| "unknown write error".into())
+            );
+        }
+        Ok(result.replaced == 1)
     }
 
     async fn wait_for_token_index(&self) -> Result<()> {
