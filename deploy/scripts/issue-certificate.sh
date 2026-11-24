@@ -10,10 +10,10 @@ LETSENCRYPT_EMAIL="$(sed -n 's/^LETSENCRYPT_EMAIL=//p' .env | head -n1)"
 : "${DOMAIN:?Set DOMAIN in .env}"
 : "${LETSENCRYPT_EMAIL:?Set LETSENCRYPT_EMAIL in .env}"
 
-docker compose -f docker-compose.rethinkdb.yml run --rm certbot certonly \
+docker compose run --rm certbot certonly \
   --webroot --webroot-path /var/www/certbot \
   --email "$LETSENCRYPT_EMAIL" --agree-tos --no-eff-email \
   -d "$DOMAIN"
 
 # Nginx switches from bootstrap HTTP to HTTPS after the certificate exists.
-docker compose -f docker-compose.rethinkdb.yml restart nginx
+docker compose restart nginx
