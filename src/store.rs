@@ -41,10 +41,6 @@ struct WriteResult {
     #[serde(default)]
     replaced: u64,
     #[serde(default)]
-    unchanged: u64,
-    #[serde(default)]
-    skipped: u64,
-    #[serde(default)]
     errors: u64,
     first_error: Option<String>,
 }
@@ -156,16 +152,19 @@ impl Store {
     }
 
     pub async fn list_ornaments(&self) -> Result<Vec<Ornament>> {
+        // Read the base table stream and sort the small fixed (max 20 row)
+        // collection in Rust. This also avoids an ordered-stream query over an
+        // empty table, which the pinned driver decodes inconsistently.
         let mut stream = r
             .db(self.database.as_str())
             .table(TABLE)
-            .order_by("ornament_number")
             .run::<_, Ornament>(&self.session);
 
         let mut ornaments = Vec::new();
         while let Some(ornament) = stream.try_next().await? {
             ornaments.push(ornament);
         }
+        ornaments.sort_by_key(|ornament| ornament.ornament_number);
         Ok(ornaments)
     }
 
