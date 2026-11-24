@@ -154,17 +154,18 @@ async fn run_exec(config: &Config, command: &str, timeout_ms: u64) -> Result<Str
         }
     };
 
-    let out = out_task.await.context("stdout reader failed")??;
-    let err = err_task.await.context("stderr reader failed")??;
-    if out.len() > max_out { bail!("command output exceeded {} byte limit", max_out); }
+    let (out, out_truncated) = out_task.await.context("stdout reader failed")??;
+    let (err, err_truncated) = err_task.await.context("stderr reader failed")??;
+    if out_truncated { bail!("command stdout exceeded {} byte limit", max_out); }
 
     let stdout = String::from_utf8_lossy(&out).into_owned();
     let stderr = String::from_utf8_lossy(&err).into_owned();
     if !status.success() {
         bail!("remote command exited with {}: {}", status, stderr.trim());
     }
-    if stderr.trim().is_empty() { Ok(stdout) }
-    else { Ok(format!("{stdout}\n[stderr]\n{}", stderr.trim())) }
+    let stderr_suffix = if err_truncated { "\n[stderr truncated after 16384 bytes]" } else { "" };
+    if stderr.trim().is_empty() && stderr_suffix.is_empty() { Ok(stdout) }
+    else { Ok(format!("{stdout}\n[stderr]\n{}{stderr_suffix}", stderr.trim())) }
 }
 
 fn tool_definition() -> Value {
