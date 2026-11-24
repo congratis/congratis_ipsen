@@ -13,7 +13,9 @@ use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Clone)]
-struct AppState { pool: PgPool }
+struct AppState {
+    pool: PgPool,
+}
 
 #[derive(Serialize)]
 struct Greeting {
@@ -30,9 +32,12 @@ struct SubmitGreeting {
 }
 
 #[derive(Serialize)]
-struct ApiMessage { message: &'static str }
+struct ApiMessage {
+    message: &'static str,
+}
 
 struct ApiError(StatusCode, &'static str);
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.0, Json(ApiMessage { message: self.1 })).into_response()
@@ -44,21 +49,38 @@ fn hash_token(token: &str) -> String {
 }
 
 async fn health(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    sqlx::query("SELECT 1").execute(&state.pool).await
+    sqlx::query("SELECT 1")
+        .execute(&state.pool)
+        .await
         .map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE, "database unavailable"))?;
-    Ok((StatusCode::OK, Json(serde_json::json!({"status":"ok"}))))
+
+    Ok((StatusCode::OK, Json(serde_json::json!({ "status": "ok" }))))
 }
 
 async fn list_greetings(State(state): State<AppState>) -> Result<Json<Vec<Greeting>>, ApiError> {
     let rows = sqlx::query_as::<_, (i16, String, String)>(
-        "SELECT ornament_number, display_name, message FROM greetings ORDER BY ornament_number"
+        "SELECT ornament_number, display_name, message FROM greetings ORDER BY ornament_number",
     )
-    .fetch_all(&state.pool).await
-    .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить поздравления"))?;
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|_| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Не удалось загрузить поздравления",
+        )
+    })?;
 
-    Ok(Json(rows.into_iter().map(|(ornament_number, display_name, message)| Greeting {
-        ornament_number, display_name, message
-    }).collect()))
+    Ok(Json(
+        rows.into_iter()
+            .map(
+                |(ornament_number, display_name, message)| Greeting {
+                    ornament_number,
+                    display_name,
+                    message,
+                },
+            )
+            .collect(),
+    ))
 }
 
 async fn submit(
@@ -70,65 +92,97 @@ async fn submit(
     let message = payload.message.trim();
 
     if !(64..=128).contains(&token.len()) || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректная персональная ссылка"));
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Некорректная персональная ссылка",
+        ));
     }
     if name.is_empty() || name.chars().count() > 80 {
-        return Err(ApiError(StatusCode::BAD_REQUEST, "Имя должно содержать от 1 до 80 символов"));
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Имя должно содержать от 1 до 80 символов",
+        ));
     }
     if message.is_empty() || message.chars().count() > 500 {
-        return Err(ApiError(StatusCode::BAD_REQUEST, "Поздравление должно содержать от 1 до 500 символов"));
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Поздравление должно содержать от 1 до 500 символов",
+        ));
     }
 
-    let mut tx = state.pool.begin().await
-        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Ошибка базы данных"))?;
+    let mut tx = state.pool.begin().await.map_err(|_| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Ошибка базы данных",
+        )
+    })?;
 
-    // Atomic claim. Concurrent submissions with the same token cannot both succeed.
+    // Atomic claim: concurrent submissions cannot both consume the same invitation.
     let participant = sqlx::query_as::<_, (uuid::Uuid, i16)>(
-        "UPDATE participants SET used_at = NOW() WHERE token_hash = $1 AND used_at IS NULL RETURNING id, ornament_number"
+        "UPDATE participants SET used_at = NOW() WHERE token_hash = $1 AND used_at IS NULL RETURNING id, ornament_number",
     )
     .bind(hash_token(token))
-    .fetch_optional(&mut *tx).await
+    .fetch_optional(&mut *tx)
+    .await
     .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Ошибка базы данных"))?;
 
     let Some((participant_id, ornament_number)) = participant else {
         tx.rollback().await.ok();
-        return Err(ApiError(StatusCode::CONFLICT, "Эта персональная ссылка уже использована или недействительна"));
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "Эта персональная ссылка уже использована или недействительна",
+        ));
     };
 
     if let Err(error) = sqlx::query(
-        "INSERT INTO greetings (participant_id, ornament_number, display_name, message) VALUES ($1, $2, $3, $4)"
+        "INSERT INTO greetings (participant_id, ornament_number, display_name, message) VALUES ($1, $2, $3, $4)",
     )
     .bind(participant_id)
     .bind(ornament_number)
     .bind(name)
     .bind(message)
-    .execute(&mut *tx).await {
+    .execute(&mut *tx)
+    .await
+    {
         tracing::error!(?error, "failed to insert greeting");
         tx.rollback().await.ok();
-        return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось сохранить поздравление"));
+        return Err(ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Не удалось сохранить поздравление",
+        ));
     }
 
-    tx.commit().await
-        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось завершить сохранение"))?;
+    tx.commit().await.map_err(|_| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Не удалось завершить сохранение",
+        )
+    })?;
 
-    Ok((StatusCode::CREATED, Json(serde_json::json!({
-        "message": "Поздравление сохранено",
-        "ornament_number": ornament_number
-    }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "message": "Поздравление сохранено",
+            "ornament_number": ornament_number
+        })),
+    ))
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     let database_url = env::var("DATABASE_URL")
         .expect("DATABASE_URL is required; configure Supabase PostgreSQL connection string");
     let pool = PgPoolOptions::new()
         .max_connections(10)
-        .connect(&database_url).await?;
+        .connect(&database_url)
+        .await?;
 
     sqlx::migrate!("./migrations").run(&pool).await?;
 
@@ -146,5 +200,21 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("Christmas Greetings listening on http://{addr}");
     axum::serve(listener, app).await?;
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hash_token;
+
+    #[test]
+    fn token_hash_is_stable_and_hex_encoded() {
+        let first = hash_token("a".repeat(64).as_str());
+        let second = hash_token("a".repeat(64).as_str());
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 64);
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
 }
