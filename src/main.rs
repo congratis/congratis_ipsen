@@ -14,14 +14,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{convert::Infallible, env, net::SocketAddr, time::Duration};
 use tokio::sync::broadcast;
-use christmas_greetings::store::{GreetingEvent, Ornament, Store};
+use christmas_greetings::store::{GreetingEvent, Ornament, RealtimeEvent, Store};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Clone)]
 struct AppState {
     store: Store,
-    events: broadcast::Sender<GreetingEvent>,
+    events: broadcast::Sender<RealtimeEvent>,
     admin_token: Option<String>,
 }
 
@@ -126,9 +126,13 @@ async fn sse_events(
     let receiver = state.events.subscribe();
     let stream = stream::unfold(receiver, |mut receiver| async move {
         let event = match receiver.recv().await {
-            Ok(greeting) => Event::default()
+            Ok(RealtimeEvent::Greeting(greeting)) => Event::default()
                 .event("greeting")
                 .json_data(greeting)
+                .unwrap_or_else(|_| Event::default().event("resync").data("snapshot")),
+            Ok(RealtimeEvent::Removed { ornament_number }) => Event::default()
+                .event("ornament_removed")
+                .json_data(serde_json::json!({ "ornament_number": ornament_number }))
                 .unwrap_or_else(|_| Event::default().event("resync").data("snapshot")),
             Err(broadcast::error::RecvError::Lagged(_)) => {
                 Event::default().event("resync").data("snapshot")
@@ -292,14 +296,14 @@ async fn admin_delete_invitation(
     Path(number): Path<i16>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize_admin(&headers, &state.admin_token)?;
-    let deleted = state.store.delete_unused_invitation(number).await.map_err(|error| {
+    let deleted = state.store.delete_ornament(number).await.map_err(|error| {
         tracing::error!(?error, ornament_number = number, "admin failed to delete invitation");
         ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось удалить приглашение")
     })?;
     if !deleted {
         return Err(ApiError(
             StatusCode::CONFLICT,
-            "Приглашение не найдено или уже использовано; использованные приглашения нельзя удалить здесь",
+            "Приглашение или поздравление не найдено",
         ));
     }
     Ok(Json(serde_json::json!({ "deleted": true, "ornament_number": number })))
