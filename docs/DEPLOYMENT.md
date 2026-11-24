@@ -18,7 +18,7 @@ Clone the repository to `/opt/congratis` and check out the intended release bran
 ```sh
 sudo mkdir -p /opt/congratis
 sudo chown "$USER":"$USER" /opt/congratis
-git clone <repository-url> /opt/congratis
+git clone https://github.com/congratis/congratis_ipsen.git /opt/congratis
 cd /opt/congratis
 git switch feat/rethinkdb-sse
 cp .env.example .env
@@ -84,7 +84,7 @@ sudo systemctl enable --now congratis-certbot-renew.timer
 systemctl list-timers congratis-certbot-renew.timer
 ```
 
-The timer runs a daily renewal check. The script reloads Nginx after Certbot completes. The default deployment path is `/opt/congratis`; if the repository lives elsewhere, set `CONGRATIS_DIR` in the systemd service override.
+The timer runs a daily renewal check. The script reloads Nginx after Certbot completes. The deployment path is `/opt/congratis`, matching the included systemd unit.
 
 ## 6. Operations
 
