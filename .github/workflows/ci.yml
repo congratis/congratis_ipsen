@@ -28,6 +28,11 @@ jobs:
       - name: Compile all targets
         run: cargo check --all-targets
       - name: Run tests
+        env:
+          RETHINKDB_HOST: 127.0.0.1
+          RETHINKDB_PORT: "28015"
+          RETHINKDB_DB: congratis_ci
+          RETHINKDB_TESTS: "1"
         run: cargo test --all-targets
       - name: Verify RethinkDB Rust driver connection
         env:
