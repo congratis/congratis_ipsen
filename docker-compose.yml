@@ -86,7 +86,7 @@ services:
       - /var/run:rw,noexec,nosuid,size=4m
       - /etc/nginx/conf.d:rw,noexec,nosuid,size=1m
     healthcheck:
-      test: ["CMD-SHELL", "test -s /var/run/nginx.pid && kill -0 $(cat /var/run/nginx.pid) && wget -q -O /dev/null http://app:8080/api/health"]
+      test: ["CMD-SHELL", "test -s /var/run/nginx.pid && nginx -t >/dev/null 2>&1 && wget -q -O /dev/null http://app:8080/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
