@@ -51,6 +51,10 @@ jobs:
         run: docker compose build nginx
       - name: Validate Nginx bootstrap configuration
         run: docker compose run --rm -e NGINX_TEST_ONLY=1 nginx
+      - name: Validate Nginx TLS configuration
+        run: docker compose run --rm -e NGINX_TEST_ONLY=1 -e NGINX_FORCE_HTTPS=1 nginx
+      - name: Validate deployment scripts
+        run: bash -n deploy/scripts/*.sh && sh -n deploy/nginx/entrypoint.sh
       - name: Stop Compose stack
         if: always()
         run: docker compose down --volumes --remove-orphans
