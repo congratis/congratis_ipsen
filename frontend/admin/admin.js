@@ -78,7 +78,10 @@ async function deleteInvitation(number, used) {
     : `Удалить неиспользованное приглашение для шара №${number}?`;
   if (!confirm(warning)) return;
   try {
-    await api(`/api/admin/ornaments/${number}`, { method: 'DELETE' });
+    await api(`/api/admin/ornaments/${number}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ confirm_used: used })
+    });
     await refresh();
   } catch (error) {
     alert(error.message);
