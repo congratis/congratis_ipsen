@@ -16,10 +16,11 @@ services:
     networks:
       - data
     healthcheck:
-      test: ["CMD-SHELL", "rethinkdb admin --help >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/28015'"]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 10s
 
   app:
     build:
@@ -40,9 +41,9 @@ services:
       RETHINKDB_PASSWORD: ${RETHINKDB_PASSWORD:?Set RETHINKDB_PASSWORD in .env}
     depends_on:
       rethinkdb:
-        condition: service_started
-    ports:
-      - "127.0.0.1:8080:8080"
+        condition: service_healthy
+    expose:
+      - "8080"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -52,6 +53,62 @@ services:
       - /tmp:rw,noexec,nosuid,size=16m
     networks:
       - data
+      - app_internal
+
+  nginx:
+    build:
+      context: .
+      dockerfile: deploy/nginx/Dockerfile
+    image: congratis-nginx:1.30.8
+    restart: unless-stopped
+    init: true
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    depends_on:
+      app:
+        condition: service_started
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - letsencrypt:/etc/letsencrypt:ro
+      - acme_webroot:/var/www/certbot:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+      - /var/cache/nginx:rw,noexec,nosuid,size=32m
+      - /var/run:rw,noexec,nosuid,size=4m
+      - /etc/nginx/conf.d:rw,noexec,nosuid,size=1m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - app_internal
+      - edge
+
+  certbot:
+    image: certbot/certbot:v5.10.0
+    profiles: ["tools"]
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - acme_webroot:/var/www/certbot
+    command:
+      - renew
+      - --webroot
+      - --webroot-path
+      - /var/www/certbot
+      - --quiet
+    networks:
+      - edge
 
   rethinkdb-probe:
     build:
@@ -66,13 +123,18 @@ services:
       RETHINKDB_PASSWORD: ${RETHINKDB_PASSWORD:?Set RETHINKDB_PASSWORD in .env}
     depends_on:
       rethinkdb:
-        condition: service_started
+        condition: service_healthy
     networks:
       - data
 
 volumes:
   rethinkdb_data:
+  letsencrypt:
+  acme_webroot:
 
 networks:
   data:
     internal: true
+  app_internal:
+    internal: true
+  edge:
