@@ -167,6 +167,17 @@ impl Store {
             bail!("ornaments table is not empty; refusing to overwrite invitations");
         }
 
+        let mut numbers = std::collections::HashSet::new();
+        let mut hashes = std::collections::HashSet::new();
+        for (number, token_hash) in invitations {
+            if !(1..=20).contains(number) || !numbers.insert(*number) {
+                bail!("invitation ornament numbers must be unique values between 1 and 20");
+            }
+            if !hashes.insert(token_hash) {
+                bail!("duplicate invitation token hash in batch");
+            }
+        }
+
         let created_at = Utc::now().timestamp();
         let documents: Vec<Value> = invitations
             .iter()
