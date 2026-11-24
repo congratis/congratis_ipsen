@@ -8,6 +8,7 @@ use std::{env, time::Duration};
 
 const TABLE: &str = "ornaments";
 const TOKEN_INDEX: &str = "token_hash";
+const INDEX_PROBE_TOKEN: &str = "__congratis_index_probe__";
 
 fn token_index_options() -> reql::cmd::get_all::Options {
     let mut options = reql::cmd::get_all::Options::default();
@@ -126,16 +127,32 @@ impl Store {
                 .context("creating token_hash index")?;
         }
 
-        let _: Option<Value> = self
-            .first(
-                r.db(self.database.as_str())
-                    .table(TABLE)
-                    .index_wait(TOKEN_INDEX),
-            )
-            .await
-            .context("waiting for token_hash index")?;
-
+        self.wait_for_token_index().await?;
         Ok(())
+    }
+
+    async fn wait_for_token_index(&self) -> Result<()> {
+        let mut last_error = None;
+        for _ in 0..40 {
+            let query = r
+                .db(self.database.as_str())
+                .table(TABLE)
+                .get_all(r.args((INDEX_PROBE_TOKEN, token_index_options())))
+                .limit(1);
+            let mut stream = query.run::<_, Ornament>(&self.session);
+            match stream.try_next().await {
+                Ok(_) => return Ok(()),
+                Err(error) => {
+                    last_error = Some(error.to_string());
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+            }
+        }
+
+        bail!(
+            "token_hash index did not become queryable: {}",
+            last_error.unwrap_or_else(|| "unknown index readiness error".into())
+        )
     }
 
     pub async fn list_ornaments(&self) -> Result<Vec<Ornament>> {
@@ -226,8 +243,8 @@ impl Store {
         // atomic single-document write; no read-then-write race is possible.
         let update = reql::func!(|document| {
             r.branch(r.args((
-                document.get_field("used").eq(false),
-                document.merge(r.expr(json!({
+                document.clone().get_field("used").eq(false),
+                document.clone().merge(r.expr(json!({
                     "used": true,
                     "display_name": display_name,
                     "message": message,
