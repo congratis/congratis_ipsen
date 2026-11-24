@@ -7,6 +7,16 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      rethinkdb:
+        image: rethinkdb:2.4.4-bookworm-slim
+        ports:
+          - 28015:28015
+        options: >-
+          --health-cmd "bash -c '</dev/tcp/127.0.0.1/28015'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -19,6 +29,11 @@ jobs:
         run: cargo check --all-targets
       - name: Run tests
         run: cargo test --all-targets
+      - name: Verify RethinkDB Rust driver connection
+        env:
+          RETHINKDB_HOST: 127.0.0.1
+          RETHINKDB_PORT: "28015"
+        run: cargo run --bin rethinkdb-probe
       - name: Build production Docker image
         run: docker build --tag congratis:ci .
       - name: Validate Compose configuration
