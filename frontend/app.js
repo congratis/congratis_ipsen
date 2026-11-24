@@ -3,6 +3,9 @@ const greetingModal = document.getElementById('greetingModal');
 const formModal = document.getElementById('formModal');
 const token = new URLSearchParams(location.search).get('token');
 let greetings = [];
+let realtimeSequence = 0;
+let realtimeEvents = [];
+let loadRequestId = 0;
 
 function showModal(el){el.classList.add('open');el.setAttribute('aria-hidden','false')}
 function hideModal(el){el.classList.remove('open');el.setAttribute('aria-hidden','true')}
@@ -26,33 +29,49 @@ function render(){
     ornamentsEl.appendChild(b);
   });
 }
+function applyRealtimeEvent(event){
+  const byNumber=new Map(greetings.map(item=>[item.ornament_number,item]));
+  if(event.type==='greeting')byNumber.set(event.payload.ornament_number,event.payload);
+  if(event.type==='removed')byNumber.delete(event.payload.ornament_number);
+  greetings=[...byNumber.values()];
+  render();
+}
+function recordRealtimeEvent(type,payload){
+  const event={sequence:++realtimeSequence,type,payload};
+  realtimeEvents.push(event);
+  applyRealtimeEvent(event);
+}
 async function load(){
+  const requestId=++loadRequestId;
+  const sequenceAtStart=realtimeSequence;
   try{
     const r=await fetch('/api/greetings');if(!r.ok)throw new Error();
     const snapshot=await r.json();
-    const merged=new Map(greetings.map(item=>[item.ornament_number,item]));
-    snapshot.forEach(item=>merged.set(item.ornament_number,item));
+    if(requestId!==loadRequestId)return;
+    const merged=new Map(snapshot.map(item=>[item.ornament_number,item]));
+    realtimeEvents
+      .filter(event=>event.sequence>sequenceAtStart)
+      .forEach(event=>{
+        if(event.type==='greeting')merged.set(event.payload.ornament_number,event.payload);
+        if(event.type==='removed')merged.delete(event.payload.ornament_number);
+      });
     greetings=[...merged.values()];
+    realtimeEvents=[];
     render();
   }
-  catch(e){ornamentsEl.innerHTML='<p style="color:#ffd0a0">Не удалось загрузить ёлку. Обновите страницу.</p>'}
-}
-function applyGreeting(greeting){
-  const index=greetings.findIndex(item=>item.ornament_number===greeting.ornament_number);
-  if(index>=0)greetings[index]=greeting;else greetings.push(greeting);
-  render();
+  catch(e){
+    if(requestId===loadRequestId)ornamentsEl.innerHTML='<p style="color:#ffd0a0">Не удалось загрузить ёлку. Обновите страницу.</p>';
+  }
 }
 function connectRealtime(){
   if(!('EventSource' in window)){load();return}
   const source=new EventSource('/api/events');
   source.addEventListener('greeting',event=>{
-    try{applyGreeting(JSON.parse(event.data))}catch(e){console.warn('Invalid greeting event',e)}
+    try{recordRealtimeEvent('greeting',JSON.parse(event.data))}catch(e){console.warn('Invalid greeting event',e)}
   });
   source.addEventListener('ornament_removed',event=>{
     try{
-      const {ornament_number}=JSON.parse(event.data);
-      greetings=greetings.filter(item=>item.ornament_number!==ornament_number);
-      render();
+      recordRealtimeEvent('removed',JSON.parse(event.data));
     }catch(e){console.warn('Invalid removal event',e)}
   });
   source.addEventListener('resync',()=>load());
