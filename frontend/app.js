@@ -27,7 +27,14 @@ function render(){
   });
 }
 async function load(){
-  try{const r=await fetch('/api/greetings');if(!r.ok)throw new Error();greetings=await r.json();render()}
+  try{
+    const r=await fetch('/api/greetings');if(!r.ok)throw new Error();
+    const snapshot=await r.json();
+    const merged=new Map(greetings.map(item=>[item.ornament_number,item]));
+    snapshot.forEach(item=>merged.set(item.ornament_number,item));
+    greetings=[...merged.values()];
+    render();
+  }
   catch(e){ornamentsEl.innerHTML='<p style="color:#ffd0a0">Не удалось загрузить ёлку. Обновите страницу.</p>'}
 }
 function applyGreeting(greeting){
