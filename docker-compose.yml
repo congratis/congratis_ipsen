@@ -1,9 +1,24 @@
 services:
   app:
-    build: .
-    container_name: christmas-greetings
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: congratis:latest
+    container_name: congratis-app
     restart: unless-stopped
+    init: true
     env_file:
       - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      RUST_LOG: ${RUST_LOG:-info}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
