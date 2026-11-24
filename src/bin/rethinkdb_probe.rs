@@ -17,7 +17,7 @@ async fn main() -> anyhow::Result<()> {
         .user(user)
         .password(password);
     let session = r.connect(options).await?;
-    let mut databases = r.db_list().run(&session);
+    let mut databases = r.db_list().run::<_, String>(&session);
     let mut names = Vec::new();
     while let Some(result) = databases.next().await {
         names.push(result?);
