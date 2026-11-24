@@ -253,7 +253,7 @@ impl Store {
             .db(self.database.as_str())
             .table(PARTICIPANTS_TABLE)
             .get_all(r.args((token_hash, options)))
-            .filter(r.hash_map("revoked", false))
+            .filter(reql::func!(|row| row.get_field("revoked").eq(false)))
             .limit(1)
             .run::<_, ParticipantAccess>(&self.session);
         Ok(stream.try_next().await?.is_some())
