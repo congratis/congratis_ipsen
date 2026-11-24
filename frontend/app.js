@@ -1,7 +1,7 @@
 const ornamentsEl = document.getElementById('ornaments');
 const greetingModal = document.getElementById('greetingModal');
 const formModal = document.getElementById('formModal');
-const token = new URLSearchParams(location.search).get('token');
+const token = new URLSearchParams(location.search).get('token') || new URLSearchParams(location.hash.slice(1)).get('invite');
 const accessToken = new URLSearchParams(location.hash.slice(1)).get('access');
 const treeContent = document.getElementById('treeContent');
 const accessPanel = document.getElementById('accessPanel');
@@ -116,7 +116,7 @@ async function initializeParticipantView(){
     if(!session.ok)throw new Error('Эта ёлка доступна только участникам. Откройте персональную ссылку, выданную администратором.');
     accessPanel.hidden=true;
     treeContent.hidden=false;
-    if(token)showModal(formModal);
+    if(token){history.replaceState({},'',location.pathname);showModal(formModal);}
     connectRealtime();
   }catch(error){
     accessMessage.textContent=error.message;
