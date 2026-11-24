@@ -437,7 +437,7 @@ async fn admin_create_invitations(
         invitations.push((number, hash_token(&token)));
         links.push(serde_json::json!({
             "ornament_number": number,
-            "url": format!("{}/?token={token}", base.trim_end_matches('/'))
+            "url": format!("{}/#invite={token}", base.trim_end_matches('/'))
         }));
     }
 
