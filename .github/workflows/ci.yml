@@ -36,5 +36,7 @@ jobs:
         run: cargo run --bin rethinkdb-probe
       - name: Build production Docker image
         run: docker build --tag congratis:ci .
+      - name: Prepare Compose validation environment
+        run: cp .env.example .env
       - name: Validate Compose configuration
         run: docker compose config --quiet
