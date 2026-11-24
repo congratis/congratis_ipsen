@@ -11,9 +11,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Format Rust sources
-        run: cargo fmt --all
+      - name: Check formatting
+        run: cargo fmt --all -- --check
       - name: Compile all targets
         run: cargo check --all-targets
       - name: Run tests
         run: cargo test --all-targets
+      - name: Build production Docker image
+        run: docker build --tag congratis:ci .
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
