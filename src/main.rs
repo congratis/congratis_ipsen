@@ -304,6 +304,9 @@ async fn admin_delete_invitation(
     Json(payload): Json<DeleteOrnament>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize_admin(&headers, &state.admin_token)?;
+    if !(1..=20).contains(&number) {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Номер шара должен быть от 1 до 20"));
+    }
     let _mutation_guard = state.admin_mutations.lock().await;
     let deleted = state.store.delete_ornament(number, payload.confirm_used).await.map_err(|error| {
         tracing::error!(?error, ornament_number = number, "admin failed to delete invitation");
