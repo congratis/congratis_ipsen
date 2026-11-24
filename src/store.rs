@@ -5,6 +5,7 @@ use reql::{cmd::connect::Options, r, Session};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{env, time::Duration};
+use tokio::sync::broadcast;
 
 const TABLE: &str = "ornaments";
 const TOKEN_INDEX: &str = "token_hash";
@@ -17,9 +18,50 @@ fn token_index_options() -> reql::cmd::get_all::Options {
 }
 
 #[derive(Clone)]
+struct ConnectionConfig {
+    host: String,
+    port: u16,
+    user: String,
+    password: String,
+}
+
+impl ConnectionConfig {
+    fn from_env() -> Result<Self> {
+        Ok(Self {
+            host: env::var("RETHINKDB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+            port: env::var("RETHINKDB_PORT")
+                .unwrap_or_else(|_| "28015".into())
+                .parse()
+                .context("RETHINKDB_PORT must be a valid TCP port")?,
+            user: env::var("RETHINKDB_USER").unwrap_or_else(|_| "admin".into()),
+            password: env::var("RETHINKDB_PASSWORD").unwrap_or_default(),
+        })
+    }
+
+    async fn connect(&self) -> Result<Session> {
+        let options = Options::new()
+            .host(self.host.clone())
+            .port(self.port)
+            .user(self.user.clone())
+            .password(self.password.clone());
+        Ok(tokio::time::timeout(Duration::from_secs(10), r.connect(options))
+            .await
+            .context("timed out connecting to RethinkDB")??)
+    }
+}
+
+#[derive(Clone)]
 pub struct Store {
     session: Session,
     database: String,
+    connection: ConnectionConfig,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GreetingEvent {
+    pub ornament_number: i16,
+    pub display_name: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -47,25 +89,15 @@ struct WriteResult {
 
 impl Store {
     pub async fn connect() -> Result<Self> {
-        let host = env::var("RETHINKDB_HOST").unwrap_or_else(|_| "127.0.0.1".into());
-        let port: u16 = env::var("RETHINKDB_PORT")
-            .unwrap_or_else(|_| "28015".into())
-            .parse()
-            .context("RETHINKDB_PORT must be a valid TCP port")?;
-        let user = env::var("RETHINKDB_USER").unwrap_or_else(|_| "admin".into());
-        let password = env::var("RETHINKDB_PASSWORD").unwrap_or_default();
+        let connection = ConnectionConfig::from_env()?;
         let database = env::var("RETHINKDB_DB").unwrap_or_else(|_| "congratis".into());
+        let session = connection.connect().await?;
 
-        let options = Options::new()
-            .host(host)
-            .port(port)
-            .user(user)
-            .password(password);
-        let session = tokio::time::timeout(Duration::from_secs(10), r.connect(options))
-            .await
-            .context("timed out connecting to RethinkDB")??;
-
-        let store = Self { session, database };
+        let store = Self {
+            session,
+            database,
+            connection,
+        };
         store.initialize().await?;
         Ok(store)
     }
@@ -295,6 +327,76 @@ impl Store {
             .await?
             .ok_or_else(|| anyhow!("claimed invitation disappeared after update"))?;
         Ok(Some(claimed.ornament_number))
+    }
+
+    pub async fn supervise_changefeed(self, sender: broadcast::Sender<GreetingEvent>) {
+        let mut backoff_seconds = 1u64;
+        loop {
+            let outcome = match self.connection.connect().await {
+                Ok(session) => self.consume_changefeed(&session, &sender).await,
+                Err(error) => Err(error),
+            };
+
+            match outcome {
+                Ok(()) => tracing::warn!("RethinkDB Changefeed ended; reconnecting"),
+                Err(error) => tracing::error!(?error, "RethinkDB Changefeed failed; reconnecting"),
+            }
+
+            tokio::time::sleep(Duration::from_secs(backoff_seconds)).await;
+            backoff_seconds = (backoff_seconds * 2).min(30);
+        }
+    }
+
+    async fn consume_changefeed(
+        &self,
+        session: &Session,
+        sender: &broadcast::Sender<GreetingEvent>,
+    ) -> Result<()> {
+        let mut options = reql::cmd::changes::Options::default();
+        options.include_initial = Some(true);
+        options.include_states = Some(true);
+        options.include_types = Some(true);
+
+        // This session is dedicated to the long-lived feed. The reql driver
+        // locks a Session while a Changefeed is active, so CRUD uses self.session.
+        let mut stream = r
+            .db(self.database.as_str())
+            .table(TABLE)
+            .changes(options)
+            .run::<_, Value>(session);
+
+        while let Some(change) = stream.try_next().await? {
+            if let Some(message) = change.get("error").and_then(Value::as_str) {
+                bail!("RethinkDB Changefeed overflow/error: {message}");
+            }
+
+            let Some(new_value) = change.get("new_val") else {
+                // State notifications and uninitial notifications are not greetings.
+                continue;
+            };
+            if new_value.is_null() {
+                continue;
+            }
+
+            let ornament: Ornament = serde_json::from_value(new_value.clone())?;
+            if !ornament.used {
+                continue;
+            }
+
+            let (Some(display_name), Some(message)) =
+                (ornament.display_name, ornament.message)
+            else {
+                continue;
+            };
+
+            let _ = sender.send(GreetingEvent {
+                ornament_number: ornament.ornament_number,
+                display_name,
+                message,
+            });
+        }
+
+        Ok(())
     }
 
     pub async fn ping(&self) -> Result<()> {
