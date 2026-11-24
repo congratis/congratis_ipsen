@@ -47,3 +47,7 @@ jobs:
         run: docker compose config --quiet
       - name: Validate RethinkDB application Compose configuration
         run: docker compose -f docker-compose.rethinkdb.yml config --quiet
+      - name: Build Nginx edge image
+        run: docker compose -f docker-compose.rethinkdb.yml build nginx
+      - name: Validate Nginx bootstrap configuration
+        run: docker compose -f docker-compose.rethinkdb.yml run --rm -e NGINX_TEST_ONLY=1 nginx
