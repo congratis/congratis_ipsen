@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew Congratis Let's Encrypt certificates
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/congratis
+ExecStart=/opt/congratis/deploy/scripts/renew-certificates.sh
