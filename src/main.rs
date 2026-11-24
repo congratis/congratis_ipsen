@@ -55,7 +55,7 @@ fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
 
-async fn events(
+async fn sse_events(
     State(state): State<AppState>,
 ) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
     let receiver = state.events.subscribe();
@@ -187,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState { store, events };
     let app = Router::new()
         .route("/api/health", get(health))
-        .route("/api/events", get(events))
+        .route("/api/events", get(sse_events))
         .route("/api/greetings", get(list_greetings).post(submit))
         .fallback_service(ServeDir::new("frontend").append_index_html_on_directories(true))
         .with_state(state)
