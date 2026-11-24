@@ -10,7 +10,6 @@ use tokio::sync::{broadcast, watch};
 const TABLE: &str = "ornaments";
 const TOKEN_INDEX: &str = "token_hash";
 const INDEX_PROBE_TOKEN: &str = "__congratis_index_probe__";
-const PARTICIPANTS_TABLE: &str = "participant_access";
 
 fn token_index_options() -> reql::cmd::get_all::Options {
     let mut options = reql::cmd::get_all::Options::default();
@@ -65,12 +64,6 @@ pub struct GreetingEvent {
     pub message: String,
 }
 
-#[derive(Debug, Clone)]
-pub enum RealtimeEvent {
-    Greeting(GreetingEvent),
-    Removed { ornament_number: i16 },
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Ornament {
     pub id: i16,
@@ -83,23 +76,12 @@ pub struct Ornament {
     pub used_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ParticipantAccess {
-    pub id: String,
-    pub token_hash: String,
-    pub label: String,
-    pub created_at: i64,
-    pub revoked: bool,
-}
-
 #[derive(Debug, Default, Deserialize)]
 struct WriteResult {
     #[serde(default)]
     inserted: u64,
     #[serde(default)]
     replaced: u64,
-    #[serde(default)]
-    deleted: u64,
     #[serde(default)]
     errors: u64,
     first_error: Option<String>,
@@ -174,134 +156,7 @@ impl Store {
         }
 
         self.wait_for_token_index().await?;
-
-        let tables = self
-            .first::<Vec<String>>(r.db(self.database.as_str()).table_list())
-            .await?
-            .ok_or_else(|| anyhow!("RethinkDB returned no table list"))?;
-        if !tables.iter().any(|name| name == PARTICIPANTS_TABLE) {
-            let _: Option<Value> = self
-                .first(r.db(self.database.as_str()).table_create(PARTICIPANTS_TABLE))
-                .await
-                .context("creating participant access table")?;
-        }
-        let participant_indexes = self
-            .first::<Vec<String>>(
-                r.db(self.database.as_str())
-                    .table(PARTICIPANTS_TABLE)
-                    .index_list(),
-            )
-            .await?
-            .ok_or_else(|| anyhow!("RethinkDB returned no participant index list"))?;
-        if !participant_indexes.iter().any(|name| name == "token_hash") {
-            let _: Option<Value> = self
-                .first(
-                    r.db(self.database.as_str())
-                        .table(PARTICIPANTS_TABLE)
-                        .index_create("token_hash"),
-                )
-                .await
-                .context("creating participant token_hash index")?;
-        }
-        self.wait_for_participant_index().await?;
         Ok(())
-    }
-
-    async fn wait_for_participant_index(&self) -> Result<()> {
-        let mut last_error = None;
-        for _ in 0..40 {
-            let mut options = reql::cmd::get_all::Options::default();
-            options.index = Some("token_hash".into());
-            let query = r
-                .db(self.database.as_str())
-                .table(PARTICIPANTS_TABLE)
-                .get_all(r.args(("__congratis_participant_index_probe__", options)))
-                .limit(1);
-            let mut stream = query.run::<_, ParticipantAccess>(&self.session);
-            match stream.try_next().await {
-                Ok(_) => return Ok(()),
-                Err(error) => {
-                    last_error = Some(error.to_string());
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                }
-            }
-        }
-        bail!(
-            "participant token_hash index did not become queryable: {}",
-            last_error.unwrap_or_else(|| "unknown index readiness error".into())
-        )
-    }
-
-    pub async fn create_participants(&self, participants: &[ParticipantAccess]) -> Result<()> {
-        if participants.is_empty() {
-            bail!("at least one participant is required");
-        }
-        let documents: Vec<Value> = participants
-            .iter()
-            .map(|participant| serde_json::to_value(participant).expect("participant serialization"))
-            .collect();
-        let result = self
-            .first::<WriteResult>(
-                r.db(self.database.as_str())
-                    .table(PARTICIPANTS_TABLE)
-                    .insert(documents),
-            )
-            .await?
-            .ok_or_else(|| anyhow!("RethinkDB returned no participant insert result"))?;
-        if result.errors != 0 || result.inserted != participants.len() as u64 {
-            bail!(
-                "participant insert incomplete: inserted={}, errors={}, first_error={:?}",
-                result.inserted,
-                result.errors,
-                result.first_error
-            );
-        }
-        Ok(())
-    }
-
-    pub async fn list_participants(&self) -> Result<Vec<ParticipantAccess>> {
-        let mut stream = r
-            .db(self.database.as_str())
-            .table(PARTICIPANTS_TABLE)
-            .run::<_, ParticipantAccess>(&self.session);
-        let mut participants = Vec::new();
-        while let Some(participant) = stream.try_next().await? {
-            participants.push(participant);
-        }
-        participants.sort_by_key(|participant| participant.created_at);
-        Ok(participants)
-    }
-
-    pub async fn participant_is_active(&self, token_hash: &str) -> Result<bool> {
-        let mut options = reql::cmd::get_all::Options::default();
-        options.index = Some("token_hash".into());
-        let mut stream = r
-            .db(self.database.as_str())
-            .table(PARTICIPANTS_TABLE)
-            .get_all(r.args((token_hash, options)))
-            .filter(reql::func!(|row| row.get_field("revoked").eq(false)))
-            .limit(1)
-            .run::<_, ParticipantAccess>(&self.session);
-        Ok(stream.try_next().await?.is_some())
-    }
-
-    pub async fn revoke_participant(&self, id: &str) -> Result<bool> {
-        let result = self
-            .first::<WriteResult>(
-                r.db(self.database.as_str())
-                    .table(PARTICIPANTS_TABLE)
-                    .get(id)
-                    .update(json!({ "revoked": true })),
-            )
-            .await?
-            .ok_or_else(|| anyhow!("RethinkDB returned no participant revoke result"))?;
-        if result.errors != 0 {
-            bail!(
-                "participant revocation failed: {}",
-                result.first_error.unwrap_or_else(|| "unknown write error".into())
-            );
-        }
-        Ok(result.replaced == 1)
     }
 
     async fn wait_for_token_index(&self) -> Result<()> {
@@ -329,6 +184,9 @@ impl Store {
     }
 
     pub async fn list_ornaments(&self) -> Result<Vec<Ornament>> {
+        // Read the base table stream and sort the small fixed (max 20 row)
+        // collection in Rust. This also avoids an ordered-stream query over an
+        // empty table, which the pinned driver decodes inconsistently.
         let mut stream = r
             .db(self.database.as_str())
             .table(TABLE)
@@ -352,32 +210,11 @@ impl Store {
     }
 
     pub async fn insert_invitations(&self, invitations: &[(i16, String)]) -> Result<()> {
-        if !self.list_ornaments().await?.is_empty() {
+        let existing = self.list_ornaments().await?;
+        if !existing.is_empty() {
             bail!("ornaments table is not empty; refusing to overwrite invitations");
         }
-        self.insert_invitation_documents(invitations).await
-    }
 
-    /// Add invitations into currently free ornament slots without touching existing rows.
-    pub async fn create_invitations(&self, invitations: &[(i16, String)]) -> Result<()> {
-        let existing = self.list_ornaments().await?;
-        let occupied: std::collections::HashSet<i16> =
-            existing.into_iter().map(|item| item.ornament_number).collect();
-
-        let mut numbers = std::collections::HashSet::new();
-        let mut hashes = std::collections::HashSet::new();
-        for (number, token_hash) in invitations {
-            if !(1..=20).contains(number) || occupied.contains(number) || !numbers.insert(*number) {
-                bail!("invitation ornament numbers must be unique free values between 1 and 20");
-            }
-            if !hashes.insert(token_hash) {
-                bail!("duplicate invitation token hash in batch");
-            }
-        }
-        self.insert_invitation_documents(invitations).await
-    }
-
-    async fn insert_invitation_documents(&self, invitations: &[(i16, String)]) -> Result<()> {
         let mut numbers = std::collections::HashSet::new();
         let mut hashes = std::collections::HashSet::new();
         for (number, token_hash) in invitations {
@@ -387,9 +224,6 @@ impl Store {
             if !hashes.insert(token_hash) {
                 bail!("duplicate invitation token hash in batch");
             }
-        }
-        if invitations.is_empty() {
-            bail!("at least one invitation is required");
         }
 
         let created_at = Utc::now().timestamp();
@@ -429,44 +263,15 @@ impl Store {
         Ok(())
     }
 
-    /// Delete an invitation, or a submitted greeting after explicit admin confirmation.
-    /// The conditional replace prevents a stale "unused" view from deleting a greeting
-    /// that was submitted just before the admin action.
-    pub async fn delete_ornament(&self, number: i16, confirm_used: bool) -> Result<bool> {
-        if !(1..=20).contains(&number) {
-            bail!("ornament number must be between 1 and 20");
-        }
-        let delete_if_allowed = reql::func!(|document| {
-            r.branch(r.args((
-                document.clone().get_field("used").eq(false).or(r.expr(confirm_used)),
-                r.expr(Value::Null),
-                document
-            )))
-        });
-        let result = self
-            .first::<WriteResult>(
-                r.db(self.database.as_str())
-                    .table(TABLE)
-                    .get(number)
-                    .replace(delete_if_allowed),
-            )
-            .await?
-            .ok_or_else(|| anyhow!("RethinkDB returned no ornament deletion result"))?;
-        if result.errors != 0 {
-            bail!(
-                "RethinkDB ornament deletion failed: {}",
-                result.first_error.unwrap_or_else(|| "unknown write error".into())
-            );
-        }
-        Ok(result.deleted == 1)
-    }
-
     pub async fn claim_invitation(
         &self,
         token_hash: &str,
         display_name: &str,
         message: &str,
     ) -> Result<Option<i16>> {
+        // get_all(token_hash, index).limit(1) selects at most one document.
+        // The conditional update function and its state change execute in one
+        // atomic single-document write; no read-then-write race is possible.
         let update = reql::func!(|document| {
             r.branch(r.args((
                 document.clone().get_field("used").eq(false),
@@ -506,6 +311,8 @@ impl Store {
             return Ok(None);
         }
 
+        // The claimed document is read back by its indexed token. This read is
+        // only for the response ornament number; it is not part of the claim.
         let mut stream = r
             .db(self.database.as_str())
             .table(TABLE)
@@ -522,7 +329,7 @@ impl Store {
         Ok(Some(claimed.ornament_number))
     }
 
-    pub async fn supervise_changefeed(self, sender: broadcast::Sender<RealtimeEvent>) {
+    pub async fn supervise_changefeed(self, sender: broadcast::Sender<GreetingEvent>) {
         let mut backoff_seconds = 1u64;
         loop {
             let outcome = match self.connection.connect().await {
@@ -542,7 +349,7 @@ impl Store {
 
     pub async fn subscribe_changefeed(
         &self,
-        sender: &broadcast::Sender<RealtimeEvent>,
+        sender: &broadcast::Sender<GreetingEvent>,
         ready: watch::Sender<bool>,
     ) -> Result<()> {
         let session = self.connection.connect().await?;
@@ -552,7 +359,7 @@ impl Store {
     async fn consume_changefeed(
         &self,
         session: &Session,
-        sender: &broadcast::Sender<RealtimeEvent>,
+        sender: &broadcast::Sender<GreetingEvent>,
         ready: Option<&watch::Sender<bool>>,
     ) -> Result<()> {
         let mut options = reql::cmd::changes::Options::default();
@@ -560,6 +367,8 @@ impl Store {
         options.include_states = Some(true);
         options.include_types = Some(true);
 
+        // This session is dedicated to the long-lived feed. The reql driver
+        // locks a Session while a Changefeed is active, so CRUD uses self.session.
         let mut stream = r
             .db(self.database.as_str())
             .table(TABLE)
@@ -579,16 +388,10 @@ impl Store {
             }
 
             let Some(new_value) = change.get("new_val") else {
+                // State notifications and uninitial notifications are not greetings.
                 continue;
             };
             if new_value.is_null() {
-                if let Some(old_value) = change.get("old_val").filter(|value| !value.is_null()) {
-                    if let Ok(ornament) = serde_json::from_value::<Ornament>(old_value.clone()) {
-                        let _ = sender.send(RealtimeEvent::Removed {
-                            ornament_number: ornament.ornament_number,
-                        });
-                    }
-                }
                 continue;
             }
 
@@ -603,11 +406,11 @@ impl Store {
                 continue;
             };
 
-            let _ = sender.send(RealtimeEvent::Greeting(GreetingEvent {
+            let _ = sender.send(GreetingEvent {
                 ornament_number: ornament.ornament_number,
                 display_name,
                 message,
-            }));
+            });
         }
 
         Ok(())
@@ -621,105 +424,6 @@ impl Store {
         if !databases.iter().any(|name| name == &self.database) {
             bail!("configured RethinkDB database is missing");
         }
-        Ok(())
-    }
-}
-
-
-#[cfg(test)]
-mod admin_invitation_tests {
-    use super::Store;
-    use anyhow::{ensure, Result};
-    use std::env;
-    use std::time::Duration;
-    use tokio::sync::{broadcast, watch};
-
-    #[tokio::test]
-    async fn admin_invitation_create_and_delete_flow() -> Result<()> {
-        if env::var("RETHINKDB_TESTS").ok().as_deref() != Some("1") {
-            return Ok(());
-        }
-
-        let database = env::var("RETHINKDB_DB").unwrap_or_default();
-        ensure!(
-            database.ends_with("_ci"),
-            "RETHINKDB_TESTS=1 is only allowed with a database ending in _ci"
-        );
-
-        let store = Store::connect().await?;
-        // This test owns the isolated *_ci database and starts from an empty table.
-        for ornament in store.list_ornaments().await? {
-            store.delete_ornament(ornament.ornament_number, true).await?;
-        }
-        ensure!(store.list_ornaments().await?.is_empty());
-
-        let (events, mut event_rx) = broadcast::channel(32);
-        let (ready_tx, mut ready_rx) = watch::channel(false);
-        let feed_store = store.clone();
-        let feed_events = events.clone();
-        tokio::spawn(async move {
-            let _ = feed_store.subscribe_changefeed(&feed_events, ready_tx).await;
-        });
-        tokio::time::timeout(Duration::from_secs(10), async {
-            while !*ready_rx.borrow() {
-                ready_rx.changed().await?;
-            }
-            Ok::<(), tokio::sync::watch::error::RecvError>(())
-        })
-        .await??;
-
-        let unused_hash = "a".repeat(64);
-        let used_hash = "b".repeat(64);
-        store
-            .create_invitations(&[(1, unused_hash.clone()), (2, used_hash.clone())])
-            .await?;
-
-        let created = store.list_ornaments().await?;
-        ensure!(created.len() == 2);
-        ensure!(created.iter().all(|item| !item.used));
-
-        // An unused invitation can be removed without the used-confirmation flag.
-        ensure!(store.delete_ornament(1, false).await?);
-
-        // A submitted greeting cannot be removed by a stale admin view.
-        ensure!(
-            store
-                .claim_invitation(&used_hash, "CI test", "Greeting for integration test")
-                .await?
-                == Some(2)
-        );
-        ensure!(!store.delete_ornament(2, false).await?);
-
-        // Explicit confirmation permits deletion of the submitted greeting.
-        ensure!(store.delete_ornament(2, true).await?);
-        ensure!(store.list_ornaments().await?.is_empty());
-
-        // The public SSE feed must tell connected clients to clear the deleted slot.
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                if matches!(
-                    event_rx.recv().await,
-                    Ok(super::RealtimeEvent::Removed { ornament_number: 2 })
-                ) {
-                    break;
-                }
-            }
-        })
-        .await?;
-        drop(events);
-
-        let participant_hash = "c".repeat(64);
-        store.create_participants(&[super::ParticipantAccess {
-            id: "ci-participant-0000000000000001".into(),
-            token_hash: participant_hash.clone(),
-            label: "CI participant".into(),
-            created_at: 1,
-            revoked: false,
-        }]).await?;
-        ensure!(store.participant_is_active(&participant_hash).await?);
-        ensure!(store.revoke_participant("ci-participant-0000000000000001").await?);
-        ensure!(!store.participant_is_active(&participant_hash).await?);
-
         Ok(())
     }
 }

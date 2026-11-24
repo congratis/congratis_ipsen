@@ -39,7 +39,6 @@ services:
       RETHINKDB_PORT: "28015"
       RETHINKDB_USER: admin
       RETHINKDB_PASSWORD: ${RETHINKDB_PASSWORD:?Set RETHINKDB_PASSWORD in .env}
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
     depends_on:
       rethinkdb:
         condition: service_healthy

@@ -1,9 +1,9 @@
 name: Rust CI
 on:
   push:
-    branches: [main, feat/admin-invitations, feat/rethinkdb-sse, feat/mcp-ssh-gateway]
+    branches: [main]
   pull_request:
-    branches: [main, feat/rethinkdb-sse]
+    branches: [main]
 concurrency:
   group: congratis-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -28,8 +28,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all
-      - name: Check frontend JavaScript syntax
-        run: node --check frontend/app.js && node --check frontend/admin/admin.js
       - name: Compile all targets
         run: cargo check --all-targets
       - name: Run tests
