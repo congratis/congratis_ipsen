@@ -83,6 +83,8 @@ struct WriteResult {
     #[serde(default)]
     replaced: u64,
     #[serde(default)]
+    deleted: u64,
+    #[serde(default)]
     errors: u64,
     first_error: Option<String>,
 }
@@ -184,9 +186,6 @@ impl Store {
     }
 
     pub async fn list_ornaments(&self) -> Result<Vec<Ornament>> {
-        // Read the base table stream and sort the small fixed (max 20 row)
-        // collection in Rust. This also avoids an ordered-stream query over an
-        // empty table, which the pinned driver decodes inconsistently.
         let mut stream = r
             .db(self.database.as_str())
             .table(TABLE)
@@ -210,11 +209,32 @@ impl Store {
     }
 
     pub async fn insert_invitations(&self, invitations: &[(i16, String)]) -> Result<()> {
-        let existing = self.list_ornaments().await?;
-        if !existing.is_empty() {
+        if !self.list_ornaments().await?.is_empty() {
             bail!("ornaments table is not empty; refusing to overwrite invitations");
         }
+        self.insert_invitation_documents(invitations).await
+    }
 
+    /// Add invitations into currently free ornament slots without touching existing rows.
+    pub async fn create_invitations(&self, invitations: &[(i16, String)]) -> Result<()> {
+        let existing = self.list_ornaments().await?;
+        let occupied: std::collections::HashSet<i16> =
+            existing.into_iter().map(|item| item.ornament_number).collect();
+
+        let mut numbers = std::collections::HashSet::new();
+        let mut hashes = std::collections::HashSet::new();
+        for (number, token_hash) in invitations {
+            if !(1..=20).contains(number) || occupied.contains(number) || !numbers.insert(*number) {
+                bail!("invitation ornament numbers must be unique free values between 1 and 20");
+            }
+            if !hashes.insert(token_hash) {
+                bail!("duplicate invitation token hash in batch");
+            }
+        }
+        self.insert_invitation_documents(invitations).await
+    }
+
+    async fn insert_invitation_documents(&self, invitations: &[(i16, String)]) -> Result<()> {
         let mut numbers = std::collections::HashSet::new();
         let mut hashes = std::collections::HashSet::new();
         for (number, token_hash) in invitations {
@@ -224,6 +244,9 @@ impl Store {
             if !hashes.insert(token_hash) {
                 bail!("duplicate invitation token hash in batch");
             }
+        }
+        if invitations.is_empty() {
+            bail!("at least one invitation is required");
         }
 
         let created_at = Utc::now().timestamp();
@@ -263,15 +286,44 @@ impl Store {
         Ok(())
     }
 
+    /// Atomically delete an invitation only while it is still unused.
+    pub async fn delete_unused_invitation(&self, number: i16) -> Result<bool> {
+        if !(1..=20).contains(&number) {
+            bail!("ornament number must be between 1 and 20");
+        }
+
+        let delete_if_unused = reql::func!(|document| {
+            r.branch(
+                document.clone().get_field("used").eq(false),
+                r.expr(Value::Null),
+                document
+            )
+        });
+        let result = self
+            .first::<WriteResult>(
+                r.db(self.database.as_str())
+                    .table(TABLE)
+                    .get(number)
+                    .replace(delete_if_unused),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("RethinkDB returned no invitation deletion result"))?;
+
+        if result.errors != 0 {
+            bail!(
+                "RethinkDB invitation deletion failed: {}",
+                result.first_error.unwrap_or_else(|| "unknown write error".into())
+            );
+        }
+        Ok(result.deleted == 1)
+    }
+
     pub async fn claim_invitation(
         &self,
         token_hash: &str,
         display_name: &str,
         message: &str,
     ) -> Result<Option<i16>> {
-        // get_all(token_hash, index).limit(1) selects at most one document.
-        // The conditional update function and its state change execute in one
-        // atomic single-document write; no read-then-write race is possible.
         let update = reql::func!(|document| {
             r.branch(r.args((
                 document.clone().get_field("used").eq(false),
@@ -311,8 +363,6 @@ impl Store {
             return Ok(None);
         }
 
-        // The claimed document is read back by its indexed token. This read is
-        // only for the response ornament number; it is not part of the claim.
         let mut stream = r
             .db(self.database.as_str())
             .table(TABLE)
@@ -367,8 +417,6 @@ impl Store {
         options.include_states = Some(true);
         options.include_types = Some(true);
 
-        // This session is dedicated to the long-lived feed. The reql driver
-        // locks a Session while a Changefeed is active, so CRUD uses self.session.
         let mut stream = r
             .db(self.database.as_str())
             .table(TABLE)
@@ -388,7 +436,6 @@ impl Store {
             }
 
             let Some(new_value) = change.get("new_val") else {
-                // State notifications and uninitial notifications are not greetings.
                 continue;
             };
             if new_value.is_null() {
