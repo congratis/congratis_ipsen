@@ -1,6 +1,6 @@
+use christmas_greetings::store::Store;
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
-use sqlx::postgres::PgPoolOptions;
 use std::{
     env,
     io::{self, Write},
@@ -26,49 +26,24 @@ async fn main() -> anyhow::Result<()> {
         .parse()?;
     anyhow::ensure!((1..=20).contains(&count), "count must be between 1 and 20");
 
-    let base =
-        env::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".into());
-    let db = env::var("DATABASE_URL")?;
-    let pool = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&db)
-        .await?;
+    let base = env::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".into());
+    let store = Store::connect().await?;
 
-    // The transaction below also protects against races after this preflight check.
-    let existing: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM participants WHERE ornament_number BETWEEN 1 AND $1",
-    )
-    .bind(count)
-    .fetch_one(&pool)
-    .await?;
-    anyhow::ensure!(
-        existing == 0,
-        "some requested ornament numbers already have invitations"
-    );
-
-    let mut tx = pool.begin().await?;
-    let mut rows = Vec::new();
-
+    let mut invitations = Vec::with_capacity(count as usize);
+    let mut output = Vec::with_capacity(count as usize);
     for number in 1..=count {
         let token = random_token();
-        sqlx::query("INSERT INTO participants (ornament_number, token_hash) VALUES ($1, $2)")
-            .bind(number)
-            .bind(hash(&token))
-            .execute(&mut *tx)
-            .await?;
-        rows.push((number, token));
+        invitations.push((number, hash(&token)));
+        output.push((number, token));
     }
 
-    tx.commit().await?;
+    // RethinkDB has no multi-document transaction. The store performs a
+    // preflight empty-table check and inserts the invitation batch once.
+    store.insert_invitations(&invitations).await?;
 
-    println!("ornament_number,personal_url,token");
-    for (number, token) in rows {
-        println!(
-            "{number},{}/?token={},{}",
-            base.trim_end_matches('/'),
-            token,
-            token
-        );
+    println!("ornament_number,personal_url");
+    for (number, token) in output {
+        println!("{number},{}/?token={token}", base.trim_end_matches('/'));
     }
     io::stdout().flush()?;
 
