@@ -30,6 +30,23 @@ async function load(){
   try{const r=await fetch('/api/greetings');if(!r.ok)throw new Error();greetings=await r.json();render()}
   catch(e){ornamentsEl.innerHTML='<p style="color:#ffd0a0">Не удалось загрузить ёлку. Обновите страницу.</p>'}
 }
+function applyGreeting(greeting){
+  const index=greetings.findIndex(item=>item.ornament_number===greeting.ornament_number);
+  if(index>=0)greetings[index]=greeting;else greetings.push(greeting);
+  render();
+}
+function connectRealtime(){
+  if(!('EventSource' in window))return;
+  const source=new EventSource('/api/events');
+  source.addEventListener('greeting',event=>{
+    try{applyGreeting(JSON.parse(event.data))}catch(e){console.warn('Invalid greeting event',e)}
+  });
+  source.addEventListener('resync',()=>load());
+  // EventSource fires onopen after the initial connection and every reconnect.
+  // A fresh snapshot repairs any events missed while the browser was offline.
+  source.onopen=()=>load();
+connectRealtime();
+}
 if(token){document.getElementById('greetingForm').dataset.token=token;showModal(formModal)}
 document.getElementById('greetingForm').addEventListener('submit',async e=>{
   e.preventDefault();
