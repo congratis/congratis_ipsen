@@ -300,11 +300,11 @@ impl Store {
             bail!("ornament number must be between 1 and 20");
         }
         let delete_if_allowed = reql::func!(|document| {
-            r.branch(
+            r.branch(r.args((
                 document.clone().get_field("used").eq(false).or(r.expr(confirm_used)),
                 r.expr(Value::Null),
                 document
-            )
+            )))
         });
         let result = self
             .first::<WriteResult>(
@@ -558,16 +558,17 @@ mod admin_invitation_tests {
         ensure!(store.list_ornaments().await?.is_empty());
 
         // The public SSE feed must tell connected clients to clear the deleted slot.
-        let removal = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                match event_rx.recv().await? {
-                    super::RealtimeEvent::Removed { ornament_number: 2 } => break Ok(()),
-                    _ => continue,
+                if matches!(
+                    event_rx.recv().await,
+                    Ok(super::RealtimeEvent::Removed { ornament_number: 2 })
+                ) {
+                    break;
                 }
             }
         })
-        .await??;
-        let _ = removal;
+        .await?;
         drop(events);
 
         Ok(())
