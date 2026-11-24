@@ -57,12 +57,12 @@ function renderOrnaments(items) {
       : `Создано: ${formatDate(item.created_at)}`;
     details.append(state, description);
     card.append(heading, details);
-    if (item && !item.used) {
+    if (item) {
       const remove = document.createElement('button');
       remove.className = 'danger-button';
       remove.type = 'button';
       remove.textContent = 'Удалить';
-      remove.addEventListener('click', () => deleteInvitation(number));
+      remove.addEventListener('click', () => deleteInvitation(number, item.used));
       card.append(remove);
     }
     ornamentList.append(card);
@@ -72,8 +72,11 @@ async function refresh() {
   const items = await api('/api/admin/ornaments');
   renderOrnaments(items);
 }
-async function deleteInvitation(number) {
-  if (!confirm(`Удалить неиспользованное приглашение для шара №${number}?`)) return;
+async function deleteInvitation(number, used) {
+  const warning = used
+    ? `Внимание: шар №${number} уже содержит поздравление. Удалить и приглашение, и поздравление без возможности восстановления?`
+    : `Удалить неиспользованное приглашение для шара №${number}?`;
+  if (!confirm(warning)) return;
   try {
     await api(`/api/admin/ornaments/${number}`, { method: 'DELETE' });
     await refresh();
