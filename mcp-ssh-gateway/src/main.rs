@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
 use std::{env, process::Stdio, time::Duration};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader},
     process::Command,
     time::timeout,
 };
@@ -79,6 +79,30 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace(char::from(39), "'\\''"))
 }
 
+async fn read_capped<R>(mut reader: R, limit: usize) -> std::io::Result<(Vec<u8>, bool)>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut kept = Vec::with_capacity(limit.min(8192));
+    let mut chunk = [0_u8; 8192];
+    let mut truncated = false;
+
+    loop {
+        let count = reader.read(&mut chunk).await?;
+        if count == 0 {
+            break;
+        }
+        let remaining = limit.saturating_sub(kept.len());
+        let keep = remaining.min(count);
+        kept.extend_from_slice(&chunk[..keep]);
+        if keep < count {
+            truncated = true;
+        }
+    }
+
+    Ok((kept, truncated))
+}
+
 async fn run_exec(config: &Config, command: &str, timeout_ms: u64) -> Result<String> {
     if command.trim().is_empty() { bail!("command must not be empty"); }
     if command.as_bytes().len() > config.max_command_bytes {
@@ -116,16 +140,10 @@ async fn run_exec(config: &Config, command: &str, timeout_ms: u64) -> Result<Str
     let stderr = child.stderr.take().context("missing SSH stderr")?;
     let max_out = config.max_output_bytes;
 
-    let out_task = tokio::spawn(async move {
-        let mut bytes = Vec::new();
-        let mut reader = stdout.take((max_out + 1) as u64);
-        reader.read_to_end(&mut bytes).await.map(|_| bytes)
-    });
-    let err_task = tokio::spawn(async move {
-        let mut bytes = Vec::new();
-        let mut reader = stderr.take(16 * 1024);
-        reader.read_to_end(&mut bytes).await.map(|_| bytes)
-    });
+    // Drain both pipes completely so a verbose remote process cannot block on a
+    // full pipe. Retain only a bounded prefix in memory.
+    let out_task = tokio::spawn(read_capped(stdout, max_out));
+    let err_task = tokio::spawn(read_capped(stderr, 16 * 1024));
 
     let effective_timeout = timeout_ms.clamp(1_000, HARD_TIMEOUT_MS);
     let status = match timeout(Duration::from_millis(effective_timeout), child.wait()).await {
