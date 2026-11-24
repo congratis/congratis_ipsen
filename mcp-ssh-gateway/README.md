@@ -61,7 +61,7 @@ This grants root-equivalent power. Keep the private key tightly controlled and r
 - SSH uses batch mode, identity pinning, connection timeout and keepalives.
 - Command size, execution time and captured output are bounded.
 - Tool arguments are JSON-schema validated and passed as one safely quoted remote shell argument.
-- Audit events are written to stderr. They record the target, SSH account, sudo mode, command byte length, outcome, and errors; the command text itself is deliberately not logged to avoid leaking secrets.
+- Audit events are written to stderr. They record the target, SSH account, sudo mode, command byte length, and outcome; command text and remote stderr are not copied into audit records to avoid leaking secrets.
 - The Gateway does not expose a network listener; stdio is the transport.
 
 No VPS connection, key provisioning, or production command has been performed by this repository change.
