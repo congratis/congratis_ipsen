@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{convert::Infallible, env, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{broadcast, Mutex};
-use christmas_greetings::store::{GreetingEvent, Ornament, ParticipantAccess, RealtimeEvent, Store};
+use christmas_greetings::store::{Ornament, ParticipantAccess, RealtimeEvent, Store};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
@@ -76,6 +76,35 @@ struct CreateInvitations {
 #[derive(Deserialize)]
 struct DeleteOrnament {
     confirm_used: bool,
+}
+
+#[derive(Deserialize)]
+struct CreateParticipant {
+    label: String,
+}
+
+#[derive(Serialize)]
+struct ParticipantSummary {
+    id: String,
+    label: String,
+    created_at: i64,
+    revoked: bool,
+}
+
+impl From<ParticipantAccess> for ParticipantSummary {
+    fn from(item: ParticipantAccess) -> Self {
+        Self {
+            id: item.id,
+            label: item.label,
+            created_at: item.created_at,
+            revoked: item.revoked,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct ParticipantExchange {
+    token: String,
 }
 
 #[derive(Serialize)]
