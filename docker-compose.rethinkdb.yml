@@ -1,0 +1,46 @@
+services:
+  rethinkdb:
+    image: rethinkdb:2.4.4-bookworm-slim
+    command:
+      - rethinkdb
+      - --bind
+      - all
+      - --no-http-admin
+      - --initial-password
+      - ${RETHINKDB_PASSWORD:?Set RETHINKDB_PASSWORD in .env}
+    restart: unless-stopped
+    volumes:
+      - rethinkdb_data:/data
+    expose:
+      - "28015"
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "rethinkdb admin --help >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rethinkdb-probe:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["tools"]
+    command: ["rethinkdb-probe"]
+    environment:
+      RETHINKDB_HOST: rethinkdb
+      RETHINKDB_PORT: "28015"
+      RETHINKDB_USER: admin
+      RETHINKDB_PASSWORD: ${RETHINKDB_PASSWORD:?Set RETHINKDB_PASSWORD in .env}
+    depends_on:
+      rethinkdb:
+        condition: service_started
+    networks:
+      - data
+
+volumes:
+  rethinkdb_data:
+
+networks:
+  data:
+    internal: true
