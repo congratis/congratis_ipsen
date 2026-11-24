@@ -1,4 +1,4 @@
-use christmas_greetings::store::Store;
+use christmas_greetings::store::{RealtimeEvent, Store};
 use sha2::{Digest, Sha256};
 use std::{env, time::Duration};
 use tokio::sync::{broadcast, watch};
@@ -60,9 +60,14 @@ async fn committed_greeting_is_published_by_changefeed() {
         .expect("Changefeed should publish the committed greeting")
         .expect("broadcast event should be available");
 
-    assert_eq!(event.ornament_number, 1);
-    assert_eq!(event.display_name, "Realtime tester");
-    assert_eq!(event.message, "Changefeed delivery works");
+    match event {
+        RealtimeEvent::Greeting(greeting) => {
+            assert_eq!(greeting.ornament_number, 1);
+            assert_eq!(greeting.display_name, "Realtime tester");
+            assert_eq!(greeting.message, "Changefeed delivery works");
+        }
+        RealtimeEvent::Removed { .. } => panic!("expected a greeting event"),
+    }
 
     feed_task.abort();
 }

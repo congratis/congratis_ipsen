@@ -1,7 +1,7 @@
 name: Rust CI
 on:
   push:
-    branches: [main]
+    branches: [main, feat/admin-invitations]
   pull_request:
     branches: [main]
 concurrency:
@@ -28,6 +28,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all
+      - name: Check frontend JavaScript syntax
+        run: node --check frontend/app.js && node --check frontend/admin/admin.js
       - name: Compile all targets
         run: cargo check --all-targets
       - name: Run tests

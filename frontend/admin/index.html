@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#071b18">
+  <title>Congratis — Администрирование</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <div class="snow" aria-hidden="true"></div>
+  <main class="admin-shell">
+    <header class="admin-header">
+      <a class="back-link" href="/">← К ёлке</a>
+      <div class="eyebrow">CONGRATIS CONTROL PANEL</div>
+      <h1>Управление <span>приглашениями</span></h1>
+      <p>Создание персональных ссылок и контроль 20 шаров.</p>
+    </header>
+    <section id="loginPanel" class="admin-panel login-panel">
+      <h2>Вход администратора</h2>
+      <form id="loginForm">
+        <label for="adminToken">Административный ключ</label>
+        <input id="adminToken" type="password" autocomplete="current-password" required minlength="32" placeholder="Вставьте ADMIN_TOKEN">
+        <p id="loginError" class="status-message" role="alert"></p>
+        <button class="primary" type="submit">Войти</button>
+      </form>
+    </section>
+    <section id="dashboard" hidden>
+      <div class="toolbar">
+        <div><h2>Приглашения</h2><p id="summary" class="muted">Загрузка…</p></div>
+        <button id="logoutButton" class="secondary" type="button">Выйти</button>
+      </div>
+      <section class="admin-panel">
+        <h3>Доступ участников к ёлке</h3>
+        <form id="participantForm" class="create-form">
+          <label for="participantLabel">Имя участника</label>
+          <div class="create-controls">
+            <input id="participantLabel" type="text" maxlength="80" required placeholder="Например, Анна">
+            <button class="primary" type="submit">Создать ссылку</button>
+          </div>
+        </form>
+        <p id="participantStatus" class="status-message" role="status"></p>
+        <div id="participantCreated" class="created-links" hidden>
+          <h4>Персональная ссылка — передайте участнику</h4>
+          <p class="muted">Ссылка показывается только один раз. Участнику нужна именно эта ссылка для просмотра ёлки.</p>
+          <a id="participantCreatedLink" target="_blank" rel="noopener noreferrer"></a>
+        </div>
+        <div class="list-heading"><h3>Участники</h3><button id="refreshParticipants" class="secondary" type="button">Обновить</button></div>
+        <div id="participantList" class="ornament-list"></div>
+      </section>
+      <section class="admin-panel create-panel">
+        <h3>Создать приглашения</h3>
+        <form id="createForm" class="create-form">
+          <label for="createCount">Количество свободных шаров</label>
+          <div class="create-controls">
+            <input id="createCount" type="number" min="1" max="20" value="1" required>
+            <button class="primary" type="submit">Создать ссылки</button>
+          </div>
+        </form>
+        <p id="createStatus" class="status-message" role="status"></p>
+        <div id="createdLinks" class="created-links" hidden>
+          <h4>Новые ссылки — скопируйте и сохраните сейчас</h4>
+          <p class="muted">Полные ссылки показываются только один раз. После закрытия этого блока восстановить токены будет невозможно.</p>
+          <ul id="createdLinkList"></ul>
+        </div>
+      </section>
+      <section class="admin-panel">
+        <div class="list-heading"><h3>Состояние шаров</h3><button id="refreshButton" class="secondary" type="button">Обновить</button></div>
+        <div id="ornamentList" class="ornament-list" aria-live="polite"></div>
+      </section>
+    </section>
+    <footer>Административный доступ защищён отдельным ключом. Не передавайте его участникам.</footer>
+  </main>
+  <script src="/admin/admin.js" defer></script>
+</body>
+</html>
