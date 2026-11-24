@@ -1,14 +1,19 @@
 use axum::{
     extract::State,
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
     routing::get,
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{env, net::SocketAddr};
-use christmas_greetings::store::Store;
+use std::{convert::Infallible, env, net::SocketAddr, time::Duration};
+use futures::stream;
+use tokio::sync::broadcast;
+use christmas_greetings::store::{GreetingEvent, Store};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
@@ -16,6 +21,7 @@ use tracing_subscriber::EnvFilter;
 #[derive(Clone)]
 struct AppState {
     store: Store,
+    events: broadcast::Sender<GreetingEvent>,
 }
 
 #[derive(Serialize)]
@@ -47,6 +53,31 @@ impl IntoResponse for ApiError {
 
 fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
+}
+
+async fn events(
+    State(state): State<AppState>,
+) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
+    let receiver = state.events.subscribe();
+    let stream = stream::unfold(receiver, |mut receiver| async move {
+        let event = match receiver.recv().await {
+            Ok(greeting) => Event::default()
+                .event("greeting")
+                .json_data(greeting)
+                .unwrap_or_else(|_| Event::default().event("resync").data("snapshot")),
+            Err(broadcast::error::RecvError::Lagged(_)) => {
+                Event::default().event("resync").data("snapshot")
+            }
+            Err(broadcast::error::RecvError::Closed) => return None,
+        };
+        Some((Ok::<Event, Infallible>(event), receiver))
+    });
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    )
 }
 
 async fn health(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
@@ -146,9 +177,17 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let store = Store::connect().await?;
-    let state = AppState { store };
+    let (events, _) = broadcast::channel(256);
+    let feed_store = store.clone();
+    let feed_events = events.clone();
+    tokio::spawn(async move {
+        feed_store.supervise_changefeed(feed_events).await;
+    });
+
+    let state = AppState { store, events };
     let app = Router::new()
         .route("/api/health", get(health))
+        .route("/api/events", get(events))
         .route("/api/greetings", get(list_greetings).post(submit))
         .fallback_service(ServeDir::new("frontend").append_index_html_on_directories(true))
         .with_state(state)
