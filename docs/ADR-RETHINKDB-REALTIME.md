@@ -17,20 +17,25 @@ A separate unofficial `unreql` project exists, but its repository is small and i
 
 RethinkDB guarantees atomic writes per document, not across multiple documents. The old PostgreSQL model split participants and greetings across tables and relied on a SQL transaction. That model must not be ported literally.
 
-Use one document per ornament in a table named `ornaments`, with the ornament number as its primary key:
+Use one document per ornament in a table named `ornaments`. The SHA-256 token hash is the **primary key** (`id`); `ornament_number` is a secondary unique index:
 
 ```json
 {
-  "id": "1",
+  "id": "<sha256-token-hash>",
   "ornament_number": 1,
-  "token_hash": "<sha256>",
   "used": false,
-  "greeting": null,
-  "created_at": 1795500000
+  "display_name": null,
+  "message": null,
+  "created_at": 1795500000,
+  "used_at": null
 }
 ```
 
-Create a secondary index on `token_hash`. Invitation submission must locate the document and perform a single-document conditional update/replace. The operation must verify `used == false`, write the greeting and set `used = true` in that same document. Do not implement a separate read-then-write check. Verify the exact ReQL query is atomic and race-safe with a concurrent integration test.
+This key choice is intentional: invitation redemption can address exactly one document with `get(token_hash)`, avoiding a lookup through a secondary index followed by a separate write. The redemption query must use a single-document conditional ReQL `update` function (or equivalent `replace`) that checks the current document's `used` state and, only when false, sets `used = true`, writes the greeting fields, and records `used_at`. The conditional check and mutation must be part of the same atomic single-document write. Do not perform a read-then-write sequence, and do not use a filtered multi-document selection as the atomicity boundary.
+
+Treat a write as successful only when the ReQL write result reports exactly one replaced document and zero errors; inspect `errors` and `first_error` because ReQL may report per-document write errors in the result rather than raising an exception. Add a concurrent integration test proving that two simultaneous submissions for the same token result in exactly one success and one conflict.
+
+The generator creates one document for each ornament and stores only the hash as the primary key. The unique ornament index prevents duplicate ornament assignments.
 
 The invitation generator must not print the raw token in a separate CSV column if the personal URL already contains it. Keep the raw token only in the one-time invitation output; persist only its SHA-256 hash.
 
@@ -56,6 +61,7 @@ RethinkDB starts with `--initial-password`; use a long random secret from the VP
 ## Required implementation gates
 
 1. Pin the official RethinkDB image to a tested 2.4.x tag and pin `reql = 0.11.2`.
+2. Confirm the Rust driver's conditional update API can express the atomic `get(token_hash).update(function)` query; keep the integration race test as the release gate.
 2. Install `protobuf-compiler` in the Rust builder if required by the driver build.
 3. Add integration tests against a real RethinkDB service in CI:
    - initialize database and tables idempotently;
