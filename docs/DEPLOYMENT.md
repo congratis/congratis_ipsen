@@ -41,7 +41,7 @@ cd /opt/congratis
 git fetch origin
 git switch feat/rethinkdb-sse
 git pull --ff-only origin feat/rethinkdb-sse
-cp .env.example .env
+if [ ! -f .env ]; then cp .env.example .env; fi
 ```
 
 Edit `.env` and set:
