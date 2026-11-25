@@ -514,9 +514,10 @@ fn participant_tree(state: AppState) -> Dom {
                                     format!("Все {} поздравлений просмотрены", count)
                                 )
                             };
+                            let finale = Mutable::new(index == count && count > 0);
                             Some(html!("div", {
                                 .class("presentation-content")
-                                .class(if index == count && count > 0 { "presentation-finale" } else { "presentation-slide" })
+                                .class_signal("presentation-finale", finale.signal())
                                 .child(html!("div", {.class("kicker").text("CONGRATIS · NEW YEAR PRESENTATION")}))
                                 .child(html!("h2", {
                                     .attr("id", "presentation-title")
