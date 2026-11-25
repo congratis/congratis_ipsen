@@ -1,5 +1,5 @@
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -53,6 +53,34 @@ impl IntoResponse for ApiError {
 
 fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
+}
+
+async fn admin_reissue_invitation(
+    State(state): State<AppState>, headers: HeaderMap, Path(number): Path<i16>
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "admin" { return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав")); }
+    if !(1..=20).contains(&number) { return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректный номер шара")); }
+    let token = random_secret();
+    let changed = state.store.reissue_invitation(number, &digest(&token)).await.map_err(|e| {
+        tracing::error!(?e, "invitation reissue failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось перевыпустить приглашение")
+    })?;
+    if !changed { return Err(ApiError(StatusCode::CONFLICT, "Приглашение уже активировано, использовано или номер не существует")); }
+    Ok(Json(serde_json::json!({"ornament_number":number,"token":token})))
+}
+async fn admin_revoke_invitation(
+    State(state): State<AppState>, headers: HeaderMap, Path(number): Path<i16>
+) -> Result<StatusCode, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "admin" { return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав")); }
+    if !(1..=20).contains(&number) { return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректный номер шара")); }
+    let changed = state.store.revoke_invitation(number).await.map_err(|e| {
+        tracing::error!(?e, "invitation revoke failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось отозвать приглашение")
+    })?;
+    if !changed { return Err(ApiError(StatusCode::CONFLICT, "Приглашение уже активировано, использовано или номер не существует")); }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn sse_events(

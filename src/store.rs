@@ -427,3 +427,49 @@ impl Store {
         Ok(())
     }
 }
+
+impl Store {
+    pub async fn reissue_invitation(&self, ornament_number: i16, token_hash: &str) -> Result<bool> {
+        let update = reql::func!(|document| {
+            r.branch(
+                r.args((
+                    document.clone().get_field("activated").default(false).eq(false)
+                        .and(document.clone().get_field("used").eq(false)),
+                    document.clone().merge(r.expr(json!({
+                        "token_hash": token_hash,
+                        "revoked": false,
+                        "created_at": Utc::now().timestamp()
+                    }))),
+                    document
+                ))
+            )
+        });
+        let result = self.first::<WriteResult>(
+            r.db(self.database.as_str()).table(TABLE).get(ornament_number).update(update)
+        ).await?.ok_or_else(|| anyhow!("missing invitation reissue result"))?;
+        if result.errors != 0 {
+            bail!("invitation reissue failed: {}", result.first_error.unwrap_or_default());
+        }
+        Ok(result.replaced == 1)
+    }
+
+    pub async fn revoke_invitation(&self, ornament_number: i16) -> Result<bool> {
+        let update = reql::func!(|document| {
+            r.branch(
+                r.args((
+                    document.clone().get_field("activated").default(false).eq(false)
+                        .and(document.clone().get_field("used").eq(false)),
+                    document.clone().merge(r.expr(json!({"revoked": true}))),
+                    document
+                ))
+            )
+        });
+        let result = self.first::<WriteResult>(
+            r.db(self.database.as_str()).table(TABLE).get(ornament_number).update(update)
+        ).await?.ok_or_else(|| anyhow!("missing invitation revoke result"))?;
+        if result.errors != 0 {
+            bail!("invitation revoke failed: {}", result.first_error.unwrap_or_default());
+        }
+        Ok(result.replaced == 1)
+    }
+}
