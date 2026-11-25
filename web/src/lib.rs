@@ -57,7 +57,14 @@ fn set_note(state: &AppState, value: impl Into<String>) { state.note.set(value.i
 async fn load_greetings(state: AppState) {
     match get_json::<Vec<Greeting>>("/api/greetings").await {
         Ok(mut items) => {
+            // Preserve committed SSE updates that may arrive while this snapshot is in flight.
+            for greeting in state.greetings.get_cloned() {
+                if !items.iter().any(|item| item.ornament_number == greeting.ornament_number) {
+                    items.push(greeting);
+                }
+            }
             items.sort_by_key(|greeting| greeting.ornament_number);
+            state.submitted_count.set(items.len());
             state.greetings.set(items);
         },
         Err(error) => set_note(&state, format!("Не удалось загрузить поздравления: {error}")),
