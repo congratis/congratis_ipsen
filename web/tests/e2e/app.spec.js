@@ -187,3 +187,34 @@ test("participant receives a published greeting through the SSE stream", async (
   await expect(page.getByRole("heading", { name: "С теплом, Мария" })).toBeVisible();
   await expect(page.getByText("Счастья и радости!")).toBeVisible();
 });
+
+test("greeting viewer navigates in deterministic ornament order and exposes dialog semantics", async ({ page }) => {
+  await mockParticipantSession(page);
+  await page.route("**/api/greetings", route =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { ornament_number: 2, display_name: "Борис", message: "Пусть сбудутся мечты!" },
+        { ornament_number: 1, display_name: "Анна", message: "Счастья и здоровья!" }
+      ])
+    })
+  );
+
+  await page.goto("/#invite=valid-invite-token");
+  await expect(page.locator(".tree-frame")).toBeVisible();
+  await page.getByRole("button", { name: "Шар номер 1", exact: true }).click();
+
+  const dialog = page.getByRole("dialog", { name: "С теплом, Анна" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Поздравление 1 из 2")).toBeVisible();
+  await expect(dialog.getByText("Счастья и здоровья!")).toBeVisible();
+
+  await dialog.getByRole("button", { name: "Следующее поздравление" }).click();
+  await expect(page.getByRole("dialog", { name: "С теплом, Борис" })).toBeVisible();
+  await expect(page.getByText("Поздравление 2 из 2")).toBeVisible();
+  await expect(page.getByText("Пусть сбудутся мечты!")).toBeVisible();
+
+  await page.getByRole("dialog").getByRole("button", { name: "Предыдущее поздравление" }).click();
+  await expect(page.getByRole("dialog", { name: "С теплом, Анна" })).toBeVisible();
+});
