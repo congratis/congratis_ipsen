@@ -574,7 +574,10 @@ fn participant_tree(state: AppState) -> Dom {
                                     .attr("type", "button")
                                     .attr("aria-label", "Предыдущее поздравление")
                                     .text("← Назад")
-                                    .event(clone!(state => move |_: events::Click| state.selected.set(Some(item.clone()))))
+                                    .event(clone!(state => move |_: events::Click| {
+                                        state.selected.set(Some(item.clone()));
+                                        schedule_dialog_focus("greeting-dialog");
+                                    }))
                                 }),
                                 None => html!("button", {
                                     .class("secondary")
