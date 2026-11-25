@@ -82,9 +82,27 @@ fn remember_dialog_trigger(state: &AppState, event: &events::Click) {
     }
 }
 fn restore_dialog_focus(state: &AppState) {
-    if let Some(element) = state.dialog_return_focus.get_cloned() {
+    let Some(element) = state.dialog_return_focus.get_cloned() else { return; };
+    let Some(window) = web_sys::window() else { return; };
+    let callback = Closure::once_into_js(move || {
         let _ = element.focus();
+    });
+    let _ = window.request_animation_frame(callback.unchecked_ref());
+}
+fn focus_first_dialog_control(dialog_id: &'static str) {
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
+    let Some(dialog) = document.get_element_by_id(dialog_id) else { return; };
+    let Ok(Some(control)) = dialog.query_selector(
+        "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])"
+    ) else { return; };
+    if let Ok(control) = control.dyn_into::<web_sys::HtmlElement>() {
+        let _ = control.focus();
     }
+}
+fn schedule_dialog_focus(dialog_id: &'static str) {
+    let Some(window) = web_sys::window() else { return; };
+    let callback = Closure::once_into_js(move || focus_first_dialog_control(dialog_id));
+    let _ = window.request_animation_frame(callback.unchecked_ref());
 }
 fn trap_dialog_focus(event: &events::KeyDown, dialog_id: &str) {
     if event.key() != "Tab" { return; }
@@ -462,6 +480,7 @@ fn participant_tree(state: AppState) -> Dom {
                             if let Some(g)=greeting.clone() {
                                 remember_dialog_trigger(&state, &event);
                                 state.selected.set(Some(g));
+                                schedule_dialog_focus("greeting-dialog");
                             }
                             else if mine { show_form(state.clone()); }
                             else { set_note(&state, "Этот шар пока свободен"); }
@@ -505,6 +524,7 @@ fn participant_tree(state: AppState) -> Dom {
                                  .event(clone!(button_state => move |event: events::Click| {
                                     remember_dialog_trigger(&button_state, &event);
                                     start_presentation(button_state.clone());
+                                    schedule_dialog_focus("presentation-dialog");
                                 }))
                             }))
                         }))
@@ -878,6 +898,7 @@ fn show_form(state: AppState) {
     if let Some(document) = web_sys::window().and_then(|window| window.document()) {
         if let Some(root) = document.get_element_by_id("app") {
             append_dom(&root, dialog);
+            schedule_dialog_focus("submission-dialog");
         }
     }
 }
