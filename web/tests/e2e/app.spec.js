@@ -441,8 +441,16 @@ test("greeting viewer navigates in deterministic ornament order and exposes dial
   await expect(dialog).toBeVisible();
   const close = dialog.getByRole("button", { name: "Закрыть поздравление" });
   const returnButton = dialog.getByRole("button", { name: "Вернуться к ёлке" });
+  const dialogState = await dialog.evaluate(element => ({
+    tag: element.tagName,
+    open: element.open,
+    modal: element.matches(":modal"),
+    active: document.activeElement?.outerHTML
+  }));
+  console.log("native dialog state", dialogState);
   await expect(close).toBeFocused();
   await page.keyboard.press("Shift+Tab");
+  console.log("active after Shift+Tab", await page.evaluate(() => document.activeElement?.outerHTML));
   await expect(returnButton).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(close).toBeFocused();
