@@ -510,7 +510,7 @@ fn participant_tree(state: AppState) -> Dom {
                             )
                         };
                         Some(html!("section", {
-                            .class("presentation-card")
+                            .class(if index == count && count > 0 { "presentation-card presentation-finale" } else { "presentation-card" })
                             .attr("role", "dialog")
                             .attr("aria-modal", "true")
                             .attr("aria-labelledby", "presentation-title")

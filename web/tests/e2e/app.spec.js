@@ -322,6 +322,20 @@ test("presentation mode navigates greetings and supports audio controls and sile
   await expect(dialog).toBeVisible();
   await expect(page.locator(".ornament.presenting")).toHaveAttribute("aria-label", "Шар номер 2");
 
+  // The last forward action must lead to a distinct finale, not a blank/overflow state.
+  await page.getByRole("button", { name: "Следующее поздравление" }).click();
+  dialog = page.getByRole("dialog", { name: "С Новым годом!" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveClass(/presentation-finale/);
+  await expect(dialog.getByText("Все 2 поздравлений просмотрены")).toBeVisible();
+
+  // Replay starts from the first greeting and restores its ornament highlight.
+  await dialog.getByRole("button", { name: "Повторить" }).click();
+  dialog = page.getByRole("dialog", { name: "С теплом, Анна" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Поздравление 1 из 2")).toBeVisible();
+  await expect(page.locator(".ornament.presenting")).toHaveAttribute("aria-label", "Шар номер 1");
+
   await page.getByRole("button", { name: "Включить или выключить звук" }).click();
   await page.getByRole("slider", { name: "Громкость музыки" }).fill("0.4");
   await page.getByRole("button", { name: "Вернуться к ёлке" }).click();
