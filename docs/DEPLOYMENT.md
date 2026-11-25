@@ -110,7 +110,7 @@ For an existing production checkout that still has the old `TLS_PROVIDER=globals
 ```bash
 cd /opt/congratis
 sed -i '/^TLS_PROVIDER=/d; /^TLS_MODE=/d' .env
-printf '\\nTLS_MODE=globalsign\\n' >> .env
+printf '\nTLS_MODE=globalsign\n' >> .env
 grep -n '^TLS_MODE=' .env
 ```
 
