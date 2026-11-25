@@ -32,6 +32,7 @@ jobs:
       backend: ${{ steps.manual.outputs.backend || steps.filter.outputs.backend }}
       infrastructure: ${{ steps.manual.outputs.infrastructure || steps.filter.outputs.infrastructure }}
     steps:
+      - uses: actions/checkout@v4
       - name: Detect changed paths
         id: filter
         if: github.event_name == 'pull_request' || github.event_name == 'push'
