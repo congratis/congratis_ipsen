@@ -18,8 +18,8 @@ fi
 CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
 ARCH="$(dpkg --print-architecture)"
 
-if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "24.04" || "${CODENAME}" != "noble" ]]; then
-  echo "This installer targets Ubuntu 24.04 LTS (noble); detected ${PRETTY_NAME:-unknown} (${CODENAME:-unknown})." >&2
+if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "26.04" || "${CODENAME}" != "noble" ]]; then
+  echo "This installer targets Ubuntu 26.04 LTS (resolute); detected ${PRETTY_NAME:-unknown} (${CODENAME:-unknown})." >&2
   exit 1
 fi
 
