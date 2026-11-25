@@ -1,14 +1,109 @@
-name: Rust CI
+name: Congratis CI
+
 on:
   push:
-    branches: [main, feat/backend-auth, feat/dominator-spa]
+    branches:
+      - main
+      - feat/backend-auth
+      - feat/dominator-spa
+      - feat/rethinkdb-sse
   pull_request:
-    branches: [main, feat/rethinkdb-sse]
+    branches:
+      - main
+      - feat/rethinkdb-sse
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
 concurrency:
   group: congratis-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
 jobs:
-  check:
+  changes:
+    name: Detect changed components
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.manual.outputs.frontend || steps.filter.outputs.frontend }}
+      backend: ${{ steps.manual.outputs.backend || steps.filter.outputs.backend }}
+      infrastructure: ${{ steps.manual.outputs.infrastructure || steps.filter.outputs.infrastructure }}
+    steps:
+      - name: Detect changed paths
+        id: filter
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            frontend:
+              - 'web/**'
+              - 'frontend/**'
+              - '.github/workflows/**'
+            backend:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'build.rs'
+              - 'src/**'
+              - 'tests/**'
+              - '.github/workflows/**'
+            infrastructure:
+              - 'Dockerfile'
+              - 'docker-compose.yml'
+              - '.dockerignore'
+              - '.env.example'
+              - 'deploy/**'
+              - 'scripts/**'
+              - '.github/workflows/**'
+      - name: Run all component checks for scheduled and manual builds
+        id: manual
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+        run: |
+          echo "frontend=true" >> "$GITHUB_OUTPUT"
+          echo "backend=true" >> "$GITHUB_OUTPUT"
+          echo "infrastructure=true" >> "$GITHUB_OUTPUT"
+
+  frontend:
+    name: Frontend · Rust/WASM + Rollup
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            web -> web/target
+      - name: Check WASM formatting
+        run: cargo fmt --manifest-path web/Cargo.toml -- --check
+      - name: Compile Dominator frontend
+        run: cargo check --manifest-path web/Cargo.toml --target wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package.json
+      - name: Build frontend with Rollup
+        working-directory: web
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v4
+        with:
+          name: congratis-frontend
+          path: web/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  backend:
+    name: Backend · Rust + RethinkDB
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     services:
       rethinkdb:
@@ -26,17 +121,11 @@ jobs:
       - name: Install protobuf compiler
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: Swatinem/rust-cache@v2
-      - name: Check formatting
-        run: cargo fmt --all
-      - name: Install WASM target
-        run: rustup target add wasm32-unknown-unknown
-      - name: Check Dominator frontend formatting
-        run: cargo fmt --manifest-path web/Cargo.toml
-      - name: Check Dominator frontend
-        run: cargo check --manifest-path web/Cargo.toml --target wasm32-unknown-unknown
-      - name: Compile all targets
+      - name: Check backend formatting
+        run: cargo fmt --all -- --check
+      - name: Compile all backend targets
         run: cargo check --all-targets
-      - name: Run tests
+      - name: Run backend tests
         env:
           RETHINKDB_HOST: 127.0.0.1
           RETHINKDB_PORT: "28015"
@@ -48,7 +137,39 @@ jobs:
           RETHINKDB_HOST: 127.0.0.1
           RETHINKDB_PORT: "28015"
         run: cargo run --bin rethinkdb-probe
-      - name: Build production Docker image
+
+  infrastructure:
+    name: Infrastructure · Compose + Nginx
+    needs: changes
+    if: needs.changes.outputs.infrastructure == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate deployment scripts
+        run: bash -n deploy/scripts/*.sh && sh -n deploy/nginx/entrypoint.sh
+      - name: Prepare Compose validation environment
+        run: cp .env.example .env
+      - name: Validate production Compose configuration
+        run: docker compose config --quiet
+      - name: Build Nginx edge image
+        run: docker compose build nginx
+      - name: Validate Nginx bootstrap configuration
+        run: docker compose run --rm -e NGINX_TEST_ONLY=1 nginx
+      - name: Validate Nginx TLS configuration
+        run: docker compose run --rm -e NGINX_TEST_ONLY=1 -e NGINX_FORCE_HTTPS=1 nginx
+
+  production:
+    name: Production · Full Docker stack
+    needs: changes
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'pull_request' && github.base_ref == 'main' && needs.changes.outputs.infrastructure == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production application image
         run: docker build --tag congratis:ci .
       - name: Prepare Compose validation environment
         run: cp .env.example .env
@@ -73,8 +194,33 @@ jobs:
           done
           docker compose logs nginx app rethinkdb
           exit 1
-      - name: Validate deployment scripts
-        run: bash -n deploy/scripts/*.sh && sh -n deploy/nginx/entrypoint.sh
       - name: Stop Compose stack
         if: always()
         run: if [ -f .env ]; then docker compose down --volumes --remove-orphans; fi
+
+  ci:
+    name: CI · Required checks
+    if: always()
+    needs:
+      - changes
+      - frontend
+      - backend
+      - infrastructure
+      - production
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify relevant checks
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          FRONTEND: ${{ needs.frontend.result }}
+          BACKEND: ${{ needs.backend.result }}
+          INFRASTRUCTURE: ${{ needs.infrastructure.result }}
+          PRODUCTION: ${{ needs.production.result }}
+        run: |
+          for result in "$CHANGES" "$FRONTEND" "$BACKEND" "$INFRASTRUCTURE" "$PRODUCTION"; do
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              echo "A required CI job failed or was cancelled."
+              exit 1
+            fi
+          done
+          echo "All checks required for the changed components have passed."
