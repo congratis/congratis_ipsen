@@ -588,24 +588,22 @@ fn participant_tree(state: AppState) -> Dom {
                     .class("overlay")
                     .attr("id", "greeting-dialog")
                     .attr("aria-labelledby", "greeting-title")
-                    .apply(|dom| {
-                        dom.event_with_options(
-                            &EventOptions { bubbles: true, preventable: true },
-                            clone!(state => move |event: events::KeyDown| {
-                                match event.key().as_str() {
-                                    "Escape" => {
-                                        event.prevent_default();
-                                        state.selected.set(None);
-                                        restore_dialog_focus(&state);
-                                    }
-                                    "Tab" => {
-                                        trap_dialog_focus(&event, "greeting-dialog");
-                                    }
-                                    _ => {}
+                    .event_with_options(
+                        &EventOptions { bubbles: true, preventable: true },
+                        clone!(state => move |event: events::KeyDown| {
+                            match event.key().as_str() {
+                                "Escape" => {
+                                    event.prevent_default();
+                                    state.selected.set(None);
+                                    restore_dialog_focus(&state);
                                 }
-                            }),
-                        )
-                    })
+                                "Tab" => {
+                                    trap_dialog_focus(&event, "greeting-dialog");
+                                }
+                                _ => {}
+                            }
+                        })
+                    )
                     .child(html!("section", {
                         .class("dialog")
                         
