@@ -25,7 +25,7 @@ echo "Checking unauthenticated API access..."
 request 401 "$BASE_URL/api/me"
 
 echo "Creating disposable one-time invitations..."
-invitation="$(docker compose exec -T app generate-tokens 20 | awk -F, '$1 == 1 { line = $0 } END { print line })"
+invitation="$(docker compose exec -T app generate-tokens 20 | awk -F, '$1 == 1 { line = $0 } END { print line }')"
 IFS=, read -r ornament token <<< "$invitation"
 [[ "$ornament" == "1" && "${#token}" == "64" ]]
 
