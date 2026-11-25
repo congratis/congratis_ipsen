@@ -348,6 +348,7 @@ fn participant_tree(state: AppState) -> Dom {
                 Some(html!("div", {
                     .class("tree-progress")
                     .child_signal(state.submitted_count.signal().map(move |submitted_count| {
+                        let button_state = state.clone();
                         let safe_submitted = submitted_count.min(participant_count);
                         let percent = if participant_count == 0 { 0.0 } else {
                             safe_submitted as f64 / participant_count as f64 * 100.0
@@ -374,7 +375,7 @@ fn participant_tree(state: AppState) -> Dom {
                                 .class("presentation-launch")
                                 .attr("type", "button")
                                 .text("▶ Play")
-                                .event(clone!(state => move |_: events::Click| start_presentation(state.clone())))
+                                 .event(clone!(button_state => move |_: events::Click| start_presentation(button_state.clone())))
                             }))
                         }))
                     }))
