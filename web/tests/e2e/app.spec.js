@@ -246,6 +246,53 @@ test("participant receives a published greeting through the SSE stream", async (
   await expect(page.getByText("Счастья и радости!")).toBeVisible();
 });
 
+test("SSE reconnect reconciles greetings and campaign progress after a dropped connection", async ({ page }) => {
+  await mockParticipantSession(page);
+  let eventConnections = 0;
+  let greetingReads = 0;
+  let campaignReads = 0;
+
+  await page.route("**/api/greetings", route => {
+    greetingReads += 1;
+    const greetings = greetingReads >= 3
+      ? [{ ornament_number: 2, display_name: "Мария", message: "Счастья и радости!" }]
+      : [];
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(greetings)
+    });
+  });
+  await page.route("**/api/campaign", route => {
+    campaignReads += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ participant_count: 20, submitted_count: campaignReads >= 3 ? 1 : 0 })
+    });
+  });
+  await page.route("**/api/events", route => {
+    eventConnections += 1;
+    const retryDelay = eventConnections === 1 ? 100 : 60000;
+    return route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      headers: { "cache-control": "no-cache" },
+      body: `retry: ${retryDelay}\\n\\n`
+    });
+  });
+
+  await page.goto("/#invite=valid-invite-token");
+  await expect(page.locator(".tree-frame")).toBeVisible();
+  await expect.poll(() => eventConnections).toBeGreaterThanOrEqual(2);
+
+  const ornament = page.getByRole("button", { name: "Шар номер 2", exact: true });
+  await expect(ornament).toHaveClass(/filled/);
+  await expect(page.getByRole("progressbar", { name: "Опубликованные поздравления" }))
+    .toHaveAttribute("aria-valuenow", "1");
+  await expect(page.locator(".progress-count")).toHaveText("1 / 20");
+});
+
 test("greeting viewer navigates in deterministic ornament order and exposes dialog semantics", async ({ page }) => {
   await mockParticipantSession(page);
   await page.route("**/api/greetings", route =>
