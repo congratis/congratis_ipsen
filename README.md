@@ -16,7 +16,7 @@
 2. Установите длинный случайный `RETHINKDB_PASSWORD`.
 3. Запустите приложение и базу: `docker compose up -d --build`.
 4. Создайте приглашения один раз: `docker compose exec app generate-tokens 20`.
-5. Раздайте каждому сотруднику только его персональную ссылку из вывода команды.
+5. Сохраните одноразовые токены из вывода команды и передайте их участникам защищённым способом. После подключения frontend токен будет обмениваться на сессию через backend API.
 
 Сайт будет доступен на `http://localhost` (до выпуска сертификата) или `https://$DOMAIN` после настройки DNS и Let's Encrypt.
 
@@ -37,3 +37,21 @@
 Не коммитьте `.env` или файл с приглашениями. Первый выпуск TLS: `bash deploy/scripts/issue-certificate.sh`. Автоматическое продление настраивается systemd unit/timer из `deploy/systemd/`.
 
 Подробности — [ADR RethinkDB](docs/ADR-RETHINKDB-REALTIME.md) и [Deployment](docs/DEPLOYMENT.md).
+
+
+## Backend authentication API (frontend integration is a separate step)
+
+The backend uses role-based sessions. Participant invitation tokens are exchanged once at `POST /api/auth/participant/exchange`; the raw token is sent in the JSON body, never in a query string. The response sets an HttpOnly session cookie and a readable CSRF cookie. Send the CSRF cookie value in the `X-CSRF-Token` header for state-changing authenticated requests.
+
+Administrator login is `POST /api/auth/admin/login` with `username` and `password`. Configure `ADMIN_USERNAME` and an Argon2id `ADMIN_PASSWORD_HASH` in the private `.env` file. Generate the hash with `docker compose run --rm -e ADMIN_PASSWORD='your-long-password' app hash-admin-password`. Do not store the plaintext password in `.env` or source control.
+
+Authenticated endpoints:
+- `GET /api/me` — current identity and CSRF token.
+- `POST /api/auth/logout` — revoke current session (CSRF required).
+- `GET /api/greetings` and `GET /api/events` — shared team tree (participant or admin).
+- `POST /api/greetings` — participant-only, one greeting per invitation (CSRF required).
+- `GET /api/admin/participants` — administrator-only participant and invitation status.
+- `POST /api/admin/invitations/{number}/reissue` — rotate an unactivated invitation; returns the new raw token once.
+- `POST /api/admin/invitations/{number}/revoke` — revoke an unactivated invitation.
+
+`/api/health` remains public and returns only service availability. The existing frontend has deliberately not been adapted yet; frontend work follows after backend validation.

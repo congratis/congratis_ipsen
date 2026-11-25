@@ -32,3 +32,7 @@ path = "src/bin/generate_tokens.rs"
 [[bin]]
 name = "rethinkdb-probe"
 path = "src/bin/rethinkdb_probe.rs"
+
+[[bin]]
+name = "hash-admin-password"
+path = "src/bin/hash_admin_password.rs"

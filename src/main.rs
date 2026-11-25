@@ -1,27 +1,31 @@
+use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
-    response::{
-        sse::{Event, KeepAlive, Sse},
-        IntoResponse, Response,
-    },
-    routing::get,
+    extract::State,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{sse::{Event, KeepAlive, Sse}, IntoResponse, Response},
+    routing::{get, post},
     Json, Router,
 };
+use christmas_greetings::store::{AuthSession, GreetingEvent, Store};
+use futures::stream;
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{convert::Infallible, env, net::SocketAddr, time::Duration};
-use futures::stream;
 use tokio::sync::broadcast;
-use christmas_greetings::store::{GreetingEvent, Store};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
+const SESSION_COOKIE: &str = "congratis_session";
+const CSRF_COOKIE: &str = "congratis_csrf";
+const PARTICIPANT_TTL: i64 = 60 * 60 * 24 * 30;
+const ADMIN_TTL: i64 = 60 * 60 * 8;
 
 #[derive(Clone)]
 struct AppState {
     store: Store,
     events: broadcast::Sender<GreetingEvent>,
+    cookie_secure: bool,
 }
 
 #[derive(Serialize)]
@@ -30,19 +34,16 @@ struct Greeting {
     display_name: String,
     message: String,
 }
-
 #[derive(Deserialize)]
-struct SubmitGreeting {
-    token: String,
-    display_name: String,
-    message: String,
-}
-
+struct ParticipantExchange { token: String }
+#[derive(Deserialize)]
+struct AdminLogin { username: String, password: String }
+#[derive(Deserialize)]
+struct SubmitGreeting { display_name: String, message: String }
 #[derive(Serialize)]
-struct ApiMessage {
-    message: &'static str,
-}
-
+struct ApiMessage { message: &'static str }
+#[derive(Serialize)]
+struct MeResponse { subject_id: String, role: String, csrf_token: String }
 struct ApiError(StatusCode, &'static str);
 
 impl IntoResponse for ApiError {
@@ -50,13 +51,200 @@ impl IntoResponse for ApiError {
         (self.0, Json(ApiMessage { message: self.1 })).into_response()
     }
 }
-
-fn hash_token(token: &str) -> String {
-    hex::encode(Sha256::digest(token.as_bytes()))
+fn digest(value: &str) -> String { hex::encode(Sha256::digest(value.as_bytes())) }
+fn random_secret() -> String {
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers.get(header::COOKIE)?.to_str().ok()?.split(';').find_map(|part| {
+        let (key, value) = part.trim().split_once('=')?;
+        (key == name).then(|| value.to_owned())
+    })
+}
+fn secure_suffix(state: &AppState) -> &'static str {
+    if state.cookie_secure { "; Secure" } else { "" }
+}
+fn issue_cookies(response: &mut Response, state: &AppState, session: &str, csrf: &str, ttl: i64) {
+    let headers = response.headers_mut();
+    let session_cookie = format!("{SESSION_COOKIE}={session}; Path=/; Max-Age={ttl}; HttpOnly; SameSite=Strict{}", secure_suffix(state));
+    let csrf_cookie = format!("{CSRF_COOKIE}={csrf}; Path=/; Max-Age={ttl}; SameSite=Strict{}", secure_suffix(state));
+    if let Ok(v) = HeaderValue::from_str(&session_cookie) { headers.append(header::SET_COOKIE, v); }
+    if let Ok(v) = HeaderValue::from_str(&csrf_cookie) { headers.append(header::SET_COOKIE, v); }
+}
+fn clear_cookies(response: &mut Response, state: &AppState) {
+    for value in [
+        format!("{SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict{}", secure_suffix(state)),
+        format!("{CSRF_COOKIE}=; Path=/; Max-Age=0; SameSite=Strict{}", secure_suffix(state)),
+    ] {
+        if let Ok(v) = HeaderValue::from_str(&value) { response.headers_mut().append(header::SET_COOKIE, v); }
+    }
+}
+async fn authenticated(state: &AppState, headers: &HeaderMap) -> Result<AuthSession, ApiError> {
+    let raw = cookie_value(headers, SESSION_COOKIE)
+        .ok_or(ApiError(StatusCode::UNAUTHORIZED, "Требуется авторизация"))?;
+    if raw.len() != 64 || !raw.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(ApiError(StatusCode::UNAUTHORIZED, "Недействительная сессия"));
+    }
+    let session = state.store.get_auth_session(&digest(&raw)).await.map_err(|e| {
+        tracing::error!(?e, "session lookup failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Ошибка проверки сессии")
+    })?.ok_or(ApiError(StatusCode::UNAUTHORIZED, "Сессия не найдена"))?;
+    if session.expires_at <= chrono::Utc::now().timestamp() {
+        let _ = state.store.revoke_auth_session(&session.id).await;
+        return Err(ApiError(StatusCode::UNAUTHORIZED, "Сессия истекла"));
+    }
+    Ok(session)
+}
+fn verify_csrf(headers: &HeaderMap, session: &AuthSession) -> Result<(), ApiError> {
+    let cookie = cookie_value(headers, CSRF_COOKIE)
+        .ok_or(ApiError(StatusCode::FORBIDDEN, "Отсутствует CSRF cookie"))?;
+    let supplied = headers.get("x-csrf-token").and_then(|v| v.to_str().ok())
+        .ok_or(ApiError(StatusCode::FORBIDDEN, "Отсутствует CSRF token"))?;
+    if cookie != supplied || digest(supplied) != session.csrf_hash {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Некорректный CSRF token"));
+    }
+    Ok(())
+}
+async fn new_session(state: &AppState, subject_id: String, role: &str, ttl: i64) -> Result<(String, String), ApiError> {
+    let raw_session = random_secret();
+    let raw_csrf = random_secret();
+    let now = chrono::Utc::now().timestamp();
+    let session = AuthSession {
+        id: digest(&raw_session), subject_id, role: role.to_owned(),
+        csrf_hash: digest(&raw_csrf), created_at: now, expires_at: now + ttl,
+    };
+    state.store.create_auth_session(&session).await.map_err(|e| {
+        tracing::error!(?e, "session creation failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось создать сессию")
+    })?;
+    Ok((raw_session, raw_csrf))
 }
 
+async fn health(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    state.store.ping().await.map_err(|e| {
+        tracing::error!(?e, "database health check failed");
+        ApiError(StatusCode::SERVICE_UNAVAILABLE, "database unavailable")
+    })?;
+    Ok((StatusCode::OK, Json(serde_json::json!({"status":"ok"}))))
+}
+async fn participant_exchange(
+    State(state): State<AppState>, Json(payload): Json<ParticipantExchange>
+) -> Result<Response, ApiError> {
+    let token = payload.token.trim();
+    if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректное приглашение"));
+    }
+    let ornament = state.store.activate_invitation(&digest(token)).await.map_err(|e| {
+        tracing::error!(?e, "invitation activation failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Ошибка активации приглашения")
+    })?.ok_or(ApiError(StatusCode::CONFLICT, "Приглашение недействительно или уже использовано"))?;
+    let (session, csrf) = match new_session(&state, ornament.to_string(), "participant", PARTICIPANT_TTL).await {
+        Ok(value) => value,
+        Err(error) => {
+            if let Err(rollback_error) = state.store.rollback_invitation_activation(&digest(token)).await {
+                tracing::error!(?rollback_error, "failed to roll back invitation activation after session creation error");
+            }
+            return Err(error);
+        }
+    };
+    let mut response = (StatusCode::OK, Json(MeResponse {
+        subject_id: ornament.to_string(), role: "participant".into(), csrf_token: csrf.clone()
+    })).into_response();
+    issue_cookies(&mut response, &state, &session, &csrf, PARTICIPANT_TTL);
+    Ok(response)
+}
+async fn admin_login(
+    State(state): State<AppState>, Json(payload): Json<AdminLogin>
+) -> Result<Response, ApiError> {
+    let username = env::var("ADMIN_USERNAME").unwrap_or_default();
+    let encoded_hash = env::var("ADMIN_PASSWORD_HASH").unwrap_or_default();
+    if username.is_empty() || encoded_hash.is_empty() || payload.username != username {
+        return Err(ApiError(StatusCode::UNAUTHORIZED, "Неверный логин или пароль"));
+    }
+    let parsed = PasswordHash::new(&encoded_hash)
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Некорректная конфигурация пароля администратора"))?;
+    if Argon2::default().verify_password(payload.password.as_bytes(), &parsed).is_err() {
+        return Err(ApiError(StatusCode::UNAUTHORIZED, "Неверный логин или пароль"));
+    }
+    let (session, csrf) = new_session(&state, username, "admin", ADMIN_TTL).await?;
+    let mut response = (StatusCode::OK, Json(MeResponse {
+        subject_id: "admin".into(), role: "admin".into(), csrf_token: csrf.clone()
+    })).into_response();
+    issue_cookies(&mut response, &state, &session, &csrf, ADMIN_TTL);
+    Ok(response)
+}
+async fn me(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<MeResponse>, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    let csrf = cookie_value(&headers, CSRF_COOKIE).unwrap_or_default();
+    Ok(Json(MeResponse { subject_id: session.subject_id, role: session.role, csrf_token: csrf }))
+}
+async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    verify_csrf(&headers, &session)?;
+    state.store.revoke_auth_session(&session.id).await.map_err(|e| {
+        tracing::error!(?e, "session revocation failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось завершить сессию")
+    })?;
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    clear_cookies(&mut response, &state);
+    Ok(response)
+}
+async fn list_greetings(
+    State(state): State<AppState>, headers: HeaderMap
+) -> Result<Json<Vec<Greeting>>, ApiError> {
+    authenticated(&state, &headers).await?;
+    let ornaments = state.store.list_greetings().await.map_err(|e| {
+        tracing::error!(?e, "failed to load greetings");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить поздравления")
+    })?;
+    Ok(Json(ornaments.into_iter().filter_map(|o| Some(Greeting {
+        ornament_number: o.ornament_number,
+        display_name: o.display_name?,
+        message: o.message?,
+    })).collect()))
+}
+async fn submit(
+    State(state): State<AppState>, headers: HeaderMap, Json(payload): Json<SubmitGreeting>
+) -> Result<impl IntoResponse, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "participant" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Только участник может отправить поздравление"));
+    }
+    verify_csrf(&headers, &session)?;
+    let ornament: i16 = session.subject_id.parse()
+        .map_err(|_| ApiError(StatusCode::FORBIDDEN, "Некорректная учётная запись участника"))?;
+    let name = payload.display_name.trim();
+    let message = payload.message.trim();
+    if name.is_empty() || name.chars().count() > 80 {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Имя должно содержать от 1 до 80 символов"));
+    }
+    if message.is_empty() || message.chars().count() > 500 {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Поздравление должно содержать от 1 до 500 символов"));
+    }
+    let claimed = state.store.claim_greeting(ornament, name, message).await.map_err(|e| {
+        tracing::error!(?e, "greeting claim failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Ошибка базы данных")
+    })?;
+    if !claimed { return Err(ApiError(StatusCode::CONFLICT, "Поздравление уже отправлено")); }
+    Ok((StatusCode::CREATED, Json(serde_json::json!({
+        "message":"Поздравление сохранено", "ornament_number":ornament
+    }))))
+}
+async fn admin_participants(
+    State(state): State<AppState>, headers: HeaderMap
+) -> Result<Json<Vec<christmas_greetings::store::ParticipantSummary>>, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "admin" { return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав")); }
+    let participants = state.store.list_participants().await.map_err(|e| {
+        tracing::error!(?e, "participant listing failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить участников")
+    })?;
+    Ok(Json(participants))
+}
 async fn admin_reissue_invitation(
-    State(state): State<AppState>, headers: HeaderMap, Path(number): Path<i16>
+    State(state): State<AppState>, headers: HeaderMap, axum::extract::Path(number): axum::extract::Path<i16>
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let session = authenticated(&state, &headers).await?;
     if session.role != "admin" { return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав")); }
@@ -70,7 +258,7 @@ async fn admin_reissue_invitation(
     Ok(Json(serde_json::json!({"ornament_number":number,"token":token})))
 }
 async fn admin_revoke_invitation(
-    State(state): State<AppState>, headers: HeaderMap, Path(number): Path<i16>
+    State(state): State<AppState>, headers: HeaderMap, axum::extract::Path(number): axum::extract::Path<i16>
 ) -> Result<StatusCode, ApiError> {
     let session = authenticated(&state, &headers).await?;
     if session.role != "admin" { return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав")); }
@@ -84,165 +272,56 @@ async fn admin_revoke_invitation(
 }
 
 async fn sse_events(
-    State(state): State<AppState>,
-) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
+    State(state): State<AppState>, headers: HeaderMap
+) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    authenticated(&state, &headers).await?;
     let receiver = state.events.subscribe();
     let stream = stream::unfold(receiver, |mut receiver| async move {
         let event = match receiver.recv().await {
-            Ok(greeting) => Event::default()
-                .event("greeting")
-                .json_data(greeting)
+            Ok(greeting) => Event::default().event("greeting").json_data(greeting)
                 .unwrap_or_else(|_| Event::default().event("resync").data("snapshot")),
-            Err(broadcast::error::RecvError::Lagged(_)) => {
-                Event::default().event("resync").data("snapshot")
-            }
+            Err(broadcast::error::RecvError::Lagged(_)) => Event::default().event("resync").data("snapshot"),
             Err(broadcast::error::RecvError::Closed) => return None,
         };
         Some((Ok::<Event, Infallible>(event), receiver))
     });
-
-    Sse::new(stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("keep-alive"),
-    )
-}
-
-async fn health(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    state
-        .store
-        .ping()
-        .await
-        .map_err(|error| {
-            tracing::error!(?error, "RethinkDB health check failed");
-            ApiError(StatusCode::SERVICE_UNAVAILABLE, "database unavailable")
-        })?;
-
-    Ok((StatusCode::OK, Json(serde_json::json!({ "status": "ok" }))))
-}
-
-async fn list_greetings(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<Greeting>>, ApiError> {
-    let ornaments = state.store.list_greetings().await.map_err(|error| {
-        tracing::error!(?error, "failed to load greetings");
-        ApiError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Не удалось загрузить поздравления",
-        )
-    })?;
-
-    Ok(Json(
-        ornaments
-            .into_iter()
-            .filter_map(|ornament| {
-                Some(Greeting {
-                    ornament_number: ornament.ornament_number,
-                    display_name: ornament.display_name?,
-                    message: ornament.message?,
-                })
-            })
-            .collect(),
-    ))
-}
-
-async fn submit(
-    State(state): State<AppState>,
-    Json(payload): Json<SubmitGreeting>,
-) -> Result<impl IntoResponse, ApiError> {
-    let token = payload.token.trim();
-    let name = payload.display_name.trim();
-    let message = payload.message.trim();
-
-    if !(64..=128).contains(&token.len()) || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Некорректная персональная ссылка",
-        ));
-    }
-    if name.is_empty() || name.chars().count() > 80 {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Имя должно содержать от 1 до 80 символов",
-        ));
-    }
-    if message.is_empty() || message.chars().count() > 500 {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Поздравление должно содержать от 1 до 500 символов",
-        ));
-    }
-
-    let ornament_number = state
-        .store
-        .claim_invitation(&hash_token(token), name, message)
-        .await
-        .map_err(|error| {
-            tracing::error!(?error, "failed to claim invitation");
-            ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Ошибка базы данных")
-        })?
-        .ok_or(ApiError(
-            StatusCode::CONFLICT,
-            "Эта персональная ссылка уже использована или недействительна",
-        ))?;
-
-    Ok((
-        StatusCode::CREATED,
-        Json(serde_json::json!({
-            "message": "Поздравление сохранено",
-            "ornament_number": ornament_number
-        })),
-    ))
+    Ok(Sse::new(stream).keep_alive(KeepAlive::new()
+        .interval(Duration::from_secs(15)).text("keep-alive")))
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
-
+    tracing_subscriber::fmt().with_env_filter(
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
+    ).init();
     let store = Store::connect().await?;
     let (events, _) = broadcast::channel(256);
     let feed_store = store.clone();
     let feed_events = events.clone();
-    tokio::spawn(async move {
-        feed_store.supervise_changefeed(feed_events).await;
-    });
-
-    let state = AppState { store, events };
+    tokio::spawn(async move { feed_store.supervise_changefeed(feed_events).await; });
+    let state = AppState {
+        store, events,
+        cookie_secure: env::var("COOKIE_SECURE").map(|v| v != "false").unwrap_or(true),
+    };
     let app = Router::new()
         .route("/api/health", get(health))
+        .route("/api/auth/participant/exchange", post(participant_exchange))
+        .route("/api/auth/admin/login", post(admin_login))
+        .route("/api/auth/logout", post(logout))
+        .route("/api/me", get(me))
         .route("/api/events", get(sse_events))
         .route("/api/greetings", get(list_greetings).post(submit))
+        .route("/api/admin/participants", get(admin_participants))
+        .route("/api/admin/invitations/{number}/reissue", post(admin_reissue_invitation))
+        .route("/api/admin/invitations/{number}/revoke", post(admin_revoke_invitation))
         .fallback_service(ServeDir::new("frontend").append_index_html_on_directories(true))
-        .with_state(state)
-        .layer(TraceLayer::new_for_http());
-
+        .with_state(state).layer(TraceLayer::new_for_http());
     let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into());
     let port: u16 = env::var("PORT").unwrap_or_else(|_| "8080".into()).parse()?;
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("Congratis listening on http://{addr}");
+    tracing::info!("Congratis backend listening on {addr}");
     axum::serve(listener, app).await?;
-
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::hash_token;
-
-    #[test]
-    fn token_hash_is_stable_and_hex_encoded() {
-        let token = "a".repeat(64);
-        let first = hash_token(&token);
-        let second = hash_token(&token);
-
-        assert_eq!(first, second);
-        assert_eq!(first.len(), 64);
-        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
-    }
 }
