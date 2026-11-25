@@ -153,9 +153,9 @@ jobs:
       - name: Build Nginx edge image
         run: docker compose build nginx
       - name: Validate Nginx bootstrap configuration
-        run: docker compose run --rm -e NGINX_TEST_ONLY=1 nginx
+        run: docker compose run --no-deps --rm -e NGINX_TEST_ONLY=1 nginx
       - name: Validate Nginx TLS configuration
-        run: docker compose run --rm -e NGINX_TEST_ONLY=1 -e NGINX_FORCE_HTTPS=1 nginx
+        run: docker compose run --no-deps --rm -e NGINX_TEST_ONLY=1 -e NGINX_FORCE_HTTPS=1 nginx
 
   production:
     name: Production · Full Docker stack
