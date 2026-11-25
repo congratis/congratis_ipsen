@@ -64,7 +64,7 @@ services:
     init: true
     environment:
       DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
-      TLS_PROVIDER: ${TLS_PROVIDER:-letsencrypt}
+      TLS_MODE: ${TLS_MODE:-http}
     depends_on:
       app:
         condition: service_started
@@ -72,8 +72,6 @@ services:
       - "${HTTP_PORT:-80}:80"
       - "${HTTPS_PORT:-443}:443"
     volumes:
-      - letsencrypt:/etc/letsencrypt:ro
-      - acme_webroot:/var/www/certbot:ro
       - /etc/congratis/tls:/etc/globalsign:ro
     security_opt:
       - no-new-privileges:true
@@ -100,21 +98,6 @@ services:
       - app_internal
       - edge
 
-  certbot:
-    image: certbot/certbot:v5.10.0
-    profiles: ["tools"]
-    volumes:
-      - letsencrypt:/etc/letsencrypt
-      - acme_webroot:/var/www/certbot
-    command:
-      - renew
-      - --webroot
-      - --webroot-path
-      - /var/www/certbot
-      - --quiet
-    networks:
-      - edge
-
   rethinkdb-probe:
     build:
       context: .
@@ -134,8 +117,6 @@ services:
 
 volumes:
   rethinkdb_data:
-  letsencrypt:
-  acme_webroot:
 
 networks:
   data:
