@@ -529,7 +529,7 @@ fn participant_tree(state: AppState) -> Dom {
                 let previous = current_index.and_then(|index| index.checked_sub(1)).and_then(|index| ordered.get(index)).cloned();
                 let next = current_index.and_then(|index| ordered.get(index + 1)).cloned();
                 let counter = current_index.map(|index| format!("Поздравление {} из {}", index + 1, ordered.len())).unwrap_or_default();
-                html!("div", {
+                html!("dialog", {
                     .class("overlay")
                     .attr("id", "greeting-dialog")
                     .attr("aria-labelledby", "greeting-title")
@@ -622,7 +622,7 @@ fn participant_tree(state: AppState) -> Dom {
             if !active {
                 None
             } else {
-                Some(html!("div", {
+                Some(html!("dialog", {
                     .class("presentation-overlay")
                     .attr("id", "presentation-dialog")
                     .attr("aria-labelledby", "presentation-title")
@@ -778,7 +778,7 @@ fn show_form(state: AppState) {
     let form_state = state.clone();
     let subject_id = state.user.lock_ref().as_ref()
         .map(|user| user.subject_id.clone()).unwrap_or_default();
-    let dialog = html!("div", {
+    let dialog = html!("dialog", {
         .class("overlay")
         .attr("id", "submission-dialog")
         .attr("aria-labelledby", "submission-title")
