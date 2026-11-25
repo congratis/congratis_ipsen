@@ -18,7 +18,7 @@
 - Backend: Rust, Axum, Tokio.
 - Frontend: Rust, Dominator, WebAssembly, **Rollup**.
 - Database: RethinkDB 2.4.4.
-- Deployment: Docker Compose, Nginx 1.30.8, Let's Encrypt.
+- Deployment: Docker Compose, Nginx 1.30.8; production TLS: GlobalSign (Let's Encrypt storage retained for fallback).
 - Browser tests: Playwright.
 
 ## Локальный запуск
