@@ -6,7 +6,7 @@
 **Deployment target:** Ubuntu 26.04 LTS (Resolute)  
 **Production domain:** `congratis.online`
 
-This roadmap records product scope and verified implementation status. Green CI proves automated repository checks; it does not by itself prove that the live VPS deployment is complete.
+This roadmap records product scope and verified implementation status. Green CI proves automated repository checks; it does not by itself prove that every live user workflow has been exercised.
 
 ## Product scope
 
@@ -25,9 +25,13 @@ Congratis is an interactive New Year greeting experience. An organizer creates a
 | Candy-cane progress and SSE | Implemented | API snapshot, reconnect reconciliation and live updates |
 | Presentation and Jingle Bells | Implemented | Controls, silent fallback, reduced-motion handling and attribution |
 | Administration UI | Implemented | Login, campaign creation, participant list, reissue and confirmed revoke |
-| Dialog keyboard accessibility | In progress | Escape exists; Tab/Shift+Tab trapping and focus restoration are under CI |
-| Production CI validation | Passed on current main baseline | Full Docker stack, Nginx bootstrap/TLS checks and real backend HTTP smoke test |
-| Live VPS deployment | Not yet verified | Requires safe update of `/opt/congratis`, production configuration, HTTPS and live smoke tests |
+| Dialog keyboard accessibility | Implemented | PR #14 merged: initial focus, Tab/Shift+Tab trap, Escape dismissal and focus restoration; Playwright coverage |
+| Production CI validation | Passed | Full Docker stack, Nginx bootstrap/TLS checks and real backend HTTP smoke test |
+| Production DNS and TLS | Verified | Public Cloudflare DNS resolves apex A and www CNAME to VPS; external HTTPS requests return HTTP 200 and serve the GlobalSign certificate |
+| Live VPS infrastructure | Verified | Ubuntu 26.04 VPS; app, RethinkDB and Nginx running; Nginx/RethinkDB healthy; Compose health and Nginx config checks pass |
+| Live application workflows | Pending | Still need operator-led admin login and safe verification of the active campaign, participant invitation and greeting flows |
+| SSE in production | Pending | Verify live updates and reconnect behavior against the active campaign without injecting test data |
+| Production backup and restore | Pending | Confirm backup procedure, secure storage and a restore rehearsal against an isolated instance |
 
 ## 1. Frontend audit and stabilization
 
@@ -118,20 +122,21 @@ Congratis is an interactive New Year greeting experience. An organizer creates a
 - Playwright coverage for invitations, submission, duplicate prevention, admin workflows, SSE reconnect and presentation controls.
 - Test empty, partial and complete campaigns, network interruption, expired sessions and audio denial.
 - Verify Rollup build, Docker image, Nginx routing/static caching and full production Compose smoke test.
-- Keep required CI green before merging/deploying.
-- Deploy to the Ubuntu 26.04 LTS VPS, verify HTTPS and live API flows, and confirm persistent data and backups.
+- Keep required CI green before merging.
+- Verify production HTTPS, health, administrator access, campaign data, invitation flow, greeting submission, SSE and persistence.
+- Back up production data and rehearse restore against an isolated instance.
 
-**Acceptance:** CI and production smoke tests pass, and the documented deployment procedure works on the live VPS.
+**Acceptance:** CI and production infrastructure checks pass; authenticated workflows and backup/restore are verified without risking production campaign data.
 
 ## Next execution sequence
 
-1. Merge and verify the dialog focus-management change after all required checks pass.
-2. Align and verify production documentation.
-3. Inspect current VPS state without changing persistent data.
-4. Add swap if still absent, install/verify Docker, and configure private GitHub access.
-5. Deploy `main` using the documented non-destructive procedure.
-6. Verify HTTPS, health, administrator login, campaign creation, invitation flow, greeting submission, SSE and persistence.
-7. Mark live deployment and Roadmap complete only after those checks succeed.
+1. Inspect the live campaign and participant state through read-only/admin UI access; do not expose raw invitation tokens.
+2. Verify administrator login and inspect campaign status without changing production data.
+3. Verify participant invitation and greeting flows using an isolated disposable environment, not the live campaign.
+4. Verify production SSE updates/reconnect without injecting test greetings.
+5. Establish a production RethinkDB backup and securely store the backup and required configuration.
+6. Rehearse restore against an isolated temporary RethinkDB instance.
+7. Update this Roadmap again only after each acceptance check has evidence.
 
 ## Architecture principles
 
