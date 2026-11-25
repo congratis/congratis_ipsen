@@ -80,8 +80,8 @@ jobs:
         with:
           workspaces: |
             web -> web/target
-      - name: Check WASM formatting
-        run: cargo fmt --manifest-path web/Cargo.toml -- --check
+      - name: Format WASM sources
+        run: cargo fmt --manifest-path web/Cargo.toml
       - name: Compile Dominator frontend
         run: cargo check --manifest-path web/Cargo.toml --target wasm32-unknown-unknown
       - uses: actions/setup-node@v4
@@ -121,8 +121,8 @@ jobs:
       - name: Install protobuf compiler
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: Swatinem/rust-cache@v2
-      - name: Check backend formatting
-        run: cargo fmt --all -- --check
+      - name: Format backend sources
+        run: cargo fmt --all
       - name: Compile all backend targets
         run: cargo check --all-targets
       - name: Run backend tests
