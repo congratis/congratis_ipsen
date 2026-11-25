@@ -449,7 +449,7 @@ impl Store {
         let update = reql::func!(|document| {
             r.branch(
                 r.args((
-                    document.clone().get_field("activated").default(false).eq(false)
+                    document.clone().get_field("activated").default(r.expr(false)).eq(false)
                         .and(document.clone().get_field("used").eq(false)),
                     document.clone().merge(r.expr(json!({
                         "token_hash": token_hash,
@@ -473,7 +473,7 @@ impl Store {
         let update = reql::func!(|document| {
             r.branch(
                 r.args((
-                    document.clone().get_field("activated").default(false).eq(false)
+                    document.clone().get_field("activated").default(r.expr(false)).eq(false)
                         .and(document.clone().get_field("used").eq(false)),
                     document.clone().merge(r.expr(json!({"revoked": true}))),
                     document
@@ -498,6 +498,8 @@ pub struct AuthSession {
     pub csrf_hash: String,
     pub created_at: i64,
     pub expires_at: i64,
+    #[serde(default)]
+    pub revoked: bool,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct ParticipantSummary {
@@ -513,8 +515,8 @@ impl Store {
     pub async fn activate_invitation(&self, token_hash: &str) -> Result<Option<i16>> {
         let update = reql::func!(|document| {
             r.branch(r.args((
-                document.clone().get_field("activated").default(false).eq(false)
-                    .and(document.clone().get_field("revoked").default(false).eq(false))
+                document.clone().get_field("activated").default(r.expr(false)).eq(false)
+                    .and(document.clone().get_field("revoked").default(r.expr(false)).eq(false))
                     .and(document.clone().get_field("used").eq(false)),
                 document.clone().merge(r.expr(json!({
                     "activated": true, "activated_at": Utc::now().timestamp()
@@ -549,7 +551,8 @@ impl Store {
     }
     pub async fn revoke_auth_session(&self, id: &str) -> Result<()> {
         let _: Option<Value> = self.first(
-            r.db(self.database.as_str()).table(SESSIONS_TABLE).get(id).delete()
+            r.db(self.database.as_str()).table(SESSIONS_TABLE).get(id)
+                .update(json!({"revoked": true}))
         ).await?;
         Ok(())
     }
@@ -563,8 +566,8 @@ impl Store {
     pub async fn claim_greeting(&self, number: i16, display_name: &str, message: &str) -> Result<bool> {
         let update = reql::func!(|document| {
             r.branch(r.args((
-                document.clone().get_field("activated").default(false)
-                    .and(document.clone().get_field("revoked").default(false).eq(false))
+                document.clone().get_field("activated").default(r.expr(false))
+                    .and(document.clone().get_field("revoked").default(r.expr(false)).eq(false))
                     .and(document.clone().get_field("used").eq(false)),
                 document.clone().merge(r.expr(json!({
                     "used": true, "display_name": display_name, "message": message,

@@ -29,13 +29,14 @@ async fn invitation_activates_once_and_session_can_be_revoked() {
         csrf_hash: hash("csrf-secret"),
         created_at: 1_800_000_000,
         expires_at: 1_900_000_000,
+        revoked: false,
     };
     store.create_auth_session(&session).await.expect("create session");
     let loaded = store.get_auth_session(&session.id).await.unwrap().expect("load session");
     assert_eq!(loaded.subject_id, "1");
     assert_eq!(loaded.role, "participant");
     store.revoke_auth_session(&session.id).await.expect("revoke session");
-    assert!(store.get_auth_session(&session.id).await.unwrap().is_none());
+    assert!(store.get_auth_session(&session.id).await.unwrap().unwrap().revoked);
 
     assert!(store.claim_greeting(1, "Tester", "One greeting only").await.unwrap());
     assert!(!store.claim_greeting(1, "Tester", "Replay").await.unwrap());

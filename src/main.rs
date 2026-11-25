@@ -91,6 +91,9 @@ async fn authenticated(state: &AppState, headers: &HeaderMap) -> Result<AuthSess
         tracing::error!(?e, "session lookup failed");
         ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Ошибка проверки сессии")
     })?.ok_or(ApiError(StatusCode::UNAUTHORIZED, "Сессия не найдена"))?;
+    if session.revoked {
+        return Err(ApiError(StatusCode::UNAUTHORIZED, "Сессия отозвана"));
+    }
     if session.expires_at <= chrono::Utc::now().timestamp() {
         let _ = state.store.revoke_auth_session(&session.id).await;
         return Err(ApiError(StatusCode::UNAUTHORIZED, "Сессия истекла"));
@@ -113,7 +116,7 @@ async fn new_session(state: &AppState, subject_id: String, role: &str, ttl: i64)
     let now = chrono::Utc::now().timestamp();
     let session = AuthSession {
         id: digest(&raw_session), subject_id, role: role.to_owned(),
-        csrf_hash: digest(&raw_csrf), created_at: now, expires_at: now + ttl,
+        csrf_hash: digest(&raw_csrf), created_at: now, expires_at: now + ttl, revoked: false,
     };
     state.store.create_auth_session(&session).await.map_err(|e| {
         tracing::error!(?e, "session creation failed");
