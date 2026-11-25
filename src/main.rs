@@ -44,6 +44,10 @@ struct ParticipantExchange { token: String }
 #[derive(Deserialize)]
 struct AdminLogin { username: String, password: String }
 #[derive(Deserialize)]
+struct CreateCampaign { participant_count: i16 }
+#[derive(Serialize)]
+struct CreatedInvitation { ornament_number: i16, token: String }
+#[derive(Deserialize)]
 struct SubmitGreeting { display_name: String, message: String }
 #[derive(Serialize)]
 struct ApiMessage { message: &'static str }
@@ -57,6 +61,12 @@ impl IntoResponse for ApiError {
     }
 }
 fn digest(value: &str) -> String { hex::encode(Sha256::digest(value.as_bytes())) }
+fn campaign_numbers(count: i16) -> Result<Vec<i16>, ApiError> {
+    if !(1..=35).contains(&count) {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Количество участников должно быть от 1 до 35"));
+    }
+    Ok((1..=count).collect())
+}
 fn random_secret() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
@@ -253,6 +263,32 @@ async fn submit(
         "message":"Поздравление сохранено", "ornament_number":ornament
     }))))
 }
+async fn admin_create_campaign(
+    State(state): State<AppState>, headers: HeaderMap, Json(payload): Json<CreateCampaign>
+) -> Result<(StatusCode, Json<Vec<CreatedInvitation>>), ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "admin" { return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав")); }
+    verify_csrf(&headers, &session)?;
+
+    let numbers = campaign_numbers(payload.participant_count)?;
+    let mut invitations = Vec::with_capacity(numbers.len());
+    let mut created = Vec::with_capacity(numbers.len());
+    for number in numbers {
+        let token = random_secret();
+        invitations.push((number, digest(&token)));
+        created.push(CreatedInvitation { ornament_number: number, token });
+    }
+    state.store.insert_invitations(&invitations).await.map_err(|error| {
+        if error.to_string().contains("not empty") {
+            ApiError(StatusCode::CONFLICT, "Кампания уже создана; изменить занятые слоты нельзя")
+        } else {
+            tracing::error!(?error, "campaign creation failed");
+            ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось создать кампанию")
+        }
+    })?;
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
 async fn admin_participants(
     State(state): State<AppState>, headers: HeaderMap
 ) -> Result<Json<Vec<christmas_greetings::store::ParticipantSummary>>, ApiError> {
@@ -312,6 +348,19 @@ async fn sse_events(
         .interval(Duration::from_secs(15)).text("keep-alive")))
 }
 
+#[cfg(test)]
+mod campaign_validation_tests {
+    use super::campaign_numbers;
+
+    #[test]
+    fn campaign_size_accepts_only_one_through_thirty_five() {
+        assert_eq!(campaign_numbers(1).unwrap(), vec![1]);
+        assert_eq!(campaign_numbers(35).unwrap().len(), 35);
+        assert!(campaign_numbers(0).is_err());
+        assert!(campaign_numbers(36).is_err());
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -336,6 +385,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/events", get(sse_events))
         .route("/api/greetings", get(list_greetings).post(submit))
         .route("/api/campaign", get(campaign_summary))
+        .route("/api/admin/campaign", post(admin_create_campaign))
         .route("/api/admin/participants", get(admin_participants))
         .route("/api/admin/invitations/{number}/reissue", post(admin_reissue_invitation))
         .route("/api/admin/invitations/{number}/revoke", post(admin_revoke_invitation))

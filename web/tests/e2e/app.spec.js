@@ -294,3 +294,78 @@ test("presentation mode handles an empty campaign without starting audio", async
   await page.getByRole("button", { name: "Вернуться к ёлке" }).click();
   await expect(page.locator(".presentation-overlay")).toHaveCount(0);
 });
+
+test("admin can create a campaign with a selected participant count and receive one-time links", async ({ page }) => {
+  await page.route("**/api/me", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(admin) })
+  );
+  await page.route("**/api/campaign", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ participant_count: 0, submitted_count: 0 }) })
+  );
+  await page.route("**/api/admin/participants", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
+  );
+  let submittedCount = 0;
+  await page.route("**/api/admin/campaign", async route => {
+    const request = route.request();
+    if (request.method() !== "POST") return route.continue();
+    const body = request.postDataJSON();
+    expect(body.participant_count).toBe(3);
+    expect(request.headers()["x-csrf-token"]).toBe("csrf-admin");
+    submittedCount = 3;
+    return route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { ornament_number: 1, token: "token-one" },
+        { ornament_number: 2, token: "token-two" },
+        { ornament_number: 3, token: "token-three" }
+      ])
+    });
+  });
+  await page.route("**/api/admin/participants", route =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(Array.from({ length: 3 }, (_, index) => ({
+        ornament_number: index + 1, activated: false, submitted: false, revoked: false,
+        display_name: null, created_at: 0, used_at: null
+      })))
+    })
+  );
+
+  await page.goto("/#/admin");
+  await expect(page.getByRole("heading", { name: "Создать новогоднюю кампанию" })).toBeVisible();
+  await page.getByRole("spinbutton", { name: "Количество участников" }).fill("3");
+  await page.getByRole("button", { name: "Создать кампанию и ссылки" }).click();
+
+  await expect.poll(() => submittedCount).toBe(3);
+  await expect(page.getByRole("heading", { name: "Одноразовые ссылки кампании" })).toBeVisible();
+  await expect(page.getByLabel("Ссылка для шара №1")).toHaveValue(/#invite=token-one$/);
+  await expect(page.getByLabel("Ссылка для шара №2")).toHaveValue(/#invite=token-two$/);
+  await expect(page.getByLabel("Ссылка для шара №3")).toHaveValue(/#invite=token-three$/);
+});
+
+test("admin campaign creation rejects participant counts outside 1 through 35", async ({ page }) => {
+  await page.route("**/api/me", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(admin) })
+  );
+  await page.route("**/api/campaign", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ participant_count: 0, submitted_count: 0 }) })
+  );
+  await page.route("**/api/admin/participants", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
+  );
+  let creationRequests = 0;
+  await page.route("**/api/admin/campaign", route => {
+    if (route.request().method() === "POST") creationRequests += 1;
+    return route.continue();
+  });
+
+  await page.goto("/#/admin");
+  await page.getByRole("spinbutton", { name: "Количество участников" }).fill("36");
+  await page.getByRole("button", { name: "Создать кампанию и ссылки" }).click();
+
+  await expect(page.locator(".note")).toContainText("от 1 до 35");
+  expect(creationRequests).toBe(0);
+});

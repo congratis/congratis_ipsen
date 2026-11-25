@@ -14,6 +14,10 @@ struct Greeting { ornament_number: i16, display_name: String, message: String }
 struct Participant { ornament_number: i16, activated: bool, submitted: bool, revoked: bool, display_name: Option<String>, created_at: i64, used_at: Option<i64> }
 #[derive(Clone, Deserialize)]
 struct CampaignSummary { participant_count: usize, submitted_count: usize }
+#[derive(Clone, Deserialize)]
+struct CreatedInvitation { ornament_number: i16, token: String }
+#[derive(Clone)]
+struct InvitationLink { ornament_number: i16, url: String }
 
 #[derive(Clone)]
 struct AppState {
@@ -36,11 +40,14 @@ struct AppState {
     admin_password: Mutable<String>,
     note: Mutable<String>,
     invite_url: Mutable<String>,
+    invite_urls: Mutable<Vec<InvitationLink>>,
+    campaign_size: Mutable<String>,
+    campaign_creating: Mutable<bool>,
     submitting: Mutable<bool>,
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), submitting: Mutable::new(false) }
+        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -751,79 +758,172 @@ fn admin_screen(state: AppState) -> Dom {
             }))
         }))
         .child_signal(state.participants.signal_cloned().map(clone!(state => move |participants| {
-            Some(html!("div", {
-                .class("admin-grid")
-                .children(participants.into_iter().map(clone!(state => move |participant| {
-                    let number = participant.ornament_number;
-                    let display_name = participant.display_name.unwrap_or_default();
-                    let status = if participant.submitted {
-                        "Поздравление опубликовано"
-                    } else if participant.activated {
-                        "Приглашение активировано"
-                    } else if participant.revoked {
-                        "Приглашение отозвано"
-                    } else {
-                        "Ожидает участника"
-                    };
-                    html!("div", {
-                        .class("admin-item")
-                        .child(html!("strong", {
-                            .text(&format!("Шар №{number}"))
+            if participants.is_empty() {
+                Some(html!("section", {
+                    .class("panel")
+                    .class("admin-create-campaign")
+                    .child(html!("div", {.class("kicker").text("NEW CAMPAIGN")}))
+                    .child(html!("h2", {.text("Создать новогоднюю кампанию")}))
+                    .child(html!("p", {
+                        .class("muted")
+                        .text("Выбери количество участников. Для каждого будет создана отдельная одноразовая ссылка.")
+                    }))
+                    .child(html!("label", {
+                        .text("Количество участников (от 1 до 35)")
+                        .child(html!("input", {
+                            .attr("type", "number")
+                            .attr("min", "1")
+                            .attr("max", "35")
+                            .attr("step", "1")
+                            .attr("aria-label", "Количество участников")
+                            .property("value", &state.campaign_size.get_cloned())
+                            .event(clone!(state => move |event: events::Input| {
+                                if let Some(target) = event.target() {
+                                    if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
+                                        state.campaign_size.set(input.value());
+                                    }
+                                }
+                            }))
                         }))
-                        .child(html!("small", {.text(status)}))
-                        .child(html!("small", {
-                            .text(&display_name)
+                    }))
+                    .child(html!("button", {
+                        .class("primary")
+                        .text_signal(state.campaign_creating.signal().map(|creating| if creating { "Создаём кампанию…" } else { "Создать кампанию и ссылки" }))
+                        .event(clone!(state => move |_: events::Click| {
+                            if state.campaign_creating.get() { return; }
+                            let count = state.campaign_size.get_cloned().parse::<i16>();
+                            let count = match count {
+                                Ok(count) if (1..=35).contains(&count) => count,
+                                _ => {
+                                    set_note(&state, "Количество участников должно быть от 1 до 35");
+                                    return;
+                                }
+                            };
+                            state.campaign_creating.set(true);
+                            let csrf = state.csrf();
+                            let current = state.clone();
+                            spawn_local(async move {
+                                let body = serde_json::json!({ "participant_count": count });
+                                match post_json::<Vec<CreatedInvitation>>("/api/admin/campaign", &body, Some(&csrf)).await {
+                                    Ok(created) => {
+                                        let origin = web_sys::window()
+                                            .map(|window| window.location().origin().unwrap_or_default())
+                                            .unwrap_or_default();
+                                        let links = created.into_iter().map(|invitation| InvitationLink {
+                                            ornament_number: invitation.ornament_number,
+                                            url: format!("{origin}/#invite={}", invitation.token),
+                                        }).collect();
+                                        current.invite_urls.set(links);
+                                        load_participants(current.clone()).await;
+                                        load_campaign(current.clone()).await;
+                                        set_note(&current, "Кампания создана. Сохраните одноразовые ссылки — повторно получить их будет нельзя.");
+                                    }
+                                    Err(error) => set_note(&current, error),
+                                }
+                                current.campaign_creating.set(false);
+                            });
                         }))
-                        .children(if !participant.activated && !participant.submitted && !participant.revoked {
-                            vec![
-                                html!("button", {
-                                    .class("secondary")
-                                    .text("Перевыпустить ссылку")
-                                    .event(clone!(state => move |_: events::Click| {
-                                        let csrf = state.csrf();
-                                        let current = state.clone();
-                                        spawn_local(async move {
-                                            let path = format!("/api/admin/invitations/{number}/reissue");
-                                            let body = serde_json::json!({});
-                                            match post_json::<serde_json::Value>(&path, &body, Some(&csrf)).await {
-                                                Ok(data) => {
-                                                    let token = data["token"].as_str().unwrap_or_default();
-                                                    let origin = web_sys::window()
-                                                        .map(|window| window.location().origin().unwrap_or_default())
-                                                        .unwrap_or_default();
-                                                    let url = format!("{origin}/#invite={token}");
-                                                    current.invite_url.set(url.clone());
-                                                    set_note(&current, format!("Одноразовая ссылка для шара №{number}: {url}"));
-                                                    load_participants(current.clone()).await;
-                                                }
-                                                Err(error) => set_note(&current, error),
-                                            }
-                                        });
-                                    }))
-                                }),
-                                html!("button", {
-                                    .class("secondary")
-                                    .text("Отозвать")
-                                    .event(clone!(state => move |_: events::Click| {
-                                        let csrf = state.csrf();
-                                        let current = state.clone();
-                                        spawn_local(async move {
-                                            let path = format!("/api/admin/invitations/{number}/revoke");
-                                            match post_empty(&path, &csrf).await {
-                                                Ok(()) => load_participants(current).await,
-                                                Err(error) => set_note(&current, error),
-                                            }
-                                        });
-                                    }))
-                                })
-                            ]
+                    }))
+                }))
+            } else {
+                Some(html!("div", {
+                    .class("admin-grid")
+                    .children(participants.into_iter().map(clone!(state => move |participant| {
+                        let number = participant.ornament_number;
+                        let display_name = participant.display_name.unwrap_or_default();
+                        let status = if participant.submitted {
+                            "Поздравление опубликовано"
+                        } else if participant.activated {
+                            "Приглашение активировано"
+                        } else if participant.revoked {
+                            "Приглашение отозвано"
                         } else {
-                            vec![]
+                            "Ожидает участника"
+                        };
+                        html!("div", {
+                            .class("admin-item")
+                            .child(html!("strong", {.text(&format!("Шар №{number}"))}))
+                            .child(html!("small", {.text(status)}))
+                            .child(html!("small", {.text(&display_name)}))
+                            .children(if !participant.activated && !participant.submitted && !participant.revoked {
+                                vec![
+                                    html!("button", {
+                                        .class("secondary")
+                                        .text("Перевыпустить ссылку")
+                                        .event(clone!(state => move |_: events::Click| {
+                                            let csrf = state.csrf();
+                                            let current = state.clone();
+                                            spawn_local(async move {
+                                                let path = format!("/api/admin/invitations/{number}/reissue");
+                                                let body = serde_json::json!({});
+                                                match post_json::<serde_json::Value>(&path, &body, Some(&csrf)).await {
+                                                    Ok(data) => {
+                                                        let token = data["token"].as_str().unwrap_or_default();
+                                                        let origin = web_sys::window()
+                                                            .map(|window| window.location().origin().unwrap_or_default())
+                                                            .unwrap_or_default();
+                                                        let url = format!("{origin}/#invite={token}");
+                                                        current.invite_url.set(url.clone());
+                                                        set_note(&current, format!("Одноразовая ссылка для шара №{number}: {url}"));
+                                                        load_participants(current.clone()).await;
+                                                    }
+                                                    Err(error) => set_note(&current, error),
+                                                }
+                                            });
+                                        }))
+                                    }),
+                                    html!("button", {
+                                        .class("secondary")
+                                        .text("Отозвать")
+                                        .event(clone!(state => move |_: events::Click| {
+                                            let csrf = state.csrf();
+                                            let current = state.clone();
+                                            spawn_local(async move {
+                                                let path = format!("/api/admin/invitations/{number}/revoke");
+                                                match post_empty(&path, &csrf).await {
+                                                    Ok(()) => load_participants(current).await,
+                                                    Err(error) => set_note(&current, error),
+                                                }
+                                            });
+                                        }))
+                                    })
+                                ]
+                            } else { vec![] })
                         })
-                    })
-                })))
-            }))
+                    })))
+                }))
+            }
         })))
+        .child_signal(state.invite_urls.signal_cloned().map(|links| {
+            if links.is_empty() {
+                None
+            } else {
+                Some(html!("section", {
+                    .class("admin-invite-list")
+                    .child(html!("h2", {.text("Одноразовые ссылки кампании")}))
+                    .child(html!("p", {
+                        .class("muted")
+                        .text("Скопируй и сохрани каждую ссылку сейчас. После закрытия страницы восстановить токены нельзя.")
+                    }))
+                    .children(links.into_iter().map(|invite| {
+                        html!("label", {
+                            .text(&format!("Шар №{}", invite.ornament_number))
+                            .child(html!("input", {
+                                .attr("type", "url")
+                                .attr("readonly", "")
+                                .attr("aria-label", &format!("Ссылка для шара №{}", invite.ornament_number))
+                                .property("value", &invite.url)
+                                .event(|event: events::Click| {
+                                    if let Some(target) = event.target() {
+                                        if let Ok(input) = target.dyn_into::<HtmlInputElement>() { input.select(); }
+                                    }
+                                })
+                            }))
+                        })
+                    }))
+                }))
+            }
+        }))
         .child_signal(state.invite_url.signal_cloned().map(|url| {
             if url.is_empty() {
                 None

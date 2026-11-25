@@ -1,6 +1,6 @@
 # Congratis — Development Roadmap
 
-**Current implementation branch:** `feat/dominator-spa`  
+**Current implementation branch:** `feat/rethinkdb-sse`  
 **Frontend stack:** Rust, Dominator, WebAssembly, Rollup  
 **Backend stack:** Rust, Axum, RethinkDB 2.4.4, Docker Compose, Nginx  
 **Deployment target:** Ubuntu 26.04 LTS (Resolute)
