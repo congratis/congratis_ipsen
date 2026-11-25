@@ -109,6 +109,71 @@ fn schedule_dialog_focus(dialog_id: &'static str) {
     let callback = Closure::once_into_js(move || focus_first_dialog_control(dialog_id));
     let _ = window.request_animation_frame(callback.unchecked_ref());
 }
+
+const DIALOG_FOCUSABLE: &str =
+    "button:not([disabled]):not([hidden]):not([aria-hidden='true']), \
+     input:not([disabled]):not([type='hidden']):not([hidden]):not([aria-hidden='true']), \
+     select:not([disabled]):not([hidden]):not([aria-hidden='true']), \
+     textarea:not([disabled]):not([hidden]):not([aria-hidden='true']), \
+     a[href]:not([hidden]):not([aria-hidden='true']), \
+     summary:not([hidden]):not([aria-hidden='true']), \
+     [contenteditable='true']:not([hidden]):not([aria-hidden='true']), \
+     [tabindex]:not([tabindex='-1']):not([hidden]):not([aria-hidden='true'])";
+
+fn trap_dialog_focus(event: &events::KeyDown, dialog_id: &str) {
+    if event.key() != "Tab" {
+        return;
+    }
+
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let Some(dialog) = document.get_element_by_id(dialog_id) else {
+        return;
+    };
+    let Ok(items) = dialog.query_selector_all(DIALOG_FOCUSABLE) else {
+        return;
+    };
+    let Some(last_index) = items.length().checked_sub(1) else {
+        return;
+    };
+    let Some(first) = items
+        .item(0)
+        .and_then(|item| item.dyn_into::<web_sys::HtmlElement>().ok())
+    else {
+        return;
+    };
+    let Some(last) = items
+        .item(last_index)
+        .and_then(|item| item.dyn_into::<web_sys::HtmlElement>().ok())
+    else {
+        return;
+    };
+    let Some(active) = document.active_element() else {
+        return;
+    };
+
+    let active_on_dialog = active.is_same_node(Some(dialog.as_ref()));
+    let active_on_first = active.is_same_node(Some(first.as_ref()));
+    let active_on_last = active.is_same_node(Some(last.as_ref()));
+
+    let target = if event.shift_key() {
+        if active_on_dialog || active_on_first {
+            Some(last)
+        } else {
+            None
+        }
+    } else if active_on_dialog || active_on_last {
+        Some(first)
+    } else {
+        None
+    };
+
+    if let Some(target) = target {
+        event.prevent_default();
+        let _ = target.focus();
+    }
+}
 const JINGLE_BELLS_URL: &str = "https://upload.wikimedia.org/wikipedia/commons/f/f0/Jingle_Bells_%2890bpm%29_%28Kevin_MacLeod%29_%28ISRC_USUAN1100187%29.oga";
 
 fn set_presentation_index(state: &AppState, index: usize) {
@@ -534,10 +599,14 @@ fn participant_tree(state: AppState) -> Dom {
                     .attr("id", "greeting-dialog")
                     .attr("aria-labelledby", "greeting-title")
                     .event(clone!(state => move |event: events::KeyDown| {
-                        if event.key() == "Escape" {
-                            event.prevent_default();
-                            state.selected.set(None);
-                            restore_dialog_focus(&state);
+                        match event.key().as_str() {
+                            "Escape" => {
+                                event.prevent_default();
+                                state.selected.set(None);
+                                restore_dialog_focus(&state);
+                            }
+                            "Tab" => trap_dialog_focus(&event, "greeting-dialog"),
+                            _ => {}
                         }
                     }))
                     .child(html!("section", {
