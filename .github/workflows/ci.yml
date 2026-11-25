@@ -209,6 +209,10 @@ jobs:
         run: docker compose config --quiet
       - name: Tag application image for Compose
         run: docker tag congratis:ci congratis:rethinkdb
+      - name: Prepare disposable administrator credentials
+        run: |
+          ADMIN_HASH="$(docker run --rm -e ADMIN_PASSWORD='CI-Only-Admin-Password-2026' congratis:rethinkdb hash-admin-password)"
+          sed -i "s|^ADMIN_PASSWORD_HASH=.*|ADMIN_PASSWORD_HASH='$ADMIN_HASH'|" .env
       - name: Build Nginx edge image
         run: docker compose build nginx
       - name: Validate Nginx bootstrap configuration
