@@ -114,10 +114,46 @@ fn participant_tree(state: AppState) -> Dom {
         .child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")}))
         .child(html!("h1", {.text("Ёлка добрых ").child(html!("span", {.text("пожеланий")}))}))
         .child(html!("p", {.class("lead").text("Выбери шар — внутри тебя ждёт новогоднее поздравление. Все пожелания команды собраны на одной ёлке.")}))
-        .child(html!("div", {.class("toolbar")
-            .child(html!("span", {.class("pill").text(if is_mine { format!("Твой шар №{}", user.subject_id) } else { "Режим администратора".into() }}))
-            .child(html!("button", {.class("secondary").text("Админка").event(clone!(state => move |_| { if let Some(window)=web_sys::window(){ let _=window.location().set_hash("/admin"); let _=window.location().reload(); } })))}))
-            .child(html!("button", {.class("secondary").text("Выйти").event(clone!(state => move |_| { let csrf=state.csrf(); let s=state.clone(); spawn_local(async move { match post_empty("/api/auth/logout",&csrf).await { Ok(()) => { s.user.set(None); if let Some(w)=web_sys::window(){let _=w.location().set_hash("");let _=w.location().reload();} }, Err(e)=>set_note(&s,e) } }); })))}))
+        .child(html!("div", {
+            .class("toolbar")
+            .child(html!("span", {
+                .class("pill")
+                .text(if is_mine {
+                    format!("Твой шар №{}", user.subject_id)
+                } else {
+                    "Режим администратора".to_string()
+                })
+            }))
+            .child(html!("button", {
+                .class("secondary")
+                .text("Админка")
+                .event(clone!(state => move |_| {
+                    if let Some(window) = web_sys::window() {
+                        let _ = window.location().set_hash("/admin");
+                        let _ = window.location().reload();
+                    }
+                }))
+            }))
+            .child(html!("button", {
+                .class("secondary")
+                .text("Выйти")
+                .event(clone!(state => move |_| {
+                    let csrf = state.csrf();
+                    let s = state.clone();
+                    spawn_local(async move {
+                        match post_empty("/api/auth/logout", &csrf).await {
+                            Ok(()) => {
+                                s.user.set(None);
+                                if let Some(window) = web_sys::window() {
+                                    let _ = window.location().set_hash("");
+                                    let _ = window.location().reload();
+                                }
+                            }
+                            Err(error) => set_note(&s, error),
+                        }
+                    });
+                }))
+            }))
         }))
         .child(html!("div", {.class("tree-frame")
             .child(html!("img", {.class("tree-art").attr("src","/christmas-tree.webp").attr("alt","Иллюстрированная новогодняя ёлка с двадцатью шарами")}))
