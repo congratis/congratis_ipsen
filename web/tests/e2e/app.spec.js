@@ -171,6 +171,15 @@ test("mobile viewport keeps the tree and all ornaments inside the screen", async
 
 test("participant receives a published greeting through the SSE stream", async ({ page }) => {
   await mockParticipantSession(page);
+  let campaignReads = 0;
+  await page.route("**/api/campaign", route => {
+    campaignReads += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ participant_count: 20, submitted_count: campaignReads > 1 ? 1 : 0 })
+    });
+  });
   await page.route("**/api/events", route =>
     route.fulfill({
       status: 200,
@@ -237,5 +246,5 @@ test("campaign summary drives the accessible candy cane progress indicator", asy
   await expect(progress).toHaveAttribute("aria-valuemax", "4");
   await expect(progress).toHaveAttribute("aria-valuenow", "2");
   await expect(page.locator(".progress-count")).toHaveText("2 / 4");
-  await expect(page.locator(".candy-fill")).toHaveCSS("width", /.+/);
+  await expect(page.locator(".candy-fill")).toHaveAttribute("style", /width:\\s*50\\.00%/);
 });
