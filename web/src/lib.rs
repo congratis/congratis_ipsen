@@ -25,10 +25,11 @@ struct AppState {
     admin_password: Mutable<String>,
     note: Mutable<String>,
     invite_url: Mutable<String>,
+    submitting: Mutable<bool>,
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), selected: Mutable::new(None), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()) }
+        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), selected: Mutable::new(None), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), submitting: Mutable::new(false) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -249,8 +250,20 @@ fn show_form(state: AppState) {
                 .class("primary")
                 .text("Опубликовать поздравление")
                 .event(clone!(form_state => move |_: events::Click| {
+                    if form_state.submitting.get() {
+                        return;
+                    }
                     let display_name = form_state.name.get_cloned();
+                    if display_name.trim().is_empty() || display_name.chars().count() > 80 {
+                        set_note(&form_state, "Имя должно содержать от 1 до 80 символов");
+                        return;
+                    }
                     let message = form_state.message.get_cloned();
+                    if message.trim().is_empty() || message.chars().count() > 500 {
+                        set_note(&form_state, "Поздравление должно содержать от 1 до 500 символов");
+                        return;
+                    }
+                    form_state.submitting.set(true);
                     let csrf = form_state.csrf();
                     let current = form_state.clone();
                     spawn_local(async move {
@@ -268,7 +281,10 @@ fn show_form(state: AppState) {
                                     let _ = window.location().reload();
                                 }
                             }
-                            Err(error) => set_note(&current, error),
+                            Err(error) => {
+                                current.submitting.set(false);
+                                set_note(&current, error);
+                            }
                         }
                     });
                 }))
@@ -394,6 +410,31 @@ fn admin_screen(state: AppState) -> Dom {
                 })))
             }))
         })))
+        .child_signal(state.invite_url.signal_cloned().map(|url| {
+            if url.is_empty() {
+                None
+            } else {
+                Some(html!("div", {
+                    .class("admin-invite")
+                    .child(html!("p", {
+                        .text("Одноразовая ссылка. Нажми на поле, чтобы выделить её, затем скопируй.")
+                    }))
+                    .child(html!("input", {
+                        .attr("type", "url")
+                        .attr("readonly", "")
+                        .attr("aria-label", "Одноразовая ссылка-приглашение")
+                        .property("value", &url)
+                        .event(|event: events::Click| {
+                            if let Some(target) = event.target() {
+                                if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
+                                    input.select();
+                                }
+                            }
+                        })
+                    }))
+                }))
+            }
+        }))
         .child(html!("div", {
             .class("note")
             .text_signal(state.note.signal_cloned())
@@ -521,15 +562,7 @@ fn render(state: AppState) -> Dom {
                 if hash.starts_with("#invite=") {
                     let token = hash.trim_start_matches("#invite=").to_string();
                     if let Some(window) = web_sys::window() {
-                        if let Ok(history) = window.history() {
-                            let _ = history.replace_state_with_url(
-                                &wasm_bindgen::JsValue::NULL,
-                                "",
-                                Some("/"),
-                            );
-                        }
-                    }
-                    let current = state.clone();
+                        let current = state.clone();
                     spawn_local(async move {
                         let body = serde_json::json!({"token": token});
                         match post_json::<User>(
@@ -538,6 +571,15 @@ fn render(state: AppState) -> Dom {
                             None,
                         ).await {
                             Ok(user) => {
+                                if let Some(window) = web_sys::window() {
+                                    if let Ok(history) = window.history() {
+                                        let _ = history.replace_state_with_url(
+                                            &wasm_bindgen::JsValue::NULL,
+                                            "",
+                                            Some("/"),
+                                        );
+                                    }
+                                }
                                 current.user.set(Some(user));
                                 load_greetings(current.clone()).await;
                                 connect_events(current);
