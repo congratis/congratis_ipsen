@@ -78,7 +78,7 @@ fn connect_events(state: AppState) {
     let _ = source.add_event_listener_with_callback("greeting", greeting_handler.as_ref().unchecked_ref());
     greeting_handler.forget();
     let resync_state = state.clone();
-    let resync_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: events::Click| {
+    let resync_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
         let state = resync_state.clone();
         spawn_local(async move { load_greetings(state).await; });
     });
@@ -124,7 +124,7 @@ fn participant_tree(state: AppState) -> Dom {
             .child(html!("button", {
                 .class("secondary")
                 .text("Админка")
-                .event(clone!(state => move |_| {
+                .event(clone!(state => move |_: events::Click| {
                     if let Some(window) = web_sys::window() {
                         let _ = window.location().set_hash("/admin");
                         let _ = window.location().reload();
@@ -134,7 +134,7 @@ fn participant_tree(state: AppState) -> Dom {
             .child(html!("button", {
                 .class("secondary")
                 .text("Выйти")
-                .event(clone!(state => move |_| {
+                .event(clone!(state => move |_: events::Click| {
                     let csrf = state.csrf();
                     let s = state.clone();
                     spawn_local(async move {
@@ -166,7 +166,7 @@ fn participant_tree(state: AppState) -> Dom {
                         .style("left", &format!("{x}%")).style("top",&format!("{y}%"))
                         .attr("aria-label",&format!("Шар номер {number}"))
                         .text(&number.to_string())
-                        .event(clone!(state, greeting => move |_| {
+                        .event(clone!(state, greeting => move |_: events::Click| {
                             if let Some(g)=greeting.clone() { state.selected.set(Some(g)); }
                             else if mine { show_form(state.clone()); }
                             else { set_note(&state, "Этот шар пока свободен"); }
@@ -190,7 +190,7 @@ fn participant_tree(state: AppState) -> Dom {
                         .child(html!("button", {
                             .class("close")
                             .text("×")
-                            .event(clone!(state => move |_| state.selected.set(None)))
+                            .event(clone!(state => move |_: events::Click| state.selected.set(None)))
                         }))
                         .child(html!("div", {
                             .class("kicker")
@@ -205,7 +205,7 @@ fn participant_tree(state: AppState) -> Dom {
                         .child(html!("button", {
                             .class("primary")
                             .text("Вернуться к ёлке")
-                            .event(clone!(state => move |_| state.selected.set(None)))
+                            .event(clone!(state => move |_: events::Click| state.selected.set(None)))
                         }))
                     }))
                 })
@@ -248,7 +248,7 @@ fn show_form(state: AppState) {
             .child(html!("button", {
                 .class("primary")
                 .text("Опубликовать поздравление")
-                .event(clone!(form_state => move |_| {
+                .event(clone!(form_state => move |_: events::Click| {
                     let display_name = form_state.name.get_cloned();
                     let message = form_state.message.get_cloned();
                     let csrf = form_state.csrf();
@@ -302,7 +302,7 @@ fn admin_screen(state: AppState) -> Dom {
             .child(html!("button", {
                 .class("secondary")
                 .text("К ёлке")
-                .event(|_| {
+                .event(|_: events::Click| {
                     if let Some(window) = web_sys::window() {
                         let _ = window.location().set_hash("");
                         let _ = window.location().reload();
@@ -312,7 +312,7 @@ fn admin_screen(state: AppState) -> Dom {
             .child(html!("button", {
                 .class("secondary")
                 .text("Обновить")
-                .event(clone!(state => move |_| {
+                .event(clone!(state => move |_: events::Click| {
                     let current = state.clone();
                     spawn_local(async move {
                         load_participants(current).await;
@@ -349,7 +349,7 @@ fn admin_screen(state: AppState) -> Dom {
                                 html!("button", {
                                     .class("secondary")
                                     .text("Перевыпустить ссылку")
-                                    .event(clone!(state => move |_| {
+                                    .event(clone!(state => move |_: events::Click| {
                                         let csrf = state.csrf();
                                         let current = state.clone();
                                         spawn_local(async move {
@@ -374,7 +374,7 @@ fn admin_screen(state: AppState) -> Dom {
                                 html!("button", {
                                     .class("secondary")
                                     .text("Отозвать")
-                                    .event(clone!(state => move |_| {
+                                    .event(clone!(state => move |_: events::Click| {
                                         let csrf = state.csrf();
                                         let current = state.clone();
                                         spawn_local(async move {
@@ -442,7 +442,7 @@ fn admin_login(state: AppState) -> Dom {
             .child(html!("button", {
                 .class("primary")
                 .text("Войти")
-                .event(clone!(state => move |_| {
+                .event(clone!(state => move |_: events::Click| {
                     let username = state.admin_name.get_cloned();
                     let password = state.admin_password.get_cloned();
                     let current = state.clone();
@@ -488,7 +488,7 @@ fn landing_screen() -> Dom {
         .child(html!("button", {
             .class("primary")
             .text("Вход администратора")
-            .event(|_| {
+            .event(|_: events::Click| {
                 if let Some(window) = web_sys::window() {
                     let _ = window.location().set_hash("/admin");
                     let _ = window.location().reload();
