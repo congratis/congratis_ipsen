@@ -201,7 +201,7 @@ fn install_dialog_keyboard_handler(state: AppState) {
         callback.forget();
     }
 }
-const JINGLE_BELLS_URL: &str = "https://upload.wikimedia.org/wikipedia/commons/f/f0/Jingle_Bells_%2890bpm%29_%28Kevin_MacLeod%29_%28ISRC_USUAN1100187%29.oga";
+const JINGLE_BELLS_URL: &str = "https://upload.wikimedia.org/wikipedia/commons/4/4d/Jingle_Bells_%28ISRC_USUAN1100187%29.mp3";
 
 fn set_presentation_index(state: &AppState, index: usize) {
     let greetings = state.greetings.get_cloned();
@@ -495,6 +495,7 @@ fn participant_tree(state: AppState) -> Dom {
         .class("shell")
         .child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")}))
         .child(html!("h1", {.text("Ёлка добрых ").child(html!("span", {.text("пожеланий")}))}))
+        .child(html!("p", {.class("team-subtitle").text("команда редких заболеваний")}))
         .child(html!("p", {.class("lead").text("Выбери шар — внутри тебя ждёт новогоднее поздравление. Все пожелания команды собраны на одной ёлке.")}))
         .child(html!("div", {
             .class("toolbar")
@@ -1282,6 +1283,10 @@ fn landing_screen() -> Dom {
         .child(html!("h1", {
             .text("Ёлка добрых ")
             .child(html!("span", {.text("пожеланий")}))
+        }))
+        .child(html!("p", {
+            .class("team-subtitle")
+            .text("команда редких заболеваний")
         }))
         .child(html!("p", {
             .class("lead")
