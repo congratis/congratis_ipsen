@@ -1,6 +1,6 @@
 map $uri $congratis_cache_control {
     default "no-store";
-    ~* \\.(?:css|js)$ "public, max-age=31536000, immutable";
+    ~* \.(?:css|js)$ "public, max-age=31536000, immutable";
 }
 
 limit_req_zone $binary_remote_addr zone=congratis_auth:10m rate=5r/m;
