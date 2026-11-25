@@ -248,6 +248,7 @@ async fn admin_reissue_invitation(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let session = authenticated(&state, &headers).await?;
     if session.role != "admin" { return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав")); }
+    verify_csrf(&headers, &session)?;
     if !(1..=20).contains(&number) { return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректный номер шара")); }
     let token = random_secret();
     let changed = state.store.reissue_invitation(number, &digest(&token)).await.map_err(|e| {
@@ -262,6 +263,7 @@ async fn admin_revoke_invitation(
 ) -> Result<StatusCode, ApiError> {
     let session = authenticated(&state, &headers).await?;
     if session.role != "admin" { return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав")); }
+    verify_csrf(&headers, &session)?;
     if !(1..=20).contains(&number) { return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректный номер шара")); }
     let changed = state.store.revoke_invitation(number).await.map_err(|e| {
         tracing::error!(?e, "invitation revoke failed");
