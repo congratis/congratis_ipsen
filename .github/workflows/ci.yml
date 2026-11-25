@@ -1,9 +1,9 @@
 name: Rust CI
 on:
   push:
-    branches: [main, feat/backend-auth]
+    branches: [main, feat/backend-auth, feat/dominator-spa]
   pull_request:
-    branches: [main]
+    branches: [main, feat/rethinkdb-sse]
 concurrency:
   group: congratis-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -28,6 +28,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all
+      - name: Install WASM target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Check Dominator frontend formatting
+        run: cargo fmt --manifest-path web/Cargo.toml -- --check
+      - name: Check Dominator frontend
+        run: cargo check --manifest-path web/Cargo.toml --target wasm32-unknown-unknown
       - name: Compile all targets
         run: cargo check --all-targets
       - name: Run tests
