@@ -244,8 +244,8 @@ jobs:
           trap 'rm -f "$headers" "$body"' EXIT
           curl --fail --silent --show-error --dump-header "$headers" --output "$body" "$BASE_URL/"
           grep -Eiq '^Cache-Control: no-store' "$headers"
-          css_path="$(grep -Eo 'href="[^"]*style\\.css\\?v=[a-f0-9]{16}"' "$body" | head -n1 | cut -d '"' -f2)"
-          js_path="$(grep -Eo 'src="[^"]*index\\.js\\?v=[a-f0-9]{16}"' "$body" | head -n1 | cut -d '"' -f2)"
+          css_path="$(grep -Eo 'href="[^"]*style\.css\\?v=[a-f0-9]{16}"' "$body" | head -n1 | cut -d '"' -f2)"
+          js_path="$(grep -Eo 'src="[^"]*index\.js\\?v=[a-f0-9]{16}"' "$body" | head -n1 | cut -d '"' -f2)"
           test -n "$css_path"
           test -n "$js_path"
           curl --fail --silent --show-error --head "$BASE_URL/$css_path" | grep -Eiq '^Cache-Control: public, max-age=31536000, immutable'
