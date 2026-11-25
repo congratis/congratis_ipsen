@@ -179,7 +179,7 @@ fn trap_dialog_focus(event: &web_sys::KeyboardEvent, dialog_id: &str) -> Option<
 fn install_dialog_keyboard_handler(state: AppState) {
     let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
     let callback = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |event| {
-        if state.selected.get().is_some() {
+        if state.selected.get_cloned().is_some() {
             match event.key().as_str() {
                 "Escape" => {
                     event.prevent_default();
