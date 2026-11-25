@@ -291,21 +291,71 @@ fn connect_events(state: AppState) {
 
     *state.sse_connection.borrow_mut() = Some(EventSourceConnection { source, handlers });
 }
-fn field(label: &'static str, placeholder: &'static str, value: Mutable<String>, is_textarea: bool) -> Dom {
+fn draft_storage_key(subject_id: &str) -> String {
+    format!("congratis:draft:{subject_id}")
+}
+fn restore_draft(state: &AppState, subject_id: &str) {
+    let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten()) else { return; };
+    let Ok(Some(raw)) = storage.get_item(&draft_storage_key(subject_id)) else { return; };
+    let Ok(draft) = serde_json::from_str::<serde_json::Value>(&raw) else { return; };
+    if let Some(name) = draft.get("display_name").and_then(serde_json::Value::as_str) {
+        state.name.set(name.to_owned());
+    }
+    if let Some(message) = draft.get("message").and_then(serde_json::Value::as_str) {
+        state.message.set(message.to_owned());
+    }
+}
+fn persist_draft(state: &AppState, subject_id: &str) {
+    let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten()) else { return; };
+    let draft = serde_json::json!({
+        "display_name": state.name.get_cloned(),
+        "message": state.message.get_cloned()
+    });
+    if let Ok(raw) = serde_json::to_string(&draft) {
+        let _ = storage.set_item(&draft_storage_key(subject_id), &raw);
+    }
+}
+fn clear_draft(subject_id: &str) {
+    if let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten()) {
+        let _ = storage.remove_item(&draft_storage_key(subject_id));
+    }
+}
+fn field(
+    label: &'static str,
+    placeholder: &'static str,
+    value: Mutable<String>,
+    is_textarea: bool,
+    draft_state: Option<AppState>,
+    draft_subject_id: Option<String>,
+) -> Dom {
     if is_textarea {
         html!("label", { .text(label).child(html!("textarea", {
             .attr("rows", "4").attr("maxlength", "500").attr("placeholder", placeholder)
             .property("value", &value.get_cloned())
-            .event(clone!(value => move |event: events::Input| {
-                if let Some(target) = event.target() { if let Ok(input) = target.dyn_into::<HtmlTextAreaElement>() { value.set(input.value()); } }
+            .event(clone!(value, draft_state, draft_subject_id => move |event: events::Input| {
+                if let Some(target) = event.target() {
+                    if let Ok(input) = target.dyn_into::<HtmlTextAreaElement>() {
+                        value.set(input.value());
+                        if let (Some(state), Some(subject_id)) = (&draft_state, &draft_subject_id) {
+                            persist_draft(state, subject_id);
+                        }
+                    }
+                }
             }))
         })) })
     } else {
         html!("label", { .text(label).child(html!("input", {
             .attr("type", "text").attr("maxlength", "80").attr("placeholder", placeholder)
             .property("value", &value.get_cloned())
-            .event(clone!(value => move |event: events::Input| {
-                if let Some(target) = event.target() { if let Ok(input) = target.dyn_into::<HtmlInputElement>() { value.set(input.value()); } }
+            .event(clone!(value, draft_state, draft_subject_id => move |event: events::Input| {
+                if let Some(target) = event.target() {
+                    if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
+                        value.set(input.value());
+                        if let (Some(state), Some(subject_id)) = (&draft_state, &draft_subject_id) {
+                            persist_draft(state, subject_id);
+                        }
+                    }
+                }
             }))
         })) })
     }
@@ -441,6 +491,13 @@ fn participant_tree(state: AppState) -> Dom {
                     .child(html!("section", {
                         .class("dialog")
                         .attr("role", "dialog")
+                        .attr("tabindex", "-1")
+                        .event(clone!(state => move |event: events::KeyDown| {
+                            if event.key() == "Escape" {
+                                event.prevent_default();
+                                state.selected.set(None);
+                            }
+                        }))
                         .attr("aria-modal", "true")
                         .attr("aria-labelledby", "greeting-title")
                         .child(html!("button", {
@@ -520,6 +577,13 @@ fn participant_tree(state: AppState) -> Dom {
                     .child(html!("section", {
                         .class("presentation-card")
                         .attr("role", "dialog")
+                        .attr("tabindex", "-1")
+                        .event(clone!(state => move |event: events::KeyDown| {
+                            if event.key() == "Escape" {
+                                event.prevent_default();
+                                exit_presentation(state.clone());
+                            }
+                        }))
                         .attr("aria-modal", "true")
                         .attr("aria-labelledby", "presentation-title")
                         .child_signal(state.presentation_index.signal().map(clone!(state => move |index| {
@@ -662,12 +726,26 @@ fn participant_tree(state: AppState) -> Dom {
 }
 fn show_form(state: AppState) {
     let form_state = state.clone();
+    let subject_id = state.user.lock_ref().as_ref()
+        .map(|user| user.subject_id.clone()).unwrap_or_default();
     let dialog = html!("div", {
         .class("overlay")
         .child(html!("section", {
             .class("dialog")
+            .attr("role", "dialog")
+            .attr("aria-modal", "true")
+            .attr("aria-labelledby", "submission-title")
+            .attr("tabindex", "-1")
+            .event(clone!(form_state => move |event: events::KeyDown| {
+                if event.key() == "Escape" {
+                    event.prevent_default();
+                    if let Some(window) = web_sys::window() { let _ = window.location().reload(); }
+                }
+            }))
             .child(html!("button", {
                 .class("close")
+                .attr("type", "button")
+                .attr("aria-label", "Закрыть форму поздравления")
                 .text("×")
                 .event(|_: events::Click| {
                     if let Some(window) = web_sys::window() {
@@ -680,14 +758,15 @@ fn show_form(state: AppState) {
                 .text("YOUR PERSONAL ORNAMENT")
             }))
             .child(html!("h2", {
+                .attr("id", "submission-title")
                 .text("Добавь своё пожелание")
             }))
             .child(html!("p", {
                 .class("muted")
                 .text("Твоё приглашение одноразовое. После публикации поздравление появится у всей команды.")
             }))
-            .child(field("Как тебя зовут?", "Твоё имя", state.name.clone(), false))
-            .child(field("Твоё поздравление", "Пусть в новом году...", state.message.clone(), true))
+            .child(field("Как тебя зовут?", "Твоё имя", state.name.clone(), false, Some(form_state.clone()), Some(subject_id.clone())))
+            .child(field("Твоё поздравление", "Пусть в новом году...", state.message.clone(), true, Some(form_state.clone()), Some(subject_id.clone())))
             .child(html!("div", {
                 .class("note")
                 .text_signal(state.note.signal_cloned())
@@ -712,6 +791,7 @@ fn show_form(state: AppState) {
                     form_state.submitting.set(true);
                     let csrf = form_state.csrf();
                     let current = form_state.clone();
+                    let subject_id = current.user.lock_ref().as_ref().map(|user| user.subject_id.clone()).unwrap_or_default();
                     spawn_local(async move {
                         let body = serde_json::json!({
                             "display_name": display_name,
@@ -720,6 +800,7 @@ fn show_form(state: AppState) {
                         match post_json::<serde_json::Value>("/api/greetings", &body, Some(&csrf)).await {
                             Ok(_) => {
                                 set_note(&current, "Поздравление опубликовано! ✨");
+                                clear_draft(&subject_id);
                                 current.name.set(String::new());
                                 current.message.set(String::new());
                                 load_greetings(current.clone()).await;
@@ -1008,7 +1089,7 @@ fn admin_login(state: AppState) -> Dom {
                 .class("kicker")
                 .text("AUTHORIZED ACCESS")
             }))
-            .child(field("Логин", "admin", state.admin_name.clone(), false))
+            .child(field("Логин", "admin", state.admin_name.clone(), false, None, None))
             .child(html!("label", {
                 .text("Пароль")
                 .child(html!("input", {
@@ -1126,6 +1207,7 @@ fn render(state: AppState) -> Dom {
                                         );
                                     }
                                 }
+                                restore_draft(&current, &user.subject_id);
                                 current.user.set(Some(user));
                                 load_campaign(current.clone()).await;
                                 load_greetings(current.clone()).await;
@@ -1165,6 +1247,7 @@ pub fn main() {
     let s=state.clone();
     spawn_local(async move {
         if let Ok(user)=get_json::<User>("/api/me").await {
+            if user.role == "participant" { restore_draft(&s, &user.subject_id); }
             s.user.set(Some(user.clone()));
             load_campaign(s.clone()).await;
             if user.role=="admin" {load_participants(s.clone()).await;} else {load_greetings(s.clone()).await;connect_events(s.clone());}

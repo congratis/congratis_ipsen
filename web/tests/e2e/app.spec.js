@@ -114,6 +114,50 @@ test("failed invite exchange keeps the invitation token available for retry", as
   await expect.poll(() => page.evaluate(() => location.hash)).toBe("#invite=one-time-token");
 });
 
+test("participant draft is restored from local storage and updated while typing", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("congratis:draft:1", JSON.stringify({
+      display_name: "Мария",
+      message: "Пусть новый год принесёт радость!"
+    }));
+  });
+  await mockParticipantSession(page);
+  await page.goto("/#invite=valid-invite-token");
+  await expect(page.locator(".tree-frame")).toBeVisible();
+  await page.getByRole("button", { name: "Шар номер 1", exact: true }).click();
+
+  const name = page.getByRole("textbox", { name: "Как тебя зовут?", exact: true });
+  const message = page.getByRole("textbox", { name: "Твоё поздравление", exact: true });
+  await expect(name).toHaveValue("Мария");
+  await expect(message).toHaveValue("Пусть новый год принесёт радость!");
+
+  await name.fill("Иван");
+  await message.fill("Здоровья и исполнения желаний!");
+  const draft = await page.evaluate(() => JSON.parse(localStorage.getItem("congratis:draft:1")));
+  expect(draft).toEqual({
+    display_name: "Иван",
+    message: "Здоровья и исполнения желаний!"
+  });
+});
+
+
+test("Escape closes the greeting form without discarding its saved draft", async ({ page }) => {
+  await mockParticipantSession(page);
+  await page.goto("/#invite=valid-invite-token");
+  await expect(page.locator(".tree-frame")).toBeVisible();
+  await page.getByRole("button", { name: "Шар номер 1", exact: true }).click();
+  await page.getByRole("textbox", { name: "Как тебя зовут?", exact: true }).fill("Иван");
+
+  const dialog = page.getByRole("dialog", { name: "Добавь своё пожелание" });
+  await expect(dialog).toBeVisible();
+  await dialog.focus();
+  await page.keyboard.press("Escape");
+
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("congratis:draft:1")))
+    .toContain("Иван");
+});
+
 test("participant can submit a greeting only once even after a rapid double click", async ({ page }) => {
   await mockParticipantSession(page);
   let submissions = 0;
