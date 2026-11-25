@@ -9,6 +9,7 @@ use tokio::sync::{broadcast, watch};
 
 const TABLE: &str = "ornaments";
 const TOKEN_INDEX: &str = "token_hash";
+const SESSIONS_TABLE: &str = "auth_sessions";
 const INDEX_PROBE_TOKEN: &str = "__congratis_index_probe__";
 
 fn token_index_options() -> reql::cmd::get_all::Options {
@@ -70,6 +71,10 @@ pub struct Ornament {
     pub ornament_number: i16,
     pub token_hash: String,
     pub used: bool,
+    #[serde(default)]
+    pub activated: bool,
+    #[serde(default)]
+    pub revoked: bool,
     pub display_name: Option<String>,
     pub message: Option<String>,
     pub created_at: i64,
@@ -156,6 +161,15 @@ impl Store {
         }
 
         self.wait_for_token_index().await?;
+
+        let tables = self.first::<Vec<String>>(
+            r.db(self.database.as_str()).table_list()
+        ).await?.ok_or_else(|| anyhow!("RethinkDB returned no table list"))?;
+        if !tables.iter().any(|name| name == SESSIONS_TABLE) {
+            let _: Option<Value> = self.first(
+                r.db(self.database.as_str()).table_create(SESSIONS_TABLE)
+            ).await.context("creating auth_sessions table")?;
+        }
         Ok(())
     }
 
@@ -235,6 +249,8 @@ impl Store {
                     "ornament_number": number,
                     "token_hash": token_hash,
                     "used": false,
+                    "activated": false,
+                    "revoked": false,
                     "display_name": null,
                     "message": null,
                     "created_at": created_at,
@@ -424,6 +440,158 @@ impl Store {
         if !databases.iter().any(|name| name == &self.database) {
             bail!("configured RethinkDB database is missing");
         }
+        Ok(())
+    }
+}
+
+impl Store {
+    pub async fn reissue_invitation(&self, ornament_number: i16, token_hash: &str) -> Result<bool> {
+        let update = reql::func!(|document| {
+            r.branch(
+                r.args((
+                    document.clone().get_field("activated").default(r.expr(false)).eq(false)
+                        .and(document.clone().get_field("used").eq(false)),
+                    document.clone().merge(r.expr(json!({
+                        "token_hash": token_hash,
+                        "revoked": false,
+                        "created_at": Utc::now().timestamp()
+                    }))),
+                    document
+                ))
+            )
+        });
+        let result = self.first::<WriteResult>(
+            r.db(self.database.as_str()).table(TABLE).get(ornament_number).update(update)
+        ).await?.ok_or_else(|| anyhow!("missing invitation reissue result"))?;
+        if result.errors != 0 {
+            bail!("invitation reissue failed: {}", result.first_error.unwrap_or_default());
+        }
+        Ok(result.replaced == 1)
+    }
+
+    pub async fn revoke_invitation(&self, ornament_number: i16) -> Result<bool> {
+        let update = reql::func!(|document| {
+            r.branch(
+                r.args((
+                    document.clone().get_field("activated").default(r.expr(false)).eq(false)
+                        .and(document.clone().get_field("used").eq(false)),
+                    document.clone().merge(r.expr(json!({"revoked": true}))),
+                    document
+                ))
+            )
+        });
+        let result = self.first::<WriteResult>(
+            r.db(self.database.as_str()).table(TABLE).get(ornament_number).update(update)
+        ).await?.ok_or_else(|| anyhow!("missing invitation revoke result"))?;
+        if result.errors != 0 {
+            bail!("invitation revoke failed: {}", result.first_error.unwrap_or_default());
+        }
+        Ok(result.replaced == 1)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AuthSession {
+    pub id: String,
+    pub subject_id: String,
+    pub role: String,
+    pub csrf_hash: String,
+    pub created_at: i64,
+    pub expires_at: i64,
+    #[serde(default)]
+    pub revoked: bool,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct ParticipantSummary {
+    pub ornament_number: i16,
+    pub activated: bool,
+    pub submitted: bool,
+    pub revoked: bool,
+    pub display_name: Option<String>,
+    pub created_at: i64,
+    pub used_at: Option<i64>,
+}
+impl Store {
+    pub async fn activate_invitation(&self, token_hash: &str) -> Result<Option<i16>> {
+        let update = reql::func!(|document| {
+            r.branch(r.args((
+                document.clone().get_field("activated").default(r.expr(false)).eq(false)
+                    .and(document.clone().get_field("revoked").default(r.expr(false)).eq(false))
+                    .and(document.clone().get_field("used").eq(false)),
+                document.clone().merge(r.expr(json!({
+                    "activated": true, "activated_at": Utc::now().timestamp()
+                }))),
+                document
+            )))
+        });
+        let query = r.db(self.database.as_str()).table(TABLE)
+            .get_all(r.args((token_hash, token_index_options())))
+            .limit(1).update(update);
+        let result = self.first::<WriteResult>(query).await?
+            .ok_or_else(|| anyhow!("missing invitation activation result"))?;
+        if result.errors != 0 { bail!("invitation activation failed: {}", result.first_error.unwrap_or_default()); }
+        if result.replaced != 1 { return Ok(None); }
+        let mut stream = r.db(self.database.as_str()).table(TABLE)
+            .get_all(r.args((token_hash, token_index_options())))
+            .limit(1).run::<_, Ornament>(&self.session);
+        let item = stream.try_next().await?.ok_or_else(|| anyhow!("activated invitation disappeared"))?;
+        Ok(Some(item.ornament_number))
+    }
+    pub async fn create_auth_session(&self, session: &AuthSession) -> Result<()> {
+        let result = self.first::<WriteResult>(
+            r.db(self.database.as_str()).table(SESSIONS_TABLE).insert(session)
+        ).await?.ok_or_else(|| anyhow!("missing session insert result"))?;
+        if result.errors != 0 || result.inserted != 1 {
+            bail!("session insert failed: {}", result.first_error.unwrap_or_default());
+        }
+        Ok(())
+    }
+    pub async fn get_auth_session(&self, id: &str) -> Result<Option<AuthSession>> {
+        self.first(r.db(self.database.as_str()).table(SESSIONS_TABLE).get(id)).await
+    }
+    pub async fn revoke_auth_session(&self, id: &str) -> Result<()> {
+        let _: Option<Value> = self.first(
+            r.db(self.database.as_str()).table(SESSIONS_TABLE).get(id)
+                .update(json!({"revoked": true}))
+        ).await?;
+        Ok(())
+    }
+    pub async fn list_participants(&self) -> Result<Vec<ParticipantSummary>> {
+        Ok(self.list_ornaments().await?.into_iter().map(|o| ParticipantSummary {
+            ornament_number: o.ornament_number, activated: o.activated, submitted: o.used,
+            revoked: o.revoked, display_name: o.display_name, created_at: o.created_at,
+            used_at: o.used_at,
+        }).collect())
+    }
+    pub async fn claim_greeting(&self, number: i16, display_name: &str, message: &str) -> Result<bool> {
+        let update = reql::func!(|document| {
+            r.branch(r.args((
+                document.clone().get_field("activated").default(r.expr(false))
+                    .and(document.clone().get_field("revoked").default(r.expr(false)).eq(false))
+                    .and(document.clone().get_field("used").eq(false)),
+                document.clone().merge(r.expr(json!({
+                    "used": true, "display_name": display_name, "message": message,
+                    "used_at": Utc::now().timestamp()
+                }))),
+                document
+            )))
+        });
+        let result = self.first::<WriteResult>(
+            r.db(self.database.as_str()).table(TABLE).get(number).update(update)
+        ).await?.ok_or_else(|| anyhow!("missing greeting claim result"))?;
+        if result.errors != 0 { bail!("greeting claim failed: {}", result.first_error.unwrap_or_default()); }
+        Ok(result.replaced == 1)
+    }
+}
+
+impl Store {
+    pub async fn rollback_invitation_activation(&self, token_hash: &str) -> Result<()> {
+        let _: Option<Value> = self.first(
+            r.db(self.database.as_str()).table(TABLE)
+                .get_all(r.args((token_hash, token_index_options())))
+                .limit(1)
+                .update(json!({"activated": false}))
+        ).await?;
         Ok(())
     }
 }

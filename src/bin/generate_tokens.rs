@@ -26,8 +26,7 @@ async fn main() -> anyhow::Result<()> {
         .parse()?;
     anyhow::ensure!((1..=20).contains(&count), "count must be between 1 and 20");
 
-    let base = env::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".into());
-    let store = Store::connect().await?;
+        let store = Store::connect().await?;
 
     let mut invitations = Vec::with_capacity(count as usize);
     let mut output = Vec::with_capacity(count as usize);
@@ -41,9 +40,9 @@ async fn main() -> anyhow::Result<()> {
     // preflight empty-table check and inserts the invitation batch once.
     store.insert_invitations(&invitations).await?;
 
-    println!("ornament_number,personal_url");
+    println!("ornament_number,one_time_token");
     for (number, token) in output {
-        println!("{number},{}/?token={token}", base.trim_end_matches('/'));
+        println!("{number},{token}");
     }
     io::stdout().flush()?;
 
