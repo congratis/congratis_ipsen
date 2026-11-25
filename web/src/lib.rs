@@ -115,7 +115,7 @@ fn trap_dialog_focus(event: &events::KeyDown, dialog_id: &str) {
     if count == 0 { return; }
     let Some(first) = items.item(0).and_then(|item| item.dyn_into::<web_sys::HtmlElement>().ok()) else { return; };
     let Some(last) = items.item(count - 1).and_then(|item| item.dyn_into::<web_sys::HtmlElement>().ok()) else { return; };
-    let active = document.active_element();
+    let active = event.target().and_then(|target| target.dyn_into::<web_sys::HtmlElement>().ok());
     let on_first = active.as_ref().map(|element| element.is_same_node(Some(first.as_ref()))).unwrap_or(false);
     let on_last = active.as_ref().map(|element| element.is_same_node(Some(last.as_ref()))).unwrap_or(false);
     if event.shift_key() && on_first {
