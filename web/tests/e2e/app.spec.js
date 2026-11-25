@@ -312,6 +312,7 @@ test("presentation mode navigates greetings and supports audio controls and sile
 
   await page.goto("/#invite=valid-invite-token");
   await expect(page.locator(".tree-frame")).toBeVisible();
+  page.on("console", message => console.log("BROWSER_CONSOLE", message.text()));
   await page.getByRole("button", { name: "▶ Play" }).click();
 
   let dialog = page.getByRole("dialog", { name: "С теплом, Анна" });

@@ -551,6 +551,7 @@ fn participant_tree(state: AppState) -> Dom {
                                 .event(clone!(state => move |_: events::Click| {
                                     let current = state.presentation_index.get();
                                     let total = state.greetings.lock_ref().len();
+                                    web_sys::console::log_1(&format!("PRESENTATION_NEXT_HANDLER current={current} total={total}").into());
                                     if current < total { set_presentation_index(&state, current + 1); }
                                 }))
                             }))
