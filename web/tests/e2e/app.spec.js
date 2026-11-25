@@ -324,13 +324,13 @@ test("presentation mode navigates greetings and supports audio controls and sile
 
   // The last forward action must lead to a distinct finale, not a blank/overflow state.
   await page.getByRole("button", { name: "Следующее поздравление" }).click();
-  dialog = page.getByRole("dialog", { name: "С Новым годом!" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog).toHaveClass(/presentation-finale/);
-  await expect(dialog.getByText("Все 2 поздравлений просмотрены")).toBeVisible();
+  const finale = page.locator(".presentation-finale");
+  await expect(finale).toBeVisible();
+  await expect(finale.locator("h2")).toHaveText("С Новым годом!");
+  await expect(finale.getByText("Все 2 поздравлений просмотрены")).toBeVisible();
 
   // Replay starts from the first greeting and restores its ornament highlight.
-  await dialog.getByRole("button", { name: "Повторить" }).click();
+  await finale.getByRole("button", { name: "Повторить" }).click();
   dialog = page.getByRole("dialog", { name: "С теплом, Анна" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Поздравление 1 из 2")).toBeVisible();
