@@ -64,7 +64,7 @@ services:
     init: true
     environment:
       DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
-      TLS_MODE: ${TLS_MODE:-http}
+      TLS_MODE: ${TLS_MODE:?Set TLS_MODE in .env (http or globalsign)}
     depends_on:
       app:
         condition: service_started
