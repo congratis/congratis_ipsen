@@ -166,7 +166,7 @@ docker compose config --quiet
 Build and start the stack:
 
 ```bash
-docker compose up -d --build --remove-orphans
+docker compose up -d --build --pull never --remove-orphans
 docker compose ps
 docker compose logs --tail=100 rethinkdb app nginx
 curl -fsS https://congratis.online/api/health
@@ -213,7 +213,7 @@ docker compose ps
 curl -fsS https://congratis.online/api/health
 ```
 
-Docker Compose reuses locally available base images and build cache by default. Do not add `--pull` or `--no-cache` to a routine rebuild unless you deliberately intend to refresh base images or discard build cache.
+Docker Compose reuses locally available base images and build cache by default. `--pull never` prevents Compose from pulling service images; the Docker build also reuses the locally cached base-image layers. Do not use `--no-cache` for a routine rebuild.
 
 Useful checks: `docker compose logs -f app nginx rethinkdb`, `docker compose exec nginx nginx -t`, `docker compose ps`.
 
