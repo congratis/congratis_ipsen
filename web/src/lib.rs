@@ -589,7 +589,7 @@ fn participant_tree(state: AppState) -> Dom {
                     .attr("id", "greeting-dialog")
                     .attr("aria-labelledby", "greeting-title")
                     .event_with_options(
-                        &EventOptions { bubbles: true, preventable: true },
+                        (&EventOptions { bubbles: true, preventable: true }),
                         clone!(state => move |event: events::KeyDown| {
                             match event.key().as_str() {
                                 "Escape" => {
