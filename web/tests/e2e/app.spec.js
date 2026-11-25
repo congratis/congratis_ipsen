@@ -312,7 +312,6 @@ test("presentation mode navigates greetings and supports audio controls and sile
 
   await page.goto("/#invite=valid-invite-token");
   await expect(page.locator(".tree-frame")).toBeVisible();
-  page.on("console", message => console.log("BROWSER_CONSOLE", message.text()));
   await page.getByRole("button", { name: "▶ Play" }).click();
 
   let dialog = page.getByRole("dialog", { name: "С теплом, Анна" });
@@ -326,14 +325,15 @@ test("presentation mode navigates greetings and supports audio controls and sile
 
   // The last forward action must lead to a distinct finale, not a blank/overflow state.
   await page.getByRole("button", { name: "Следующее поздравление" }).click();
-  console.log("SLIDE_AFTER_NEXT", await page.locator(".presentation-card").innerText(), await page.locator(".presentation-content").getAttribute("class"));
   const finale = page.locator(".presentation-finale");
   await expect(finale).toBeVisible();
   await expect(finale.locator("h2")).toHaveText("С Новым годом!");
   await expect(finale.getByText("Все 2 поздравлений просмотрены")).toBeVisible();
 
   // Replay starts from the first greeting and restores its ornament highlight.
-  await finale.getByRole("button", { name: "Повторить" }).click();
+  // Footer controls are siblings of the finale content inside the presentation card.
+  await page.getByRole("button", { name: "Повторить" }).click();
+  await expect(page.locator(".presentation-finale")).toHaveCount(0);
   dialog = page.getByRole("dialog", { name: "С теплом, Анна" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Поздравление 1 из 2")).toBeVisible();
