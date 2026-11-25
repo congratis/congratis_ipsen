@@ -71,3 +71,11 @@ dialog.overlay,dialog.presentation-overlay{border:0;margin:0;padding:18px;max-wi
 dialog.overlay::backdrop{background:#020b09c9;backdrop-filter:blur(8px)}
 dialog.presentation-overlay{padding:20px}
 dialog.presentation-overlay::backdrop{background:radial-gradient(ellipse at 50% 20%,#205644f5,#061a16f7 72%);backdrop-filter:blur(12px)}
+
+
+/* Ipsen campaign branding */
+.ipsen-brand{position:fixed;top:18px;right:24px;z-index:20;display:block;width:168px;height:48px}
+.ipsen-brand img{display:block;width:100%;height:100%;object-fit:contain}
+.team-subtitle{margin:-5px auto 18px;color:var(--gold);font-size:clamp(13px,1.8vw,16px);font-weight:600;letter-spacing:.055em}
+.shell{padding-top:92px}
+@media(max-width:600px){.ipsen-brand{top:12px;right:14px;width:126px;height:36px}.shell{padding-top:72px}}
