@@ -116,3 +116,58 @@ test("admin can reissue an invitation and select the resulting URL for copying",
   await expect.poll(() => invite.evaluate(element => element.selectionEnd - element.selectionStart))
     .toBeGreaterThan(10);
 });
+
+
+test("mobile viewport keeps the tree and all ornaments inside the screen", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await mockParticipantSession(page);
+  await page.goto("/#invite=valid-invite-token");
+
+  await expect(page.locator(".tree-frame")).toBeVisible();
+  await expect(page.locator(".ornament")).toHaveCount(20);
+
+  const layout = await page.evaluate(() => {
+    const frame = document.querySelector(".tree-frame").getBoundingClientRect();
+    const ornaments = [...document.querySelectorAll(".ornament")].map(element => {
+      const rect = element.getBoundingClientRect();
+      return {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom
+      };
+    });
+    return {
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      frameLeft: frame.left,
+      frameRight: frame.right,
+      ornaments
+    };
+  });
+
+  expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+  for (const ornament of layout.ornaments) {
+    expect(ornament.left).toBeGreaterThanOrEqual(layout.frameLeft - 1);
+    expect(ornament.right).toBeLessThanOrEqual(layout.frameRight + 1);
+  }
+});
+
+test("participant receives a published greeting through the SSE stream", async ({ page }) => {
+  await mockParticipantSession(page);
+  await page.route("**/api/events", route =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      headers: { "cache-control": "no-cache", connection: "keep-alive" },
+      body: 'event: greeting\\ndata: {"ornament_number":2,"display_name":"Мария","message":"Счастья и радости!"}\\n\\n'
+    })
+  );
+
+  await page.goto("/#invite=valid-invite-token");
+  const ornament = page.getByRole("button", { name: "Шар номер 2", exact: true });
+  await expect(ornament).toHaveClass(/filled/);
+  await ornament.click();
+  await expect(page.getByRole("heading", { name: "С теплом, Мария" })).toBeVisible();
+  await expect(page.getByText("Счастья и радости!")).toBeVisible();
+});
