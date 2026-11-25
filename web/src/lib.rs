@@ -382,6 +382,7 @@ fn participant_tree(state: AppState) -> Dom {
                         }))
                     })
                     })
+                }))
             })))
         }))
         .child(html!("div", {.class("legend")
