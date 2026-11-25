@@ -184,48 +184,112 @@ fn participant_tree(state: AppState) -> Dom {
         }))
         .child(html!("div", {.class("note").text_signal(state.note.signal_cloned())}))
         .child(html!("footer", {.text("С теплом и верой в маленькие чудеса ✨")}))
-        .child_signal(state.selected.signal_cloned().map(clone!(state => move |selected| selected.map(|g| html!("div", {
-            .class("overlay").event(clone!(state => move |event: events::Click| { if event.target()==event.current_target(){state.selected.set(None);} }))
-            .child(html!("section", {.class("dialog")
-                .child(html!("button", {.class("close").text("×").event(clone!(state => move |_| state.selected.set(None)))}))
-                .child(html!("div", {.class("kicker").text("CHRISTMAS WISH")}))
-                .child(html!("h2", {.text(&format!("С теплом, {}",g.display_name))}))
-                .child(html!("p", {.text(&g.message)}))
-                .child(html!("button", {.class("primary").text("Вернуться к ёлке").event(clone!(state => move |_| state.selected.set(None)))}))
-            }))
-        }))))
+        .child_signal(state.selected.signal_cloned().map(clone!(state => move |selected| {
+            selected.map(|greeting| {
+                html!("div", {
+                    .class("overlay")
+                    .event(clone!(state => move |event: events::Click| {
+                        if event.target() == event.current_target() {
+                            state.selected.set(None);
+                        }
+                    }))
+                    .child(html!("section", {
+                        .class("dialog")
+                        .child(html!("button", {
+                            .class("close")
+                            .text("×")
+                            .event(clone!(state => move |_| state.selected.set(None)))
+                        }))
+                        .child(html!("div", {
+                            .class("kicker")
+                            .text("CHRISTMAS WISH")
+                        }))
+                        .child(html!("h2", {
+                            .text(&format!("С теплом, {}", greeting.display_name))
+                        }))
+                        .child(html!("p", {
+                            .text(&greeting.message)
+                        }))
+                        .child(html!("button", {
+                            .class("primary")
+                            .text("Вернуться к ёлке")
+                            .event(clone!(state => move |_| state.selected.set(None)))
+                        }))
+                    }))
+                })
+            })
+        })))
     })
 }
 fn show_form(state: AppState) {
-    let name=state.name.get_cloned(); let message=state.message.get_cloned();
-    let form_state=state.clone();
-    let dialog=html!("div", {.class("overlay")
-        .child(html!("section", {.class("dialog")
-            .child(html!("button", {.class("close").text("×").event(|_| { if let Some(w)=web_sys::window(){let _=w.location().reload();} })))}))
-            .child(html!("div", {.class("kicker").text("YOUR PERSONAL ORNAMENT")}))
-            .child(html!("h2", {.text("Добавь своё пожелание")}))
-            .child(html!("p", {.class("muted").text("Твоё приглашение одноразовое. После публикации поздравление появится у всей команды.")}))
-            .child(field("Как тебя зовут?","Твоё имя",state.name.clone(),false))
-            .child(field("Твоё поздравление","Пусть в новом году...",state.message.clone(),true))
-            .child(html!("div", {.class("note").text_signal(state.note.signal_cloned())}))
-            .child(html!("button", {.class("primary").text("Опубликовать поздравление").event(clone!(form_state => move |_| {
-                let display_name=form_state.name.get_cloned(); let message=form_state.message.get_cloned();
-                let csrf=form_state.csrf(); let s=form_state.clone();
-                spawn_local(async move {
-                    let body=serde_json::json!({"display_name":display_name,"message":message});
-                    match post_json::<serde_json::Value>("/api/greetings",&body,Some(&csrf)).await {
-                        Ok(_) => { set_note(&s,"Поздравление опубликовано! ✨"); s.name.set(String::new());s.message.set(String::new());load_greetings(s.clone()).await;if let Some(w)=web_sys::window(){let _=w.location().reload();} }
-                        Err(e)=>set_note(&s,e),
+    let form_state = state.clone();
+    let dialog = html!("div", {
+        .class("overlay")
+        .child(html!("section", {
+            .class("dialog")
+            .child(html!("button", {
+                .class("close")
+                .text("×")
+                .event(|_| {
+                    if let Some(window) = web_sys::window() {
+                        let _ = window.location().reload();
                     }
-                });
-            })))}))
+                })
+            }))
+            .child(html!("div", {
+                .class("kicker")
+                .text("YOUR PERSONAL ORNAMENT")
+            }))
+            .child(html!("h2", {
+                .text("Добавь своё пожелание")
+            }))
+            .child(html!("p", {
+                .class("muted")
+                .text("Твоё приглашение одноразовое. После публикации поздравление появится у всей команды.")
+            }))
+            .child(field("Как тебя зовут?", "Твоё имя", state.name.clone(), false))
+            .child(field("Твоё поздравление", "Пусть в новом году...", state.message.clone(), true))
+            .child(html!("div", {
+                .class("note")
+                .text_signal(state.note.signal_cloned())
+            }))
+            .child(html!("button", {
+                .class("primary")
+                .text("Опубликовать поздравление")
+                .event(clone!(form_state => move |_| {
+                    let display_name = form_state.name.get_cloned();
+                    let message = form_state.message.get_cloned();
+                    let csrf = form_state.csrf();
+                    let current = form_state.clone();
+                    spawn_local(async move {
+                        let body = serde_json::json!({
+                            "display_name": display_name,
+                            "message": message
+                        });
+                        match post_json::<serde_json::Value>("/api/greetings", &body, Some(&csrf)).await {
+                            Ok(_) => {
+                                set_note(&current, "Поздравление опубликовано! ✨");
+                                current.name.set(String::new());
+                                current.message.set(String::new());
+                                load_greetings(current.clone()).await;
+                                if let Some(window) = web_sys::window() {
+                                    let _ = window.location().reload();
+                                }
+                            }
+                            Err(error) => set_note(&current, error),
+                        }
+                    });
+                }))
+            }))
         }))
     });
-    if let Some(document)=web_sys::window().and_then(|w|w.document()) {
-        if let Some(root)=document.get_element_by_id("app") { append_dom(&root,dialog); }
+    if let Some(document) = web_sys::window().and_then(|window| window.document()) {
+        if let Some(root) = document.get_element_by_id("app") {
+            append_dom(&root, dialog);
+        }
     }
-    let _=(name,message);
 }
+
 fn admin_screen(state: AppState) -> Dom {
     html!("main", {.class("shell")
         .child(html!("div", {.class("eyebrow").text("CONGRATIS · CONTROL ROOM")}))
