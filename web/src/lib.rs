@@ -1,4 +1,4 @@
-use dominator::{append_dom, clone, events, html, Dom, EventOptions};
+use dominator::{append_dom, clone, events, html, Dom};
 use futures_signals::signal::{Mutable, SignalExt};
 use gloo_net::http::Request;
 use serde::{Deserialize, Serialize};
@@ -106,7 +106,13 @@ fn focus_first_dialog_control(dialog_id: &'static str) {
 }
 fn schedule_dialog_focus(dialog_id: &'static str) {
     let Some(window) = web_sys::window() else { return; };
-    let callback = Closure::once_into_js(move || focus_first_dialog_control(dialog_id));
+    // child_signal replaces the dialog node asynchronously; wait two frames so
+    // focus/showModal run against the final node, not the node being removed.
+    let callback = Closure::once_into_js(move || {
+        let Some(window) = web_sys::window() else { return; };
+        let callback = Closure::once_into_js(move || focus_first_dialog_control(dialog_id));
+        let _ = window.request_animation_frame(callback.unchecked_ref());
+    });
     let _ = window.request_animation_frame(callback.unchecked_ref());
 }
 
@@ -139,11 +145,15 @@ fn same(a: &Element, b: &Element) -> bool {
     a.is_same_node(Some(b.as_ref()))
 }
 
-fn trap_dialog_focus(event: &events::KeyDown, dialog_id: &str) -> Option<()> {
+fn trap_dialog_focus(event: &web_sys::KeyboardEvent, dialog_id: &str) -> Option<()> {
     (event.key() == "Tab").then_some(())?;
 
     let document = web_sys::window()?.document()?;
-    let dialog = document.get_element_by_id(dialog_id)?;
+    let dialog_element = document.get_element_by_id(dialog_id)?;
+    let dialog = dialog_element.dyn_into::<web_sys::HtmlDialogElement>().ok()?;
+    if !dialog.open() {
+        let _ = dialog.show_modal();
+    }
     let active = document.active_element()?;
 
     let items = html_elements(&dialog.query_selector_all(&dialog_focusable_selector()).ok()?);
@@ -159,10 +169,36 @@ fn trap_dialog_focus(event: &events::KeyDown, dialog_id: &str) -> Option<()> {
     let outside = !dialog.contains(Some(active.as_ref()));
     let must_wrap = outside || same(&active, dialog.as_ref()) || same(&active, edge);
 
-    must_wrap.then(|| {
+    if must_wrap {
         event.prevent_default();
         let _ = opposite.focus();
-    })
+    }
+    Some(())
+}
+
+fn install_dialog_keyboard_handler(state: AppState) {
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
+    let callback = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |event| {
+        if state.selected.get().is_some() {
+            match event.key().as_str() {
+                "Escape" => {
+                    event.prevent_default();
+                    state.selected.set(None);
+                    restore_dialog_focus(&state);
+                }
+                "Tab" => {
+                    trap_dialog_focus(&event, "greeting-dialog");
+                }
+                _ => {}
+            }
+        } else if state.presentation.get() && event.key() == "Escape" {
+            event.prevent_default();
+            exit_presentation(state.clone());
+        }
+    });
+    if document.add_event_listener_with_callback("keydown", callback.as_ref().unchecked_ref()).is_ok() {
+        callback.forget();
+    }
 }
 const JINGLE_BELLS_URL: &str = "https://upload.wikimedia.org/wikipedia/commons/f/f0/Jingle_Bells_%2890bpm%29_%28Kevin_MacLeod%29_%28ISRC_USUAN1100187%29.oga";
 
@@ -588,23 +624,6 @@ fn participant_tree(state: AppState) -> Dom {
                     .class("overlay")
                     .attr("id", "greeting-dialog")
                     .attr("aria-labelledby", "greeting-title")
-                    .event_with_options(
-                        &EventOptions { bubbles: true, preventable: true },
-                        clone!(state => move |event: events::KeyDown| {
-                            match event.key().as_str() {
-                                "Escape" => {
-                                    web_sys::console::log_1(&"ESCAPE HANDLER CALLED".into());
-                                    event.prevent_default();
-                                    state.selected.set(None);
-                                    restore_dialog_focus(&state);
-                                }
-                                "Tab" => {
-                                    trap_dialog_focus(&event, "greeting-dialog");
-                                }
-                                _ => {}
-                            }
-                        })
-                    )
                     .child(html!("section", {
                         .class("dialog")
                         
@@ -694,12 +713,6 @@ fn participant_tree(state: AppState) -> Dom {
                     .class("presentation-overlay")
                     .attr("id", "presentation-dialog")
                     .attr("aria-labelledby", "presentation-title")
-                    .event(clone!(state => move |event: events::KeyDown| {
-                        if event.key() == "Escape" {
-                            event.prevent_default();
-                            exit_presentation(state.clone());
-                        }
-                    }))
                     .child(html!("section", {
                         .class("presentation-card")
                         
@@ -1359,6 +1372,7 @@ fn render(state: AppState) -> Dom {
 pub fn main() {
     console_error_panic_hook::set_once();
     let state=AppState::new();
+    install_dialog_keyboard_handler(state.clone());
     let app=render(state.clone());
     if let Some(document)=web_sys::window().and_then(|w|w.document()) {
         if let Some(root)=document.get_element_by_id("app"){append_dom(&root,app);}
