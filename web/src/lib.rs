@@ -411,28 +411,70 @@ fn admin_screen(state: AppState) -> Dom {
     })
 }
 fn admin_login(state: AppState) -> Dom {
-    html!("main", {.class("shell")
-        .child(html!("div", {.class("eyebrow").text("CONGRATIS · ADMIN")}))
-        .child(html!("h1", {.text("Вход в ").child(html!("span", {.text("админку")}))}))
-        .child(html!("section", {.class("panel")
-            .child(html!("div", {.class("kicker").text("AUTHORIZED ACCESS")}))
-            .child(field("Логин","admin",state.admin_name.clone(),false))
-            .child(html!("label", {.text("Пароль").child(html!("input", {
-                .attr("type","password").attr("placeholder","Пароль администратора")
-                .event(clone!(state => move |event: events::Input| {if let Some(target)=event.target(){if let Ok(input)=target.dyn_into::<HtmlInputElement>(){state.admin_password.set(input.value());}}}))
-            }))}))
-            .child(html!("div", {.class("note").text_signal(state.note.signal_cloned())}))
-            .child(html!("button", {.class("primary").text("Войти").event(clone!(state => move |_| {
-                let username=state.admin_name.get_cloned();let password=state.admin_password.get_cloned();let s=state.clone();
-                spawn_local(async move {
-                    match post_json::<User>("/api/auth/admin/login",&serde_json::json!({"username":username,"password":password}),None).await {
-                        Ok(user)=>{if let Some(w)=web_sys::window(){let _=w.location().set_hash("/admin");}s.user.set(Some(user));load_participants(s.clone()).await;}
-                        Err(e)=>set_note(&s,e)
-                    }
-                });
-            })))}))
+    html!("main", {
+        .class("shell")
+        .child(html!("div", {
+            .class("eyebrow")
+            .text("CONGRATIS · ADMIN")
         }))
-        .child(html!("footer", {.text("Доступ только для администратора.")}))
+        .child(html!("h1", {
+            .text("Вход в ")
+            .child(html!("span", {.text("админку")}))
+        }))
+        .child(html!("section", {
+            .class("panel")
+            .child(html!("div", {
+                .class("kicker")
+                .text("AUTHORIZED ACCESS")
+            }))
+            .child(field("Логин", "admin", state.admin_name.clone(), false))
+            .child(html!("label", {
+                .text("Пароль")
+                .child(html!("input", {
+                    .attr("type", "password")
+                    .attr("placeholder", "Пароль администратора")
+                    .event(clone!(state => move |event: events::Input| {
+                        if let Some(target) = event.target() {
+                            if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
+                                state.admin_password.set(input.value());
+                            }
+                        }
+                    }))
+                }))
+            }))
+            .child(html!("div", {
+                .class("note")
+                .text_signal(state.note.signal_cloned())
+            }))
+            .child(html!("button", {
+                .class("primary")
+                .text("Войти")
+                .event(clone!(state => move |_| {
+                    let username = state.admin_name.get_cloned();
+                    let password = state.admin_password.get_cloned();
+                    let current = state.clone();
+                    spawn_local(async move {
+                        let body = serde_json::json!({
+                            "username": username,
+                            "password": password
+                        });
+                        match post_json::<User>("/api/auth/admin/login", &body, None).await {
+                            Ok(user) => {
+                                if let Some(window) = web_sys::window() {
+                                    let _ = window.location().set_hash("/admin");
+                                }
+                                current.user.set(Some(user));
+                                load_participants(current.clone()).await;
+                            }
+                            Err(error) => set_note(&current, error),
+                        }
+                    });
+                }))
+            }))
+        }))
+        .child(html!("footer", {
+            .text("Доступ только для администратора.")
+        }))
     })
 }
 fn render(state: AppState) -> Dom {
