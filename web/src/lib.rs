@@ -107,7 +107,6 @@ fn field(label: &'static str, placeholder: &'static str, value: Mutable<String>,
 }
 fn participant_tree(state: AppState) -> Dom {
     let user = state.user.lock_ref().clone().unwrap();
-    let greeting_snapshot = state.greetings.get_cloned();
     let points: [(f64,f64);20] = [(50.2,18.3),(46.2,27.9),(55.1,28.7),(41.5,38.1),(50.5,38.5),(59.1,38.6),(37.7,49.8),(46.5,50.3),(55.2,50.5),(63.8,50.7),(35.9,60.4),(45.0,61.0),(55.3,61.1),(64.5,61.6),(32.3,72.5),(42.7,73.2),(56.0,73.6),(66.0,73.3),(45.4,85.2),(59.7,85.5)];
     let is_mine = user.role == "participant";
     html!("main", {
@@ -117,8 +116,8 @@ fn participant_tree(state: AppState) -> Dom {
         .child(html!("p", {.class("lead").text("Выбери шар — внутри тебя ждёт новогоднее поздравление. Все пожелания команды собраны на одной ёлке.")}))
         .child(html!("div", {.class("toolbar")
             .child(html!("span", {.class("pill").text(if is_mine { format!("Твой шар №{}", user.subject_id) } else { "Режим администратора".into() }}))
-            .child(html!("button", {.class("secondary").text("Админка").event(clone!(state => move |_| { if let Some(window)=web_sys::window(){ let _=window.location().set_hash("/admin"); } })}))
-            .child(html!("button", {.class("secondary").text("Выйти").event(clone!(state => move |_| { let csrf=state.csrf(); let s=state.clone(); spawn_local(async move { match post_empty("/api/auth/logout",&csrf).await { Ok(()) => { s.user.set(None); if let Some(w)=web_sys::window(){let _=w.location().set_hash("");} }, Err(e)=>set_note(&s,e) } }); })}))
+            .child(html!("button", {.class("secondary").text("Админка").event(clone!(state => move |_| { if let Some(window)=web_sys::window(){ let _=window.location().set_hash("/admin"); let _=window.location().reload(); } })}))
+            .child(html!("button", {.class("secondary").text("Выйти").event(clone!(state => move |_| { let csrf=state.csrf(); let s=state.clone(); spawn_local(async move { match post_empty("/api/auth/logout",&csrf).await { Ok(()) => { s.user.set(None); if let Some(w)=web_sys::window(){let _=w.location().set_hash("");let _=w.location().reload();} }, Err(e)=>set_note(&s,e) } }); })}))
         }))
         .child(html!("div", {.class("tree-frame")
             .child(html!("img", {.class("tree-art").attr("src","/christmas-tree.webp").attr("alt","Иллюстрированная новогодняя ёлка с двадцатью шарами")}))
@@ -166,6 +165,7 @@ fn show_form(state: AppState) {
     let form_state=state.clone();
     let dialog=html!("div", {.class("overlay")
         .child(html!("section", {.class("dialog")
+            .child(html!("button", {.class("close").text("×").event(|_| { if let Some(w)=web_sys::window(){let _=w.location().reload();} })}))
             .child(html!("div", {.class("kicker").text("YOUR PERSONAL ORNAMENT")}))
             .child(html!("h2", {.text("Добавь своё пожелание")}))
             .child(html!("p", {.class("muted").text("Твоё приглашение одноразовое. После публикации поздравление появится у всей команды.")}))
@@ -249,7 +249,7 @@ fn admin_login(state: AppState) -> Dom {
                 let username=state.admin_name.get_cloned();let password=state.admin_password.get_cloned();let s=state.clone();
                 spawn_local(async move {
                     match post_json::<User>("/api/auth/admin/login",&serde_json::json!({"username":username,"password":password}),None).await {
-                        Ok(user)=>{s.user.set(Some(user));load_participants(s.clone()).await;if let Some(w)=web_sys::window(){let _=w.location().set_hash("/admin");}}
+                        Ok(user)=>{if let Some(w)=web_sys::window(){let _=w.location().set_hash("/admin");}s.user.set(Some(user));load_participants(s.clone()).await;}
                         Err(e)=>set_note(&s,e)
                     }
                 });
@@ -279,7 +279,7 @@ fn render(state: AppState) -> Dom {
                 });
                 html!("main", {.class("shell").child(html!("h1", {.text("Открываем твоё приглашение…")})).child(html!("p", {.class("note").text_signal(state.note.signal_cloned())}))})
             } else if hash.contains("/admin") { admin_login(state.clone()) }
-            else { html!("main", {.class("shell").child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")})).child(html!("h1", {.text("Ёлка добрых ").child(html!("span", {.text("пожеланий")}))})).child(html!("p", {.class("lead").text("Чтобы увидеть общую ёлку, открой персональную ссылку-приглашение.")})).child(html!("button", {.class("primary").text("Вход администратора").event(|_|{if let Some(w)=web_sys::window(){let _=w.location().set_hash("/admin");}})}))}) }
+            else { html!("main", {.class("shell").child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")})).child(html!("h1", {.text("Ёлка добрых ").child(html!("span", {.text("пожеланий")}))})).child(html!("p", {.class("lead").text("Чтобы увидеть общую ёлку, открой персональную ссылку-приглашение.")})).child(html!("button", {.class("primary").text("Вход администратора").event(|_|{if let Some(w)=web_sys::window(){let _=w.location().set_hash("/admin");let _=w.location().reload();}})}))}) }
         }
     })))})
 }
