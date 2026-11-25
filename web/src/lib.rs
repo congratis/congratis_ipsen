@@ -72,7 +72,9 @@ const JINGLE_BELLS_URL: &str = "https://upload.wikimedia.org/wikipedia/commons/f
 
 fn set_presentation_index(state: &AppState, index: usize) {
     let greetings = state.greetings.get_cloned();
+    web_sys::console::log_1(&format!("SET_PRESENTATION_INDEX requested={index} before={}", state.presentation_index.get()).into());
     state.presentation_index.set(index);
+    web_sys::console::log_1(&format!("SET_PRESENTATION_INDEX after={}", state.presentation_index.get()).into());
     state.presentation_ornament.set(greetings.get(index).map(|greeting| greeting.ornament_number));
 }
 
@@ -494,6 +496,7 @@ fn participant_tree(state: AppState) -> Dom {
                         .child_signal(state.presentation_index.signal().map(clone!(state => move |index| {
                             let greetings = state.greetings.get_cloned();
                             let count = greetings.len();
+                            web_sys::console::log_1(&format!("RENDER_PRESENTATION index={index} count={count}").into());
                             let current = greetings.get(index).cloned();
                             let (title, message, counter) = if let Some(greeting) = current {
                                 (
