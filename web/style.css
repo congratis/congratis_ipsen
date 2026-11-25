@@ -65,3 +65,9 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{
 .presentation-card .presentation-finale h2{font-size:clamp(38px,6vw,62px);text-shadow:0 3px 28px #e8bd6555}
 .presentation-card .presentation-finale .presentation-message{max-width:560px}
 @media(prefers-reduced-motion:reduce){.presentation-card .presentation-finale{animation:none}}
+
+/* Native modal dialogs provide browser-managed focus containment. */
+dialog.overlay,dialog.presentation-overlay{border:0;margin:0;padding:18px;max-width:none;max-height:none;width:100%;height:100%;background:transparent;color:inherit}
+dialog.overlay::backdrop{background:#020b09c9;backdrop-filter:blur(8px)}
+dialog.presentation-overlay{padding:20px}
+dialog.presentation-overlay::backdrop{background:radial-gradient(ellipse at 50% 20%,#205644f5,#061a16f7 72%);backdrop-filter:blur(12px)}
