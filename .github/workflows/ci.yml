@@ -153,10 +153,18 @@ jobs:
         run: docker compose config --quiet
       - name: Build Nginx edge image
         run: docker compose build nginx
+      - name: Prepare isolated Nginx test override
+        run: |
+          cat > docker-compose.ci.yml <<'EOF'
+          services:
+            nginx:
+              extra_hosts:
+                - "app:127.0.0.1"
+          EOF
       - name: Validate Nginx bootstrap configuration
-        run: docker compose run --no-deps --add-host app:127.0.0.1 --rm -e NGINX_TEST_ONLY=1 nginx
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml run --no-deps --rm -e NGINX_TEST_ONLY=1 nginx
       - name: Validate Nginx TLS configuration
-        run: docker compose run --no-deps --add-host app:127.0.0.1 --rm -e NGINX_TEST_ONLY=1 -e NGINX_FORCE_HTTPS=1 nginx
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml run --no-deps --rm -e NGINX_TEST_ONLY=1 -e NGINX_FORCE_HTTPS=1 nginx
 
   production:
     name: Production · Full Docker stack
