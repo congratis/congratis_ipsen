@@ -27,8 +27,31 @@ function render(){
   });
 }
 async function load(){
-  try{const r=await fetch('/api/greetings');if(!r.ok)throw new Error();greetings=await r.json();render()}
+  try{
+    const r=await fetch('/api/greetings');if(!r.ok)throw new Error();
+    const snapshot=await r.json();
+    const merged=new Map(greetings.map(item=>[item.ornament_number,item]));
+    snapshot.forEach(item=>merged.set(item.ornament_number,item));
+    greetings=[...merged.values()];
+    render();
+  }
   catch(e){ornamentsEl.innerHTML='<p style="color:#ffd0a0">Не удалось загрузить ёлку. Обновите страницу.</p>'}
+}
+function applyGreeting(greeting){
+  const index=greetings.findIndex(item=>item.ornament_number===greeting.ornament_number);
+  if(index>=0)greetings[index]=greeting;else greetings.push(greeting);
+  render();
+}
+function connectRealtime(){
+  if(!('EventSource' in window)){load();return}
+  const source=new EventSource('/api/events');
+  source.addEventListener('greeting',event=>{
+    try{applyGreeting(JSON.parse(event.data))}catch(e){console.warn('Invalid greeting event',e)}
+  });
+  source.addEventListener('resync',()=>load());
+  // Fetch after the stream is open to close the snapshot/subscribe race.
+  // EventSource fires onopen again after every automatic reconnect.
+  source.onopen=()=>load();
 }
 if(token){document.getElementById('greetingForm').dataset.token=token;showModal(formModal)}
 document.getElementById('greetingForm').addEventListener('submit',async e=>{
@@ -43,4 +66,4 @@ document.getElementById('greetingForm').addEventListener('submit',async e=>{
     await load();setTimeout(()=>hideModal(formModal),1300);
   }catch(err){note.textContent=err.message;button.disabled=false}
 });
-load();
+connectRealtime();
