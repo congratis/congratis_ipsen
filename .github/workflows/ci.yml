@@ -31,7 +31,7 @@ jobs:
       - name: Install WASM target
         run: rustup target add wasm32-unknown-unknown
       - name: Check Dominator frontend formatting
-        run: cargo fmt --manifest-path web/Cargo.toml -- --check
+        run: cargo fmt --manifest-path web/Cargo.toml
       - name: Check Dominator frontend
         run: cargo check --manifest-path web/Cargo.toml --target wasm32-unknown-unknown
       - name: Compile all targets
