@@ -122,26 +122,25 @@ fn participant_tree(state: AppState) -> Dom {
         }))
         .child(html!("div", {.class("tree-frame")
             .child(html!("img", {.class("tree-art").attr("src","/christmas-tree.webp").attr("alt","Иллюстрированная новогодняя ёлка с двадцатью шарами")}))
-            .child(html!("div", {.class("hotspots").children(points.iter().enumerate().map(|(index,(x,y))| {
-                let number=(index+1) as i16;
-                let greeting=greeting_snapshot.iter().find(|g|g.ornament_number==number).cloned();
-                let mine=is_mine && user.subject_id.parse::<i16>().ok()==Some(number);
-                html!("button", {
-                    .class("ornament")
-                    .class_signal("filled", futures_signals::signal::always(greeting.is_some()))
-                    .class_signal("mine", futures_signals::signal::always(mine))
-                    .style("left", &format!("{x}%")).style("top",&format!("{y}%"))
-                    .attr("aria-label",&format!("Шар номер {number}"))
-                    .text(&number.to_string())
-                    .event(clone!(state, greeting => move |_| {
-                        if let Some(g)=greeting.clone() { state.selected.set(Some(g)); }
-                        else if mine {
-                            state.selected.set(None);
-                            let modal_state=state.clone();
-                            show_form(modal_state);
-                        } else { set_note(&state, if mine { "Этот шар ждёт твоего поздравления" } else { "Этот шар пока свободен" }); }
-                    }))
-                })
+            .child_signal(state.greetings.signal_cloned().map(clone!(state => move |greeting_snapshot| {
+                html!("div", {.class("hotspots").children(points.iter().enumerate().map(|(index,(x,y))| {
+                    let number=(index+1) as i16;
+                    let greeting=greeting_snapshot.iter().find(|g|g.ornament_number==number).cloned();
+                    let mine=is_mine && user.subject_id.parse::<i16>().ok()==Some(number);
+                    html!("button", {
+                        .class("ornament")
+                        .class_signal("filled", futures_signals::signal::always(greeting.is_some()))
+                        .class_signal("mine", futures_signals::signal::always(mine))
+                        .style("left", &format!("{x}%")).style("top",&format!("{y}%"))
+                        .attr("aria-label",&format!("Шар номер {number}"))
+                        .text(&number.to_string())
+                        .event(clone!(state, greeting => move |_| {
+                            if let Some(g)=greeting.clone() { state.selected.set(Some(g)); }
+                            else if mine { show_form(state.clone()); }
+                            else { set_note(&state, "Этот шар пока свободен"); }
+                        }))
+                    })
+                }))})
             })))
         }))
         .child(html!("div", {.class("legend")
@@ -179,7 +178,7 @@ fn show_form(state: AppState) {
                 spawn_local(async move {
                     let body=serde_json::json!({"display_name":display_name,"message":message});
                     match post_json::<serde_json::Value>("/api/greetings",&body,Some(&csrf)).await {
-                        Ok(_) => { set_note(&s,"Поздравление опубликовано! ✨"); s.name.set(String::new());s.message.set(String::new());load_greetings(s.clone()).await; }
+                        Ok(_) => { set_note(&s,"Поздравление опубликовано! ✨"); s.name.set(String::new());s.message.set(String::new());load_greetings(s.clone()).await;if let Some(w)=web_sys::window(){let _=w.location().reload();} }
                         Err(e)=>set_note(&s,e),
                     }
                 });
@@ -200,34 +199,36 @@ fn admin_screen(state: AppState) -> Dom {
             .child(html!("button", {.class("secondary").text("К ёлке").event(|_| {if let Some(w)=web_sys::window(){let _=w.location().set_hash("");}})}))
             .child(html!("button", {.class("secondary").text("Обновить").event(clone!(state => move |_| {let s=state.clone();spawn_local(async move{load_participants(s).await;});})}))
         }))
-        .child(html!("div", {.class("admin-grid").children_signal_vec(state.participants.signal_vec_cloned().map(clone!(state => move |p| {
-            let number=p.ornament_number;
-            let status=if p.submitted {"Поздравление опубликовано"} else if p.activated {"Приглашение активировано"} else if p.revoked {"Приглашение отозвано"} else {"Ожидает участника"};
-            html!("div", {.class("admin-item")
-                .child(html!("strong", {.text(&format!("Шар №{number}"))}))
-                .child(html!("small", {.text(status)}))
-                .child(html!("small", {.text(p.display_name.unwrap_or_default())}))
-                .child_signal(if !p.activated && !p.submitted && !p.revoked {
-                    futures_signals::signal::always(Some(html!("div", {}
-                        .child(html!("button", {.class("secondary").text("Перевыпустить ссылку").event(clone!(state => move |_| {
-                            let csrf=state.csrf();let s=state.clone();
-                            spawn_local(async move {
-                                match post_json::<serde_json::Value>(&format!("/api/admin/invitations/{number}/reissue"),&serde_json::json!({}),Some(&csrf)).await {
-                                    Ok(data)=>{let token=data["token"].as_str().unwrap_or_default();let origin=web_sys::window().map(|w|w.location().origin().unwrap_or_default()).unwrap_or_default();let url=format!("{origin}/#invite={token}");s.invite_url.set(url.clone());set_note(&s,format!("Одноразовая ссылка для шара №{number}: {url}"));load_participants(s.clone()).await;}
-                                    Err(e)=>set_note(&s,e)
-                                }
-                            });
-                        })}))
-                        .child(html!("button", {.class("secondary").text("Отозвать").event(clone!(state => move |_| {
-                            let csrf=state.csrf();let s=state.clone();
-                            spawn_local(async move {
-                                match post_empty(&format!("/api/admin/invitations/{number}/revoke"),&csrf).await {Ok(())=>load_participants(s).await,Err(e)=>set_note(&s,e)}
-                            });
-                        })}))
-                    ))))
-                } else { futures_signals::signal::always(None) })
-            })
-        }))) }))
+        .child_signal(state.participants.signal_cloned().map(clone!(state => move |participants| {
+            html!("div", {.class("admin-grid").children(participants.into_iter().map(clone!(state => move |p| {
+                let number=p.ornament_number;
+                let status=if p.submitted {"Поздравление опубликовано"} else if p.activated {"Приглашение активировано"} else if p.revoked {"Приглашение отозвано"} else {"Ожидает участника"};
+                html!("div", {.class("admin-item")
+                    .child(html!("strong", {.text(&format!("Шар №{number}"))}))
+                    .child(html!("small", {.text(status)}))
+                    .child(html!("small", {.text(p.display_name.unwrap_or_default())}))
+                    .children(if !p.activated && !p.submitted && !p.revoked {
+                        vec![
+                            html!("button", {.class("secondary").text("Перевыпустить ссылку").event(clone!(state => move |_| {
+                                let csrf=state.csrf();let s=state.clone();
+                                spawn_local(async move {
+                                    match post_json::<serde_json::Value>(&format!("/api/admin/invitations/{number}/reissue"),&serde_json::json!({}),Some(&csrf)).await {
+                                        Ok(data)=>{let token=data["token"].as_str().unwrap_or_default();let origin=web_sys::window().map(|w|w.location().origin().unwrap_or_default()).unwrap_or_default();let url=format!("{origin}/#invite={token}");s.invite_url.set(url.clone());set_note(&s,format!("Одноразовая ссылка для шара №{number}: {url}"));load_participants(s.clone()).await;}
+                                        Err(e)=>set_note(&s,e)
+                                    }
+                                });
+                            })}),
+                            html!("button", {.class("secondary").text("Отозвать").event(clone!(state => move |_| {
+                                let csrf=state.csrf();let s=state.clone();
+                                spawn_local(async move {
+                                    match post_empty(&format!("/api/admin/invitations/{number}/revoke"),&csrf).await {Ok(())=>load_participants(s).await,Err(e)=>set_note(&s,e)}
+                                });
+                            })})
+                        ]
+                    } else { vec![] })
+                })
+            })))})
+        })))
         .child(html!("div", {.class("note").text_signal(state.note.signal_cloned())}))
         .child(html!("footer", {.text("Ссылки-приглашения показываются только один раз. Сохраните их сразу после выпуска.")}))
     })
