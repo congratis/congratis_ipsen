@@ -116,8 +116,8 @@ fn participant_tree(state: AppState) -> Dom {
         .child(html!("p", {.class("lead").text("Выбери шар — внутри тебя ждёт новогоднее поздравление. Все пожелания команды собраны на одной ёлке.")}))
         .child(html!("div", {.class("toolbar")
             .child(html!("span", {.class("pill").text(if is_mine { format!("Твой шар №{}", user.subject_id) } else { "Режим администратора".into() }}))
-            .child(html!("button", {.class("secondary").text("Админка").event(clone!(state => move |_| { if let Some(window)=web_sys::window(){ let _=window.location().set_hash("/admin"); let _=window.location().reload(); } })}))
-            .child(html!("button", {.class("secondary").text("Выйти").event(clone!(state => move |_| { let csrf=state.csrf(); let s=state.clone(); spawn_local(async move { match post_empty("/api/auth/logout",&csrf).await { Ok(()) => { s.user.set(None); if let Some(w)=web_sys::window(){let _=w.location().set_hash("");let _=w.location().reload();} }, Err(e)=>set_note(&s,e) } }); })}))
+            .child(html!("button", {.class("secondary").text("Админка").event(clone!(state => move |_| { if let Some(window)=web_sys::window(){ let _=window.location().set_hash("/admin"); let _=window.location().reload(); } })))}))
+            .child(html!("button", {.class("secondary").text("Выйти").event(clone!(state => move |_| { let csrf=state.csrf(); let s=state.clone(); spawn_local(async move { match post_empty("/api/auth/logout",&csrf).await { Ok(()) => { s.user.set(None); if let Some(w)=web_sys::window(){let _=w.location().set_hash("");let _=w.location().reload();} }, Err(e)=>set_note(&s,e) } }); })))}))
         }))
         .child(html!("div", {.class("tree-frame")
             .child(html!("img", {.class("tree-art").attr("src","/christmas-tree.webp").attr("alt","Иллюстрированная новогодняя ёлка с двадцатью шарами")}))
@@ -165,7 +165,7 @@ fn show_form(state: AppState) {
     let form_state=state.clone();
     let dialog=html!("div", {.class("overlay")
         .child(html!("section", {.class("dialog")
-            .child(html!("button", {.class("close").text("×").event(|_| { if let Some(w)=web_sys::window(){let _=w.location().reload();} })}))
+            .child(html!("button", {.class("close").text("×").event(|_| { if let Some(w)=web_sys::window(){let _=w.location().reload();} })))}))
             .child(html!("div", {.class("kicker").text("YOUR PERSONAL ORNAMENT")}))
             .child(html!("h2", {.text("Добавь своё пожелание")}))
             .child(html!("p", {.class("muted").text("Твоё приглашение одноразовое. После публикации поздравление появится у всей команды.")}))
@@ -182,7 +182,7 @@ fn show_form(state: AppState) {
                         Err(e)=>set_note(&s,e),
                     }
                 });
-            })}))
+            })))}))
         }))
     });
     if let Some(document)=web_sys::window().and_then(|w|w.document()) {
@@ -196,8 +196,8 @@ fn admin_screen(state: AppState) -> Dom {
         .child(html!("h1", {.text("Панель ").child(html!("span", {.text("администратора")}))}))
         .child(html!("p", {.class("lead").text("Управление приглашениями и статусом двадцати шаров.")}))
         .child(html!("div", {.class("toolbar")
-            .child(html!("button", {.class("secondary").text("К ёлке").event(|_| {if let Some(w)=web_sys::window(){let _=w.location().set_hash("");let _=w.location().reload();}})}))
-            .child(html!("button", {.class("secondary").text("Обновить").event(clone!(state => move |_| {let s=state.clone();spawn_local(async move{load_participants(s).await;});})}))
+            .child(html!("button", {.class("secondary").text("К ёлке").event(|_| {if let Some(w)=web_sys::window(){let _=w.location().set_hash("");let _=w.location().reload();}})))}))
+            .child(html!("button", {.class("secondary").text("Обновить").event(clone!(state => move |_| {let s=state.clone();spawn_local(async move{load_participants(s).await;});})))}))
         }))
         .child_signal(state.participants.signal_cloned().map(clone!(state => move |participants| {
             html!("div", {.class("admin-grid").children(participants.into_iter().map(clone!(state => move |p| {
@@ -217,13 +217,13 @@ fn admin_screen(state: AppState) -> Dom {
                                         Err(e)=>set_note(&s,e)
                                     }
                                 });
-                            })}),
+                            })))}),
                             html!("button", {.class("secondary").text("Отозвать").event(clone!(state => move |_| {
                                 let csrf=state.csrf();let s=state.clone();
                                 spawn_local(async move {
                                     match post_empty(&format!("/api/admin/invitations/{number}/revoke"),&csrf).await {Ok(())=>load_participants(s).await,Err(e)=>set_note(&s,e)}
                                 });
-                            })})
+                            })))})
                         ]
                     } else { vec![] })
                 })
@@ -253,7 +253,7 @@ fn admin_login(state: AppState) -> Dom {
                         Err(e)=>set_note(&s,e)
                     }
                 });
-            })}))
+            })))}))
         }))
         .child(html!("footer", {.text("Доступ только для администратора.")}))
     })
@@ -279,7 +279,7 @@ fn render(state: AppState) -> Dom {
                 });
                 html!("main", {.class("shell").child(html!("h1", {.text("Открываем твоё приглашение…")})).child(html!("p", {.class("note").text_signal(state.note.signal_cloned())}))})
             } else if hash.contains("/admin") { admin_login(state.clone()) }
-            else { html!("main", {.class("shell").child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")})).child(html!("h1", {.text("Ёлка добрых ").child(html!("span", {.text("пожеланий")}))})).child(html!("p", {.class("lead").text("Чтобы увидеть общую ёлку, открой персональную ссылку-приглашение.")})).child(html!("button", {.class("primary").text("Вход администратора").event(|_|{if let Some(w)=web_sys::window(){let _=w.location().set_hash("/admin");let _=w.location().reload();}})}))}) }
+            else { html!("main", {.class("shell").child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")})).child(html!("h1", {.text("Ёлка добрых ").child(html!("span", {.text("пожеланий")}))})).child(html!("p", {.class("lead").text("Чтобы увидеть общую ёлку, открой персональную ссылку-приглашение.")})).child(html!("button", {.class("primary").text("Вход администратора").event(|_|{if let Some(w)=web_sys::window(){let _=w.location().set_hash("/admin");let _=w.location().reload();}})))}))}) }
         }
     })))})
 }
