@@ -55,7 +55,10 @@ async fn post_empty(path: &str, csrf: &str) -> Result<(), String> {
 fn set_note(state: &AppState, value: impl Into<String>) { state.note.set(value.into()); }
 async fn load_greetings(state: AppState) {
     match get_json::<Vec<Greeting>>("/api/greetings").await {
-        Ok(items) => state.greetings.set(items),
+        Ok(mut items) => {
+            items.sort_by_key(|greeting| greeting.ornament_number);
+            state.greetings.set(items);
+        },
         Err(error) => set_note(&state, format!("Не удалось загрузить поздравления: {error}")),
     }
 }
@@ -109,6 +112,7 @@ fn connect_events(state: AppState) {
                     let mut all = greeting_state.greetings.lock_mut();
                     if let Some(old) = all.iter_mut().find(|g| g.ornament_number == greeting.ornament_number) { *old = greeting; }
                     else { all.push(greeting); }
+                    all.sort_by_key(|item| item.ornament_number);
                 }
             }
         }
@@ -222,12 +226,22 @@ fn participant_tree(state: AppState) -> Dom {
         .child(html!("footer", {.text("С теплом и верой в маленькие чудеса ✨")}))
         .child_signal(state.selected.signal_cloned().map(clone!(state => move |selected| {
             selected.map(|greeting| {
+                let ordered = state.greetings.get_cloned();
+                let current_index = ordered.iter().position(|item| item.ornament_number == greeting.ornament_number);
+                let previous = current_index.and_then(|index| index.checked_sub(1)).and_then(|index| ordered.get(index)).cloned();
+                let next = current_index.and_then(|index| ordered.get(index + 1)).cloned();
+                let counter = current_index.map(|index| format!("Поздравление {} из {}", index + 1, ordered.len())).unwrap_or_default();
                 html!("div", {
                     .class("overlay")
                     .child(html!("section", {
                         .class("dialog")
+                        .attr("role", "dialog")
+                        .attr("aria-modal", "true")
+                        .attr("aria-labelledby", "greeting-title")
                         .child(html!("button", {
                             .class("close")
+                            .attr("type", "button")
+                            .attr("aria-label", "Закрыть поздравление")
                             .text("×")
                             .event(clone!(state => move |_: events::Click| state.selected.set(None)))
                         }))
@@ -236,13 +250,55 @@ fn participant_tree(state: AppState) -> Dom {
                             .text("CHRISTMAS WISH")
                         }))
                         .child(html!("h2", {
+                            .attr("id", "greeting-title")
                             .text(&format!("С теплом, {}", greeting.display_name))
                         }))
                         .child(html!("p", {
+                            .class("greeting-message")
                             .text(&greeting.message)
+                        }))
+                        .child(html!("div", {
+                            .class("greeting-navigation")
+                            .child(match previous.clone() {
+                                Some(item) => html!("button", {
+                                    .class("secondary")
+                                    .attr("type", "button")
+                                    .attr("aria-label", "Предыдущее поздравление")
+                                    .text("← Назад")
+                                    .event(clone!(state => move |_: events::Click| state.selected.set(Some(item.clone()))))
+                                }),
+                                None => html!("button", {
+                                    .class("secondary")
+                                    .attr("type", "button")
+                                    .attr("disabled", "")
+                                    .attr("aria-label", "Предыдущее поздравление")
+                                    .text("← Назад")
+                                })
+                            })
+                            .child(html!("span", {
+                                .class("greeting-counter")
+                                .text(&counter)
+                            }))
+                            .child(match next.clone() {
+                                Some(item) => html!("button", {
+                                    .class("secondary")
+                                    .attr("type", "button")
+                                    .attr("aria-label", "Следующее поздравление")
+                                    .text("Вперёд →")
+                                    .event(clone!(state => move |_: events::Click| state.selected.set(Some(item.clone()))))
+                                }),
+                                None => html!("button", {
+                                    .class("secondary")
+                                    .attr("type", "button")
+                                    .attr("disabled", "")
+                                    .attr("aria-label", "Следующее поздравление")
+                                    .text("Вперёд →")
+                                })
+                            })
                         }))
                         .child(html!("button", {
                             .class("primary")
+                            .attr("type", "button")
                             .text("Вернуться к ёлке")
                             .event(clone!(state => move |_: events::Click| state.selected.set(None)))
                         }))
