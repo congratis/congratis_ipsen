@@ -324,8 +324,11 @@ test("presentation mode navigates greetings and supports audio controls and sile
   await expect(page.locator(".ornament.presenting")).toHaveAttribute("aria-label", "Шар номер 2");
 
   // The last forward action must lead to a distinct finale, not a blank/overflow state.
-  await page.getByRole("button", { name: "Следующее поздравление" }).click();
-  console.log("PRESENTATION_DEBUG", await page.locator(".presentation-card").count(), await page.locator(".presentation-card").getAttribute("class"), await page.locator(".presentation-card").innerText());
+  const nextButton = page.getByRole("button", { name: "Следующее поздравление" });
+  console.log("NEXT_BEFORE", await nextButton.count(), await nextButton.isEnabled(), await nextButton.evaluate(el => el.outerHTML));
+  await nextButton.click();
+  await page.waitForTimeout(100);
+  console.log("NEXT_AFTER", await page.locator(".presentation-card").innerText(), await nextButton.count(), await nextButton.isEnabled());
   const finale = page.locator(".presentation-finale");
   await expect(finale).toBeVisible();
   await expect(finale.locator("h2")).toHaveText("С Новым годом!");
