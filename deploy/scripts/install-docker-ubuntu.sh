@@ -18,7 +18,7 @@ fi
 CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
 ARCH="$(dpkg --print-architecture)"
 
-if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "26.04" || "${CODENAME}" != "noble" ]]; then
+if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "26.04" || "${CODENAME}" != "resolute" ]]; then
   echo "This installer targets Ubuntu 26.04 LTS (resolute); detected ${PRETTY_NAME:-unknown} (${CODENAME:-unknown})." >&2
   exit 1
 fi
