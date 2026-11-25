@@ -18,7 +18,7 @@
 - Backend: Rust, Axum, Tokio.
 - Frontend: Rust, Dominator, WebAssembly, **Rollup**.
 - Database: RethinkDB 2.4.4.
-- Deployment: Docker Compose, Nginx 1.30.8, Let's Encrypt.
+- Deployment: Docker Compose, Nginx 1.30.8, GlobalSign TLS in production.
 - Browser tests: Playwright.
 
 ## Локальный запуск
@@ -50,7 +50,7 @@
 - `generate-tokens N` поддерживает N от 1 до 35 и выводит исходные токены один раз. Не используйте эту команду при обычном обновлении приложения.
 - Не коммитьте `.env`, открытые пароли или файлы с одноразовыми ссылками.
 - Не публикуйте RethinkDB и порт приложения в интернет. Публичные порты — только 80/443 на Nginx.
-- Никогда не выполняйте `docker compose down -v` на production: команда удалит постоянные volumes базы и сертификатов.
+- Никогда не выполняйте `docker compose down -v` на production: команда удалит постоянный volume базы данных и другие persistent volumes.
 
 ## Документация
 
