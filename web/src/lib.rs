@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::{closure::Closure, JsCast};
 use wasm_bindgen_futures::{spawn_local, JsFuture};
-use web_sys::{EventSource, HtmlAudioElement, HtmlInputElement, HtmlTextAreaElement, MessageEvent};
+use web_sys::{Element, EventSource, HtmlAudioElement, HtmlElement, HtmlInputElement, HtmlTextAreaElement, MessageEvent, NodeList};
 
 #[derive(Clone, Deserialize, Serialize)]
 struct User { subject_id: String, role: String, csrf_token: String }
@@ -51,10 +51,11 @@ struct AppState {
     campaign_size: Mutable<String>,
     campaign_creating: Mutable<bool>,
     submitting: Mutable<bool>,
+    dialog_return_focus: Mutable<Option<web_sys::HtmlElement>>,
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false) }
+        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -75,6 +76,131 @@ async fn post_empty(path: &str, csrf: &str) -> Result<(), String> {
     if response.ok() { Ok(()) } else { Err(response.text().await.unwrap_or_else(|_| format!("HTTP {}", response.status()))) }
 }
 fn set_note(state: &AppState, value: impl Into<String>) { state.note.set(value.into()); }
+fn remember_dialog_trigger(state: &AppState, event: &events::Click) {
+    if let Some(target) = event.target().and_then(|target| target.dyn_into::<web_sys::HtmlElement>().ok()) {
+        state.dialog_return_focus.set(Some(target));
+    }
+}
+fn restore_dialog_focus(state: &AppState) {
+    let Some(element) = state.dialog_return_focus.get_cloned() else { return; };
+    let Some(window) = web_sys::window() else { return; };
+    let callback = Closure::once_into_js(move || {
+        let _ = element.focus();
+    });
+    let _ = window.request_animation_frame(callback.unchecked_ref());
+}
+fn focus_first_dialog_control(dialog_id: &'static str) {
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
+    let Some(dialog) = document.get_element_by_id(dialog_id) else { return; };
+    let Ok(dialog) = dialog.dyn_into::<web_sys::HtmlDialogElement>() else { return; };
+    if !dialog.open() {
+        let _ = dialog.show_modal();
+    }
+    if let Ok(Some(control)) = dialog.query_selector(
+        "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])"
+    ) {
+        if let Ok(control) = control.dyn_into::<web_sys::HtmlElement>() {
+            let _ = control.focus();
+        }
+    }
+}
+fn schedule_dialog_focus(dialog_id: &'static str) {
+    let Some(window) = web_sys::window() else { return; };
+    // child_signal replaces the dialog node asynchronously; wait two frames so
+    // focus/showModal run against the final node, not the node being removed.
+    let callback = Closure::once_into_js(move || {
+        let Some(window) = web_sys::window() else { return; };
+        let callback = Closure::once_into_js(move || focus_first_dialog_control(dialog_id));
+        let _ = window.request_animation_frame(callback.unchecked_ref());
+    });
+    let _ = window.request_animation_frame(callback.unchecked_ref());
+}
+
+fn dialog_focusable_selector() -> String {
+    const VISIBLE: &str = ":not([hidden]):not([aria-hidden='true'])";
+
+    [
+        "button:not([disabled])",
+        "input:not([disabled]):not([type='hidden'])",
+        "select:not([disabled])",
+        "textarea:not([disabled])",
+        "a[href]",
+        "summary",
+        "[contenteditable='true']",
+        "[tabindex]:not([tabindex='-1'])",
+    ]
+    .iter()
+    .map(|selector| format!("{selector}{VISIBLE}"))
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
+fn html_elements(list: &NodeList) -> Vec<HtmlElement> {
+    (0..list.length())
+        .filter_map(|i| list.item(i)?.dyn_into().ok())
+        .collect()
+}
+
+fn same(a: &Element, b: &Element) -> bool {
+    a.is_same_node(Some(b.as_ref()))
+}
+
+fn trap_dialog_focus(event: &web_sys::KeyboardEvent, dialog_id: &str) -> Option<()> {
+    (event.key() == "Tab").then_some(())?;
+
+    let document = web_sys::window()?.document()?;
+    let dialog_element = document.get_element_by_id(dialog_id)?;
+    let dialog = dialog_element.dyn_into::<web_sys::HtmlDialogElement>().ok()?;
+    if !dialog.open() {
+        let _ = dialog.show_modal();
+    }
+    let active = document.active_element()?;
+
+    let items = html_elements(&dialog.query_selector_all(&dialog_focusable_selector()).ok()?);
+    let (first, last) = (items.first()?, items.last()?);
+
+    // Shift+Tab уходит с первого на последний, Tab — с последнего на первый.
+    let (edge, opposite) = if event.shift_key() {
+        (first, last)
+    } else {
+        (last, first)
+    };
+
+    let outside = !dialog.contains(Some(active.as_ref()));
+    let must_wrap = outside || same(&active, dialog.as_ref()) || same(&active, edge);
+
+    if must_wrap {
+        event.prevent_default();
+        let _ = opposite.focus();
+    }
+    Some(())
+}
+
+fn install_dialog_keyboard_handler(state: AppState) {
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
+    let callback = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
+        move |event: web_sys::KeyboardEvent| {
+        if state.selected.get_cloned().is_some() {
+            match event.key().as_str() {
+                "Escape" => {
+                    event.prevent_default();
+                    state.selected.set(None);
+                    restore_dialog_focus(&state);
+                }
+                "Tab" => {
+                    trap_dialog_focus(&event, "greeting-dialog");
+                }
+                _ => {}
+            }
+        } else if state.presentation.get() && event.key() == "Escape" {
+            event.prevent_default();
+            exit_presentation(state.clone());
+        }
+    });
+    if document.add_event_listener_with_callback("keydown", callback.as_ref().unchecked_ref()).is_ok() {
+        callback.forget();
+    }
+}
 const JINGLE_BELLS_URL: &str = "https://upload.wikimedia.org/wikipedia/commons/f/f0/Jingle_Bells_%2890bpm%29_%28Kevin_MacLeod%29_%28ISRC_USUAN1100187%29.oga";
 
 fn set_presentation_index(state: &AppState, index: usize) {
@@ -163,6 +289,7 @@ fn exit_presentation(state: AppState) {
     state.presentation.set(false);
     state.presentation_paused.set(false);
     state.presentation_ornament.set(None);
+    restore_dialog_focus(&state);
 }
 
 async fn load_greetings(state: AppState) {
@@ -424,8 +551,12 @@ fn participant_tree(state: AppState) -> Dom {
                         .style("left", &format!("{x}%")).style("top",&format!("{y}%"))
                         .attr("aria-label",&format!("Шар номер {number}"))
                         .text(&number.to_string())
-                        .event(clone!(state, greeting => move |_: events::Click| {
-                            if let Some(g)=greeting.clone() { state.selected.set(Some(g)); }
+                        .event(clone!(state, greeting => move |event: events::Click| {
+                            if let Some(g)=greeting.clone() {
+                                remember_dialog_trigger(&state, &event);
+                                state.selected.set(Some(g));
+                                schedule_dialog_focus("greeting-dialog");
+                            }
                             else if mine { show_form(state.clone()); }
                             else { set_note(&state, "Этот шар пока свободен"); }
                         }))
@@ -465,7 +596,11 @@ fn participant_tree(state: AppState) -> Dom {
                                 .class("presentation-launch")
                                 .attr("type", "button")
                                 .text("▶ Play")
-                                 .event(clone!(button_state => move |_: events::Click| start_presentation(button_state.clone())))
+                                 .event(clone!(button_state => move |event: events::Click| {
+                                    remember_dialog_trigger(&button_state, &event);
+                                    start_presentation(button_state.clone());
+                                    schedule_dialog_focus("presentation-dialog");
+                                }))
                             }))
                         }))
                     })
@@ -486,26 +621,23 @@ fn participant_tree(state: AppState) -> Dom {
                 let previous = current_index.and_then(|index| index.checked_sub(1)).and_then(|index| ordered.get(index)).cloned();
                 let next = current_index.and_then(|index| ordered.get(index + 1)).cloned();
                 let counter = current_index.map(|index| format!("Поздравление {} из {}", index + 1, ordered.len())).unwrap_or_default();
-                html!("div", {
+                html!("dialog", {
                     .class("overlay")
+                    .attr("id", "greeting-dialog")
+                    .attr("aria-labelledby", "greeting-title")
                     .child(html!("section", {
                         .class("dialog")
-                        .attr("role", "dialog")
-                        .attr("tabindex", "-1")
-                        .event(clone!(state => move |event: events::KeyDown| {
-                            if event.key() == "Escape" {
-                                event.prevent_default();
-                                state.selected.set(None);
-                            }
-                        }))
-                        .attr("aria-modal", "true")
-                        .attr("aria-labelledby", "greeting-title")
+                        
                         .child(html!("button", {
                             .class("close")
                             .attr("type", "button")
                             .attr("aria-label", "Закрыть поздравление")
+                            .attr("autofocus", "")
                             .text("×")
-                            .event(clone!(state => move |_: events::Click| state.selected.set(None)))
+                                                        .event(clone!(state => move |_: events::Click| {
+                                state.selected.set(None);
+                                restore_dialog_focus(&state);
+                            }))
                         }))
                         .child(html!("div", {
                             .class("kicker")
@@ -527,7 +659,10 @@ fn participant_tree(state: AppState) -> Dom {
                                     .attr("type", "button")
                                     .attr("aria-label", "Предыдущее поздравление")
                                     .text("← Назад")
-                                    .event(clone!(state => move |_: events::Click| state.selected.set(Some(item.clone()))))
+                                    .event(clone!(state => move |_: events::Click| {
+                                        state.selected.set(Some(item.clone()));
+                                        schedule_dialog_focus("greeting-dialog");
+                                    }))
                                 }),
                                 None => html!("button", {
                                     .class("secondary")
@@ -562,7 +697,10 @@ fn participant_tree(state: AppState) -> Dom {
                             .class("primary")
                             .attr("type", "button")
                             .text("Вернуться к ёлке")
-                            .event(clone!(state => move |_: events::Click| state.selected.set(None)))
+                                                        .event(clone!(state => move |_: events::Click| {
+                                state.selected.set(None);
+                                restore_dialog_focus(&state);
+                            }))
                         }))
                     }))
                 })
@@ -572,20 +710,13 @@ fn participant_tree(state: AppState) -> Dom {
             if !active {
                 None
             } else {
-                Some(html!("div", {
+                Some(html!("dialog", {
                     .class("presentation-overlay")
+                    .attr("id", "presentation-dialog")
+                    .attr("aria-labelledby", "presentation-title")
                     .child(html!("section", {
                         .class("presentation-card")
-                        .attr("role", "dialog")
-                        .attr("tabindex", "-1")
-                        .event(clone!(state => move |event: events::KeyDown| {
-                            if event.key() == "Escape" {
-                                event.prevent_default();
-                                exit_presentation(state.clone());
-                            }
-                        }))
-                        .attr("aria-modal", "true")
-                        .attr("aria-labelledby", "presentation-title")
+                        
                         .child_signal(state.presentation_index.signal().map(clone!(state => move |index| {
                             let greetings = state.greetings.get_cloned();
                             let count = greetings.len();
@@ -634,8 +765,9 @@ fn participant_tree(state: AppState) -> Dom {
                                 .class("secondary")
                                 .attr("type", "button")
                                 .attr("aria-label", "Предыдущее поздравление")
+                                .attr("autofocus", "")
                                 .text("← Назад")
-                                .event(clone!(state => move |_: events::Click| {
+                                                                .event(clone!(state => move |_: events::Click| {
                                     let current = state.presentation_index.get();
                                     if current > 0 { set_presentation_index(&state, current - 1); }
                                 }))
@@ -704,7 +836,7 @@ fn participant_tree(state: AppState) -> Dom {
                                 .class("primary")
                                 .attr("type", "button")
                                 .text("Вернуться к ёлке")
-                                .event(clone!(state => move |_: events::Click| exit_presentation(state.clone())))
+                                                                .event(clone!(state => move |_: events::Click| exit_presentation(state.clone())))
                             }))
                         }))
                         .child(html!("p", {
@@ -728,26 +860,26 @@ fn show_form(state: AppState) {
     let form_state = state.clone();
     let subject_id = state.user.lock_ref().as_ref()
         .map(|user| user.subject_id.clone()).unwrap_or_default();
-    let dialog = html!("div", {
+    let dialog = html!("dialog", {
         .class("overlay")
+        .attr("id", "submission-dialog")
+        .attr("aria-labelledby", "submission-title")
+        .event(clone!(form_state => move |event: events::KeyDown| {
+            if event.key() == "Escape" {
+                event.prevent_default();
+                if let Some(window) = web_sys::window() { let _ = window.location().reload(); }
+            }
+        }))
         .child(html!("section", {
             .class("dialog")
-            .attr("role", "dialog")
-            .attr("aria-modal", "true")
-            .attr("aria-labelledby", "submission-title")
-            .attr("tabindex", "-1")
-            .event(clone!(form_state => move |event: events::KeyDown| {
-                if event.key() == "Escape" {
-                    event.prevent_default();
-                    if let Some(window) = web_sys::window() { let _ = window.location().reload(); }
-                }
-            }))
+            
             .child(html!("button", {
                 .class("close")
                 .attr("type", "button")
                 .attr("aria-label", "Закрыть форму поздравления")
+                .attr("autofocus", "")
                 .text("×")
-                .event(|_: events::Click| {
+                                .event(|_: events::Click| {
                     if let Some(window) = web_sys::window() {
                         let _ = window.location().reload();
                     }
@@ -774,7 +906,7 @@ fn show_form(state: AppState) {
             .child(html!("button", {
                 .class("primary")
                 .text("Опубликовать поздравление")
-                .event(clone!(form_state => move |_: events::Click| {
+                                .event(clone!(form_state => move |_: events::Click| {
                     if form_state.submitting.get() {
                         return;
                     }
@@ -821,6 +953,7 @@ fn show_form(state: AppState) {
     if let Some(document) = web_sys::window().and_then(|window| window.document()) {
         if let Some(root) = document.get_element_by_id("app") {
             append_dom(&root, dialog);
+            schedule_dialog_focus("submission-dialog");
         }
     }
 }
@@ -1240,6 +1373,7 @@ fn render(state: AppState) -> Dom {
 pub fn main() {
     console_error_panic_hook::set_once();
     let state=AppState::new();
+    install_dialog_keyboard_handler(state.clone());
     let app=render(state.clone());
     if let Some(document)=web_sys::window().and_then(|w|w.document()) {
         if let Some(root)=document.get_element_by_id("app"){append_dom(&root,app);}
