@@ -486,168 +486,142 @@ fn participant_tree(state: AppState) -> Dom {
             } else {
                 Some(html!("div", {
                     .class("presentation-overlay")
-                    .event(clone!(state => move |event: events::Click| {
-                        if let Some(target) = event.target() {
-                            if let Ok(element) = target.dyn_into::<web_sys::Element>() {
-                                match element.get_attribute("data-presentation-action").as_deref() {
-                                    Some("previous") => {
-                                        let current = state.presentation_index.get();
-                                        if current > 0 { set_presentation_index(&state, current - 1); }
-                                    }
-                                    Some("next") => {
-                                        let current = state.presentation_index.get();
-                                        let total = state.greetings.lock_ref().len();
-                                        if current < total { set_presentation_index(&state, current + 1); }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }))
-                    .child_signal(state.presentation_index.signal().map(clone!(state => move |index| {
-                        let greetings = state.greetings.get_cloned();
-                        let count = greetings.len();
-                        let current = greetings.get(index).cloned();
-                        let (title, message, counter) = if let Some(greeting) = current {
-                            (
-                                format!("С теплом, {}", greeting.display_name),
-                                greeting.message,
-                                format!("Поздравление {} из {}", index + 1, count)
-                            )
-                        } else if count == 0 {
-                            (
-                                "Ёлка ждёт добрых слов".to_string(),
-                                "Пока никто не добавил поздравление. Вернись сюда, когда появятся первые пожелания.".to_string(),
-                                "Пока пусто".to_string()
-                            )
-                        } else {
-                            (
-                                "С Новым годом!".to_string(),
-                                "Спасибо, что поделились теплом и сделали этот год чуточку светлее.".to_string(),
-                                format!("Все {} поздравлений просмотрены", count)
-                            )
-                        };
-                        Some(html!("section", {
-                            .class(if index == count && count > 0 { "presentation-card presentation-finale" } else { "presentation-card" })
-                            .attr("role", "dialog")
-                            .attr("aria-modal", "true")
-                            .attr("aria-labelledby", "presentation-title")
-                            .child(html!("div", {.class("kicker").text("CONGRATIS · NEW YEAR PRESENTATION")}))
-                            .child(html!("h2", {
-                                .attr("id", "presentation-title")
-                                .text(&title)
-                            }))
-                            .child(html!("p", {
-                                .class("presentation-message")
-                                .text(&message)
-                            }))
-                            .child(html!("div", {
-                                .class("presentation-counter")
-                                .text(&counter)
-                            }))
-                            .child(html!("div", {
-                                .class("presentation-controls")
-                                .child(if index > 0 {
-                                    html!("button", {
-                                        .class("secondary")
-                                        .attr("type", "button")
-                                        .attr("aria-label", "Предыдущее поздравление")
-                                        .attr("data-presentation-action", "previous")
-                                        .text("← Назад")
-                                    })
-                                } else {
-                                    html!("button", {
-                                        .class("secondary")
-                                        .attr("type", "button")
-                                        .attr("disabled", "")
-                                        .text("← Назад")
-                                    })
-                                })
-                                .child(if index < count {
-                                    html!("button", {
-                                        .class("secondary")
-                                        .attr("type", "button")
-                                        .attr("aria-label", "Следующее поздравление")
-                                        .attr("data-presentation-action", "next")
-                                        .text("Вперёд →")
-                                    })
-                                } else {
-                                    html!("button", {
-                                        .class("secondary")
-                                        .attr("type", "button")
-                                        .attr("disabled", "")
-                                        .text("Вперёд →")
-                                    })
-                                })
-                            }))
-                            .child(html!("div", {
-                                .class("presentation-audio-controls")
-                                .child(html!("button", {
-                                    .class("secondary")
-                                    .attr("type", "button")
-                                    .attr("aria-label", "Пауза или продолжение музыки")
-                                    .text_signal(state.presentation_paused.signal().map(|paused| if paused { "Продолжить музыку" } else { "Пауза музыки" }))
-                                    .event(clone!(state => move |_: events::Click| toggle_presentation_pause(state.clone())))
+                    .child(html!("section", {
+                        .class("presentation-card")
+                        .attr("role", "dialog")
+                        .attr("aria-modal", "true")
+                        .attr("aria-labelledby", "presentation-title")
+                        .child_signal(state.presentation_index.signal().map(clone!(state => move |index| {
+                            let greetings = state.greetings.get_cloned();
+                            let count = greetings.len();
+                            let current = greetings.get(index).cloned();
+                            let (title, message, counter) = if let Some(greeting) = current {
+                                (
+                                    format!("С теплом, {}", greeting.display_name),
+                                    greeting.message,
+                                    format!("Поздравление {} из {}", index + 1, count)
+                                )
+                            } else if count == 0 {
+                                (
+                                    "Ёлка ждёт добрых слов".to_string(),
+                                    "Пока никто не добавил поздравление. Вернись сюда, когда появятся первые пожелания.".to_string(),
+                                    "Пока пусто".to_string()
+                                )
+                            } else {
+                                (
+                                    "С Новым годом!".to_string(),
+                                    "Спасибо, что поделились теплом и сделали этот год чуточку светлее.".to_string(),
+                                    format!("Все {} поздравлений просмотрены", count)
+                                )
+                            };
+                            Some(html!("div", {
+                                .class(if index == count && count > 0 { "presentation-content presentation-finale" } else { "presentation-content" })
+                                .child(html!("div", {.class("kicker").text("CONGRATIS · NEW YEAR PRESENTATION")}))
+                                .child(html!("h2", {
+                                    .attr("id", "presentation-title")
+                                    .text(&title)
                                 }))
-                                .child(html!("button", {
-                                    .class("secondary")
-                                    .attr("type", "button")
-                                    .attr("aria-label", "Включить или выключить звук")
-                                    .text_signal(state.music_muted.signal().map(|muted| if muted { "Включить звук" } else { "Выключить звук" }))
-                                    .event(clone!(state => move |_: events::Click| toggle_music_mute(state.clone())))
+                                .child(html!("p", {
+                                    .class("presentation-message")
+                                    .text(&message)
                                 }))
-                                .child(html!("label", {
-                                    .class("volume-control")
-                                    .text("Громкость")
-                                    .child(html!("input", {
-                                        .attr("type", "range")
-                                        .attr("min", "0")
-                                        .attr("max", "1")
-                                        .attr("step", "0.05")
-                                        .attr("aria-label", "Громкость музыки")
-                                        .property("value", &state.music_volume.get().to_string())
-                                        .event(clone!(state => move |event: events::Input| {
-                                            if let Some(target) = event.target() {
-                                                if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
-                                                    set_music_volume(&state, input.value_as_number());
-                                                }
-                                            }
-                                        }))
-                                    }))
+                                .child(html!("div", {
+                                    .class("presentation-counter")
+                                    .text(&counter)
                                 }))
                             }))
-                            .child(html!("div", {
-                                .class("presentation-footer-controls")
-                                .child(html!("button", {
-                                    .class("secondary")
-                                    .attr("type", "button")
-                                    .text("Повторить")
-                                    .event(clone!(state => move |_: events::Click| {
-                                        set_presentation_index(&state, 0);
-                                        state.presentation_paused.set(false);
-                                        play_presentation_audio(state.clone());
-                                    }))
-                                }))
-                                .child(html!("button", {
-                                    .class("primary")
-                                    .attr("type", "button")
-                                    .text("Вернуться к ёлке")
-                                    .event(clone!(state => move |_: events::Click| exit_presentation(state.clone())))
+                        })))
+                        .child(html!("div", {
+                            .class("presentation-controls")
+                            .child(html!("button", {
+                                .class("secondary")
+                                .attr("type", "button")
+                                .attr("aria-label", "Предыдущее поздравление")
+                                .text("← Назад")
+                                .event(clone!(state => move |_: events::Click| {
+                                    let current = state.presentation_index.get();
+                                    if current > 0 { set_presentation_index(&state, current - 1); }
                                 }))
                             }))
-                            .child(html!("p", {
-                                .class("audio-attribution")
-                                .text("Музыка: ")
-                                .child(html!("a", {
-                                    .attr("href", "https://commons.wikimedia.org/wiki/File:Jingle_Bells.ogg")
-                                    .attr("target", "_blank")
-                                    .attr("rel", "noopener noreferrer")
-                                    .text("Jingle Bells — Kevin MacLeod")
+                            .child(html!("button", {
+                                .class("secondary")
+                                .attr("type", "button")
+                                .attr("aria-label", "Следующее поздравление")
+                                .text("Вперёд →")
+                                .event(clone!(state => move |_: events::Click| {
+                                    let current = state.presentation_index.get();
+                                    let total = state.greetings.lock_ref().len();
+                                    if current < total { set_presentation_index(&state, current + 1); }
                                 }))
-                                .child(html!("span", {.text(" · CC BY 3.0")}))
                             }))
                         }))
-                    })))
+                        .child(html!("div", {
+                            .class("presentation-audio-controls")
+                            .child(html!("button", {
+                                .class("secondary")
+                                .attr("type", "button")
+                                .attr("aria-label", "Пауза или продолжение музыки")
+                                .text_signal(state.presentation_paused.signal().map(|paused| if paused { "Продолжить музыку" } else { "Пауза музыки" }))
+                                .event(clone!(state => move |_: events::Click| toggle_presentation_pause(state.clone())))
+                            }))
+                            .child(html!("button", {
+                                .class("secondary")
+                                .attr("type", "button")
+                                .attr("aria-label", "Включить или выключить звук")
+                                .text_signal(state.music_muted.signal().map(|muted| if muted { "Включить звук" } else { "Выключить звук" }))
+                                .event(clone!(state => move |_: events::Click| toggle_music_mute(state.clone())))
+                            }))
+                            .child(html!("label", {
+                                .class("volume-control")
+                                .text("Громкость")
+                                .child(html!("input", {
+                                    .attr("type", "range")
+                                    .attr("min", "0")
+                                    .attr("max", "1")
+                                    .attr("step", "0.05")
+                                    .attr("aria-label", "Громкость музыки")
+                                    .property("value", &state.music_volume.get().to_string())
+                                    .event(clone!(state => move |event: events::Input| {
+                                        if let Some(target) = event.target() {
+                                            if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
+                                                set_music_volume(&state, input.value_as_number());
+                                            }
+                                        }
+                                    }))
+                                }))
+                            }))
+                        }))
+                        .child(html!("div", {
+                            .class("presentation-footer-controls")
+                            .child(html!("button", {
+                                .class("secondary")
+                                .attr("type", "button")
+                                .text("Повторить")
+                                .event(clone!(state => move |_: events::Click| {
+                                    set_presentation_index(&state, 0);
+                                    state.presentation_paused.set(false);
+                                    play_presentation_audio(state.clone());
+                                }))
+                            }))
+                            .child(html!("button", {
+                                .class("primary")
+                                .attr("type", "button")
+                                .text("Вернуться к ёлке")
+                                .event(clone!(state => move |_: events::Click| exit_presentation(state.clone())))
+                            }))
+                        }))
+                        .child(html!("p", {
+                            .class("audio-attribution")
+                            .text("Музыка: ")
+                            .child(html!("a", {
+                                .attr("href", "https://commons.wikimedia.org/wiki/File:Jingle_Bells.ogg")
+                                .attr("target", "_blank")
+                                .attr("rel", "noopener noreferrer")
+                                .text("Jingle Bells — Kevin MacLeod")
+                            }))
+                            .child(html!("span", {.text(" · CC BY 3.0")}))
+                        }))
+                    }))
                 }))
             }
         })))

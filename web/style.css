@@ -57,3 +57,11 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{
 .presentation-finale .presentation-message{max-width:560px}
 @keyframes finale-arrive{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
 @media(prefers-reduced-motion:reduce){.presentation-finale{animation:none}}
+
+/* The finale content lives inside the persistent presentation card. */
+.presentation-card .presentation-finale{border:0;background:transparent;box-shadow:none;padding:14px 0 20px;animation:finale-arrive .65s cubic-bezier(.2,.8,.2,1) both}
+.presentation-card .presentation-finale::before{top:8px;left:clamp(20px,8%,64px)}
+.presentation-card .presentation-finale::after{right:clamp(20px,8%,64px);bottom:12px}
+.presentation-card .presentation-finale h2{font-size:clamp(38px,6vw,62px);text-shadow:0 3px 28px #e8bd6555}
+.presentation-card .presentation-finale .presentation-message{max-width:560px}
+@media(prefers-reduced-motion:reduce){.presentation-card .presentation-finale{animation:none}}
