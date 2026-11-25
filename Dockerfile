@@ -1,5 +1,5 @@
 FROM rust:1-bookworm AS builder
-RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler binaryen && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler && rm -rf /var/lib/apt/lists/*
 RUN rustup target add wasm32-unknown-unknown && cargo install trunk --locked
 WORKDIR /app
 COPY Cargo.toml ./
