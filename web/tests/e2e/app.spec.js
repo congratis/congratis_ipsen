@@ -29,7 +29,7 @@ async function mockParticipantSession(page, { exchangeStatus = 200 } = {}) {
     return route.continue();
   });
   await page.route("**/api/events", route =>
-    route.fulfill({ status: 200, contentType: "text/event-stream", body: ": connected\n\n" })
+    route.fulfill({ status: 200, contentType: "text/event-stream", body: ": connected\\n\\n" })
   );
 }
 
@@ -70,7 +70,7 @@ test("participant can submit a greeting only once even after a rapid double clic
 
   await page.goto("/#invite=valid-invite-token");
   await expect(page.locator(".tree-frame")).toBeVisible();
-  await page.getByRole("button", { name: "Шар номер 1" }).click();
+  await page.getByRole("button", { name: "Шар номер 1", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Добавь своё пожелание" })).toBeVisible();
 
   await page.getByLabel("Как тебя зовут?").locator("input").fill("Алексей");
