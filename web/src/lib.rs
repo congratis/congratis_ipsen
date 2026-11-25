@@ -99,13 +99,8 @@ fn focus_first_dialog_control(dialog_id: &'static str) {
         let _ = control.focus();
     }
 }
-fn schedule_dialog_focus(dialog_id: &'static str) {
-    let Some(window) = web_sys::window() else { return; };
-    let callback = Closure::once_into_js(move || focus_first_dialog_control(dialog_id));
-    let _ = window.request_animation_frame(callback.unchecked_ref());
-}
-fn trap_dialog_focus(event: &events::KeyDown, dialog_id: &str) {
-    if event.key() != "Tab" { return; }
+
+fn focus_last_dialog_control(dialog_id: &'static str) {
     let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
     let Some(dialog) = document.get_element_by_id(dialog_id) else { return; };
     let Ok(items) = dialog.query_selector_all(
@@ -113,18 +108,26 @@ fn trap_dialog_focus(event: &events::KeyDown, dialog_id: &str) {
     ) else { return; };
     let count = items.length();
     if count == 0 { return; }
-    let Some(first) = items.item(0).and_then(|item| item.dyn_into::<web_sys::HtmlElement>().ok()) else { return; };
-    let Some(last) = items.item(count - 1).and_then(|item| item.dyn_into::<web_sys::HtmlElement>().ok()) else { return; };
-    let active = event.target().and_then(|target| target.dyn_into::<web_sys::HtmlElement>().ok());
-    let on_first = active.as_ref().map(|element| element.is_same_node(Some(first.as_ref()))).unwrap_or(false);
-    let on_last = active.as_ref().map(|element| element.is_same_node(Some(last.as_ref()))).unwrap_or(false);
-    if event.shift_key() && on_first {
-        event.prevent_default();
-        let _ = last.focus();
-    } else if !event.shift_key() && on_last {
-        event.prevent_default();
-        let _ = first.focus();
+    if let Some(control) = items.item(count - 1).and_then(|item| item.dyn_into::<web_sys::HtmlElement>().ok()) {
+        let _ = control.focus();
     }
+}
+fn wrap_focus_from_first(event: &events::KeyDown, dialog_id: &'static str) {
+    if event.key() == "Tab" && event.shift_key() {
+        event.prevent_default();
+        focus_last_dialog_control(dialog_id);
+    }
+}
+fn wrap_focus_from_last(event: &events::KeyDown, dialog_id: &'static str) {
+    if event.key() == "Tab" && !event.shift_key() {
+        event.prevent_default();
+        focus_first_dialog_control(dialog_id);
+    }
+}
+fn schedule_dialog_focus(dialog_id: &'static str) {
+    let Some(window) = web_sys::window() else { return; };
+    let callback = Closure::once_into_js(move || focus_first_dialog_control(dialog_id));
+    let _ = window.request_animation_frame(callback.unchecked_ref());
 }
 const JINGLE_BELLS_URL: &str = "https://upload.wikimedia.org/wikipedia/commons/f/f0/Jingle_Bells_%2890bpm%29_%28Kevin_MacLeod%29_%28ISRC_USUAN1100187%29.oga";
 
@@ -554,7 +557,6 @@ fn participant_tree(state: AppState) -> Dom {
                         .attr("role", "dialog")
                         .attr("tabindex", "-1")
                         .event(clone!(state => move |event: events::KeyDown| {
-                            trap_dialog_focus(&event, "greeting-dialog");
                             if event.key() == "Escape" {
                                 event.prevent_default();
                                 state.selected.set(None);
@@ -569,6 +571,7 @@ fn participant_tree(state: AppState) -> Dom {
                             .attr("aria-label", "Закрыть поздравление")
                             .attr("autofocus", "")
                             .text("×")
+                            .event(|event: events::KeyDown| wrap_focus_from_first(&event, "greeting-dialog"))
                             .event(clone!(state => move |_: events::Click| {
                                 state.selected.set(None);
                                 restore_dialog_focus(&state);
@@ -629,6 +632,7 @@ fn participant_tree(state: AppState) -> Dom {
                             .class("primary")
                             .attr("type", "button")
                             .text("Вернуться к ёлке")
+                            .event(|event: events::KeyDown| wrap_focus_from_last(&event, "greeting-dialog"))
                             .event(clone!(state => move |_: events::Click| {
                                 state.selected.set(None);
                                 restore_dialog_focus(&state);
@@ -650,7 +654,6 @@ fn participant_tree(state: AppState) -> Dom {
                         .attr("role", "dialog")
                         .attr("tabindex", "-1")
                         .event(clone!(state => move |event: events::KeyDown| {
-                            trap_dialog_focus(&event, "presentation-dialog");
                             if event.key() == "Escape" {
                                 event.prevent_default();
                                 exit_presentation(state.clone());
@@ -709,6 +712,7 @@ fn participant_tree(state: AppState) -> Dom {
                                 .attr("aria-label", "Предыдущее поздравление")
                                 .attr("autofocus", "")
                                 .text("← Назад")
+                                .event(|event: events::KeyDown| wrap_focus_from_first(&event, "presentation-dialog"))
                                 .event(clone!(state => move |_: events::Click| {
                                     let current = state.presentation_index.get();
                                     if current > 0 { set_presentation_index(&state, current - 1); }
@@ -778,6 +782,7 @@ fn participant_tree(state: AppState) -> Dom {
                                 .class("primary")
                                 .attr("type", "button")
                                 .text("Вернуться к ёлке")
+                                .event(|event: events::KeyDown| wrap_focus_from_last(&event, "presentation-dialog"))
                                 .event(clone!(state => move |_: events::Click| exit_presentation(state.clone())))
                             }))
                         }))
@@ -812,7 +817,6 @@ fn show_form(state: AppState) {
             .attr("aria-labelledby", "submission-title")
             .attr("tabindex", "-1")
             .event(clone!(form_state => move |event: events::KeyDown| {
-                trap_dialog_focus(&event, "submission-dialog");
                 if event.key() == "Escape" {
                     event.prevent_default();
                     if let Some(window) = web_sys::window() { let _ = window.location().reload(); }
@@ -824,6 +828,7 @@ fn show_form(state: AppState) {
                 .attr("aria-label", "Закрыть форму поздравления")
                 .attr("autofocus", "")
                 .text("×")
+                .event(|event: events::KeyDown| wrap_focus_from_first(&event, "submission-dialog"))
                 .event(|_: events::Click| {
                     if let Some(window) = web_sys::window() {
                         let _ = window.location().reload();
@@ -851,6 +856,7 @@ fn show_form(state: AppState) {
             .child(html!("button", {
                 .class("primary")
                 .text("Опубликовать поздравление")
+                .event(|event: events::KeyDown| wrap_focus_from_last(&event, "submission-dialog"))
                 .event(clone!(form_state => move |_: events::Click| {
                     if form_state.submitting.get() {
                         return;
