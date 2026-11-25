@@ -183,6 +183,8 @@ test("participant receives a published greeting through the SSE stream", async (
   await page.goto("/#invite=valid-invite-token");
   const ornament = page.getByRole("button", { name: "Шар номер 2", exact: true });
   await expect(ornament).toHaveClass(/filled/);
+  await expect(page.getByRole("progressbar", { name: "Опубликованные поздравления" })).toHaveAttribute("aria-valuenow", "1");
+  await expect(page.locator(".progress-count")).toHaveText("1 / 20");
   await ornament.click();
   await expect(page.getByRole("heading", { name: "С теплом, Мария" })).toBeVisible();
   await expect(page.getByText("Счастья и радости!")).toBeVisible();
@@ -217,4 +219,23 @@ test("greeting viewer navigates in deterministic ornament order and exposes dial
 
   await page.getByRole("dialog").getByRole("button", { name: "Предыдущее поздравление" }).click();
   await expect(page.getByRole("dialog", { name: "С теплом, Анна" })).toBeVisible();
+});
+
+test("campaign summary drives the accessible candy cane progress indicator", async ({ page }) => {
+  await mockParticipantSession(page);
+  await page.route("**/api/campaign", route =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ participant_count: 4, submitted_count: 2 })
+    })
+  );
+
+  await page.goto("/#invite=valid-invite-token");
+  const progress = page.getByRole("progressbar", { name: "Опубликованные поздравления" });
+  await expect(progress).toHaveAttribute("aria-valuemin", "0");
+  await expect(progress).toHaveAttribute("aria-valuemax", "4");
+  await expect(progress).toHaveAttribute("aria-valuenow", "2");
+  await expect(page.locator(".progress-count")).toHaveText("2 / 4");
+  await expect(page.locator(".candy-fill")).toHaveCSS("width", /.+/);
 });
