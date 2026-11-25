@@ -331,7 +331,9 @@ test("presentation mode navigates greetings and supports audio controls and sile
   await expect(finale.getByText("Все 2 поздравлений просмотрены")).toBeVisible();
 
   // Replay starts from the first greeting and restores its ornament highlight.
-  await finale.getByRole("button", { name: "Повторить" }).click();
+  // Footer controls are siblings of the finale content inside the presentation card.
+  await page.getByRole("button", { name: "Повторить" }).click();
+  await expect(page.locator(".presentation-finale")).toHaveCount(0);
   dialog = page.getByRole("dialog", { name: "С теплом, Анна" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Поздравление 1 из 2")).toBeVisible();
