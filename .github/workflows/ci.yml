@@ -192,7 +192,7 @@ jobs:
     name: Production · Full Docker stack
     needs: changes
     if: >-
-      github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      github.event_name == 'push' && (github.ref == 'refs/heads/main' || (github.ref == 'refs/heads/feat/dominator-spa' && (needs.changes.outputs.infrastructure == 'true' || needs.changes.outputs.backend == 'true'))) ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule' ||
       github.event_name == 'pull_request' && github.base_ref == 'main' && (needs.changes.outputs.infrastructure == 'true' || needs.changes.outputs.backend == 'true')
