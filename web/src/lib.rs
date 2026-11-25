@@ -76,7 +76,7 @@ async fn post_empty(path: &str, csrf: &str) -> Result<(), String> {
     if response.ok() { Ok(()) } else { Err(response.text().await.unwrap_or_else(|_| format!("HTTP {}", response.status()))) }
 }
 fn set_note(state: &AppState, value: impl Into<String>) { state.note.set(value.into()); }
-fn remember_dialog_trigger(state: &AppState, event: &web_sys::Event) {
+fn remember_dialog_trigger(state: &AppState, event: &events::Click) {
     if let Some(target) = event.target().and_then(|target| target.dyn_into::<web_sys::HtmlElement>().ok()) {
         state.dialog_return_focus.set(Some(target));
     }
@@ -86,7 +86,7 @@ fn restore_dialog_focus(state: &AppState) {
         let _ = element.focus();
     }
 }
-fn trap_dialog_focus(event: &web_sys::KeyboardEvent, dialog_id: &str) {
+fn trap_dialog_focus(event: &events::KeyDown, dialog_id: &str) {
     if event.key() != "Tab" { return; }
     let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
     let Some(dialog) = document.get_element_by_id(dialog_id) else { return; };
@@ -196,6 +196,7 @@ fn exit_presentation(state: AppState) {
     state.presentation.set(false);
     state.presentation_paused.set(false);
     state.presentation_ornament.set(None);
+    restore_dialog_focus(&state);
 }
 
 async fn load_greetings(state: AppState) {
@@ -608,7 +609,10 @@ fn participant_tree(state: AppState) -> Dom {
                             .class("primary")
                             .attr("type", "button")
                             .text("Вернуться к ёлке")
-                            .event(clone!(state => move |_: events::Click| state.selected.set(None)))
+                            .event(clone!(state => move |_: events::Click| {
+                                state.selected.set(None);
+                                restore_dialog_focus(&state);
+                            }))
                         }))
                     }))
                 })
