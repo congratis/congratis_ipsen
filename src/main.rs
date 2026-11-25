@@ -53,6 +53,7 @@ struct SubmitGreeting { display_name: String, message: String }
 struct ApiMessage { message: &'static str }
 #[derive(Serialize)]
 struct MeResponse { subject_id: String, role: String, csrf_token: String }
+#[derive(Debug)]
 struct ApiError(StatusCode, &'static str);
 
 impl IntoResponse for ApiError {
