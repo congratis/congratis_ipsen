@@ -464,17 +464,12 @@ test("greeting viewer navigates in deterministic ornament order and exposes dial
 
   await page.getByRole("dialog").getByRole("button", { name: "Предыдущее поздравление" }).click();
   await expect(page.getByRole("dialog", { name: "С теплом, Анна" })).toBeVisible();
+  await expect(page.locator("#greeting-dialog")).toHaveJSProperty("open", true);
+  await expect(page.locator("#greeting-dialog").locator(":focus")).toHaveCount(1);
 
-  console.log("before Escape", await page.evaluate(() => ({
-    active: document.activeElement?.outerHTML,
-    dialog: document.querySelector("#greeting-dialog")?.outerHTML
-  })));
+  await expect(page.locator("#greeting-dialog")).toHaveAttribute("open", "");
+  await expect(page.locator("#greeting-dialog")).toHaveJSProperty("open", true);
   await page.keyboard.press("Escape");
-  console.log("after Escape", await page.evaluate(() => ({
-    active: document.activeElement?.outerHTML,
-    dialog: document.querySelector("#greeting-dialog")?.outerHTML
-  })));
-
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Шар номер 1", exact: true })).toBeFocused();
 });
