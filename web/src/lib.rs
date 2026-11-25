@@ -64,7 +64,7 @@ async fn load_participants(state: AppState) {
 fn connect_events(state: AppState) {
     let Ok(source) = EventSource::new("/api/events") else { return; };
     let greeting_state = state.clone();
-    let greeting_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event| {
+    let greeting_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
         if let Ok(message) = event.dyn_into::<MessageEvent>() {
             if let Some(raw) = message.data().as_string() {
                 if let Ok(greeting) = serde_json::from_str::<Greeting>(&raw) {
@@ -78,7 +78,7 @@ fn connect_events(state: AppState) {
     let _ = source.add_event_listener_with_callback("greeting", greeting_handler.as_ref().unchecked_ref());
     greeting_handler.forget();
     let resync_state = state.clone();
-    let resync_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+    let resync_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: events::Click| {
         let state = resync_state.clone();
         spawn_local(async move { load_greetings(state).await; });
     });
@@ -109,6 +109,7 @@ fn participant_tree(state: AppState) -> Dom {
     let user = state.user.lock_ref().clone().unwrap();
     let points: [(f64,f64);20] = [(50.2,18.3),(46.2,27.9),(55.1,28.7),(41.5,38.1),(50.5,38.5),(59.1,38.6),(37.7,49.8),(46.5,50.3),(55.2,50.5),(63.8,50.7),(35.9,60.4),(45.0,61.0),(55.3,61.1),(64.5,61.6),(32.3,72.5),(42.7,73.2),(56.0,73.6),(66.0,73.3),(45.4,85.2),(59.7,85.5)];
     let is_mine = user.role == "participant";
+    let pill_label = if is_mine { format!("Твой шар №{}", user.subject_id) } else { "Режим администратора".to_string() };
     html!("main", {
         .class("shell")
         .child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")}))
@@ -118,11 +119,7 @@ fn participant_tree(state: AppState) -> Dom {
             .class("toolbar")
             .child(html!("span", {
                 .class("pill")
-                .text(if is_mine {
-                    format!("Твой шар №{}", user.subject_id)
-                } else {
-                    "Режим администратора".to_string()
-                })
+                .text(&pill_label)
             }))
             .child(html!("button", {
                 .class("secondary")
@@ -158,7 +155,7 @@ fn participant_tree(state: AppState) -> Dom {
         .child(html!("div", {.class("tree-frame")
             .child(html!("img", {.class("tree-art").attr("src","/christmas-tree.webp").attr("alt","Иллюстрированная новогодняя ёлка с двадцатью шарами")}))
             .child_signal(state.greetings.signal_cloned().map(clone!(state => move |greeting_snapshot| {
-                html!("div", {.class("hotspots").children(points.iter().enumerate().map(|(index,(x,y))| {
+                Some(html!("div", {.class("hotspots").children(points.iter().enumerate().map(|(index,(x,y))| {
                     let number=(index+1) as i16;
                     let greeting=greeting_snapshot.iter().find(|g|g.ornament_number==number).cloned();
                     let mine=is_mine && user.subject_id.parse::<i16>().ok()==Some(number);
@@ -175,7 +172,7 @@ fn participant_tree(state: AppState) -> Dom {
                             else { set_note(&state, "Этот шар пока свободен"); }
                         }))
                     })
-                }))})
+                }))}))
             })))
         }))
         .child(html!("div", {.class("legend")
@@ -188,11 +185,6 @@ fn participant_tree(state: AppState) -> Dom {
             selected.map(|greeting| {
                 html!("div", {
                     .class("overlay")
-                    .event(clone!(state => move |event: events::Click| {
-                        if event.target() == event.current_target() {
-                            state.selected.set(None);
-                        }
-                    }))
                     .child(html!("section", {
                         .class("dialog")
                         .child(html!("button", {
@@ -230,7 +222,7 @@ fn show_form(state: AppState) {
             .child(html!("button", {
                 .class("close")
                 .text("×")
-                .event(|_| {
+                .event(|_: events::Click| {
                     if let Some(window) = web_sys::window() {
                         let _ = window.location().reload();
                     }
@@ -329,10 +321,11 @@ fn admin_screen(state: AppState) -> Dom {
             }))
         }))
         .child_signal(state.participants.signal_cloned().map(clone!(state => move |participants| {
-            html!("div", {
+            Some(html!("div", {
                 .class("admin-grid")
                 .children(participants.into_iter().map(clone!(state => move |participant| {
                     let number = participant.ornament_number;
+                    let display_name = participant.display_name.unwrap_or_default();
                     let status = if participant.submitted {
                         "Поздравление опубликовано"
                     } else if participant.activated {
@@ -349,7 +342,7 @@ fn admin_screen(state: AppState) -> Dom {
                         }))
                         .child(html!("small", {.text(status)}))
                         .child(html!("small", {
-                            .text(participant.display_name.unwrap_or_default())
+                            .text(&display_name)
                         }))
                         .children(if !participant.activated && !participant.submitted && !participant.revoked {
                             vec![
@@ -399,7 +392,7 @@ fn admin_screen(state: AppState) -> Dom {
                         })
                     })
                 })))
-            })
+            }))
         })))
         .child(html!("div", {
             .class("note")
@@ -508,7 +501,7 @@ fn landing_screen() -> Dom {
 fn render(state: AppState) -> Dom {
     html!("div", {
         .child_signal(state.user.signal_cloned().map(clone!(state => move |user| {
-            if let Some(user) = user {
+            Some(if let Some(user) = user {
                 if user.role == "admin" {
                     let is_admin = web_sys::window()
                         .map(|window| window.location().hash().unwrap_or_default().contains("/admin"))
@@ -567,7 +560,7 @@ fn render(state: AppState) -> Dom {
                 } else {
                     landing_screen()
                 }
-            }
+            })
         })))
     })
 }
