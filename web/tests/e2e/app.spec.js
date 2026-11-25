@@ -248,3 +248,49 @@ test("campaign summary drives the accessible candy cane progress indicator", asy
   await expect(page.locator(".progress-count")).toHaveText("2 / 4");
   await expect.poll(() => page.locator(".candy-fill").evaluate(element => element.style.width)).toBe("50%");
 });
+
+test("presentation mode navigates greetings and supports audio controls and silent fallback", async ({ page }) => {
+  await mockParticipantSession(page);
+  await page.route("**/api/greetings", route =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { ornament_number: 2, display_name: "Борис", message: "Пусть сбудутся мечты!" },
+        { ornament_number: 1, display_name: "Анна", message: "Счастья и здоровья!" }
+      ])
+    })
+  );
+  await page.route("https://upload.wikimedia.org/**", route => route.abort());
+
+  await page.goto("/#invite=valid-invite-token");
+  await expect(page.locator(".tree-frame")).toBeVisible();
+  await page.getByRole("button", { name: "▶ Play" }).click();
+
+  let dialog = page.getByRole("dialog", { name: "С теплом, Анна" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Поздравление 1 из 2")).toBeVisible();
+  await page.getByRole("button", { name: "Следующее поздравление" }).click();
+  dialog = page.getByRole("dialog", { name: "С теплом, Борис" });
+  await expect(dialog).toBeVisible();
+  await expect(page.locator(".ornament.presenting")).toHaveAttribute("aria-label", "Шар номер 2");
+
+  await page.getByRole("button", { name: "Включить или выключить звук" }).click();
+  await page.getByRole("slider", { name: "Громкость музыки" }).fill("0.4");
+  await page.getByRole("button", { name: "Вернуться к ёлке" }).click();
+  await expect(page.locator(".presentation-overlay")).toHaveCount(0);
+  await expect(page.locator(".tree-frame")).toBeVisible();
+});
+
+test("presentation mode handles an empty campaign without starting audio", async ({ page }) => {
+  await mockParticipantSession(page);
+  await page.goto("/#invite=valid-invite-token");
+  await expect(page.locator(".tree-frame")).toBeVisible();
+  await page.getByRole("button", { name: "▶ Play" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Ёлка ждёт добрых слов" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Пока пусто")).toBeVisible();
+  await page.getByRole("button", { name: "Вернуться к ёлке" }).click();
+  await expect(page.locator(".presentation-overlay")).toHaveCount(0);
+});

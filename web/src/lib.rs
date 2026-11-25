@@ -3,8 +3,8 @@ use futures_signals::signal::{Mutable, SignalExt};
 use gloo_net::http::Request;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::{closure::Closure, JsCast};
-use wasm_bindgen_futures::spawn_local;
-use web_sys::{EventSource, HtmlInputElement, HtmlTextAreaElement, MessageEvent};
+use wasm_bindgen_futures::{spawn_local, JsFuture};
+use web_sys::{EventSource, HtmlAudioElement, HtmlInputElement, HtmlTextAreaElement, MessageEvent};
 
 #[derive(Clone, Deserialize, Serialize)]
 struct User { subject_id: String, role: String, csrf_token: String }
@@ -23,6 +23,13 @@ struct AppState {
     campaign_count: Mutable<usize>,
     submitted_count: Mutable<usize>,
     selected: Mutable<Option<Greeting>>,
+    presentation: Mutable<bool>,
+    presentation_index: Mutable<usize>,
+    presentation_ornament: Mutable<Option<i16>>,
+    presentation_paused: Mutable<bool>,
+    music_muted: Mutable<bool>,
+    music_volume: Mutable<f64>,
+    audio: Mutable<Option<HtmlAudioElement>>,
     name: Mutable<String>,
     message: Mutable<String>,
     admin_name: Mutable<String>,
@@ -33,7 +40,7 @@ struct AppState {
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), submitting: Mutable::new(false) }
+        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), submitting: Mutable::new(false) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -54,6 +61,96 @@ async fn post_empty(path: &str, csrf: &str) -> Result<(), String> {
     if response.ok() { Ok(()) } else { Err(response.text().await.unwrap_or_else(|_| format!("HTTP {}", response.status()))) }
 }
 fn set_note(state: &AppState, value: impl Into<String>) { state.note.set(value.into()); }
+const JINGLE_BELLS_URL: &str = "https://upload.wikimedia.org/wikipedia/commons/f/f0/Jingle_Bells_%2890bpm%29_%28Kevin_MacLeod%29_%28ISRC_USUAN1100187%29.oga";
+
+fn set_presentation_index(state: &AppState, index: usize) {
+    let greetings = state.greetings.get_cloned();
+    state.presentation_index.set(index);
+    state.presentation_ornament.set(greetings.get(index).map(|greeting| greeting.ornament_number));
+}
+
+fn play_presentation_audio(state: AppState) {
+    let audio = match state.audio.get_cloned() {
+        Some(audio) => audio,
+        None => match HtmlAudioElement::new_with_src(JINGLE_BELLS_URL) {
+            Ok(audio) => {
+                audio.set_loop(true);
+                audio.set_volume(state.music_volume.get().clamp(0.0, 1.0));
+                audio.set_muted(state.music_muted.get());
+                state.audio.set(Some(audio.clone()));
+                audio
+            }
+            Err(_) => {
+                state.presentation_paused.set(true);
+                set_note(&state, "Музыка недоступна — презентация продолжится без звука");
+                return;
+            }
+        },
+    };
+
+    match audio.play() {
+        Ok(promise) => {
+            let current = state.clone();
+            spawn_local(async move {
+                if JsFuture::from(promise).await.is_err() {
+                    if let Some(audio) = current.audio.get_cloned() {
+                        audio.pause();
+                    }
+                    current.audio.set(None);
+                    current.presentation_paused.set(true);
+                    set_note(&current, "Браузер не разрешил музыку — презентация продолжится без звука");
+                }
+            });
+        }
+        Err(_) => {
+            state.audio.set(None);
+            state.presentation_paused.set(true);
+            set_note(&state, "Музыка недоступна — презентация продолжится без звука");
+        }
+    }
+}
+
+fn start_presentation(state: AppState) {
+    state.presentation.set(true);
+    state.presentation_paused.set(false);
+    set_presentation_index(&state, 0);
+    if state.greetings.get_cloned().is_empty() {
+        set_note(&state, "Пока нет опубликованных поздравлений");
+    } else {
+        play_presentation_audio(state);
+    }
+}
+
+fn toggle_presentation_pause(state: AppState) {
+    let paused = !state.presentation_paused.get();
+    state.presentation_paused.set(paused);
+    if paused {
+        if let Some(audio) = state.audio.get_cloned() { audio.pause(); }
+    } else {
+        play_presentation_audio(state);
+    }
+}
+
+fn toggle_music_mute(state: AppState) {
+    let muted = !state.music_muted.get();
+    state.music_muted.set(muted);
+    if let Some(audio) = state.audio.get_cloned() { audio.set_muted(muted); }
+}
+
+fn set_music_volume(state: &AppState, volume: f64) {
+    let volume = volume.clamp(0.0, 1.0);
+    state.music_volume.set(volume);
+    if let Some(audio) = state.audio.get_cloned() { audio.set_volume(volume); }
+}
+
+fn exit_presentation(state: AppState) {
+    if let Some(audio) = state.audio.get_cloned() { audio.pause(); }
+    state.audio.set(None);
+    state.presentation.set(false);
+    state.presentation_paused.set(false);
+    state.presentation_ornament.set(None);
+}
+
 async fn load_greetings(state: AppState) {
     match get_json::<Vec<Greeting>>("/api/greetings").await {
         Ok(mut items) => {
@@ -235,6 +332,7 @@ fn participant_tree(state: AppState) -> Dom {
                         .class_signal("dense", futures_signals::signal::always(points.len() > 20))
                         .class_signal("filled", futures_signals::signal::always(greeting.is_some()))
                         .class_signal("mine", futures_signals::signal::always(mine))
+                        .class_signal("presenting", state.presentation_ornament.signal_cloned().map(move |selected| selected == Some(number)))
                         .style("left", &format!("{x}%")).style("top",&format!("{y}%"))
                         .attr("aria-label",&format!("Шар номер {number}"))
                         .text(&number.to_string())
@@ -271,6 +369,12 @@ fn participant_tree(state: AppState) -> Dom {
                             .child(html!("span", {
                                 .class("progress-count")
                                 .text(&format!("{safe_submitted} / {participant_count}"))
+                            }))
+                            .child(html!("button", {
+                                .class("presentation-launch")
+                                .attr("type", "button")
+                                .text("▶ Play")
+                                .event(clone!(state => move |_: events::Click| start_presentation(state.clone())))
                             }))
                         }))
                     }))
@@ -364,6 +468,159 @@ fn participant_tree(state: AppState) -> Dom {
                     }))
                 })
             })
+        })))
+        .child_signal(state.presentation.signal().map(clone!(state => move |active| {
+            if !active {
+                None
+            } else {
+                Some(html!("div", {
+                    .class("presentation-overlay")
+                    .child_signal(state.presentation_index.signal().map(clone!(state => move |index| {
+                        let greetings = state.greetings.get_cloned();
+                        let count = greetings.len();
+                        let current = greetings.get(index).cloned();
+                        let (title, message, counter) = if let Some(greeting) = current {
+                            (
+                                format!("С теплом, {}", greeting.display_name),
+                                greeting.message,
+                                format!("Поздравление {} из {}", index + 1, count)
+                            )
+                        } else if count == 0 {
+                            (
+                                "Ёлка ждёт добрых слов".to_string(),
+                                "Пока никто не добавил поздравление. Вернись сюда, когда появятся первые пожелания.".to_string(),
+                                "Пока пусто".to_string()
+                            )
+                        } else {
+                            (
+                                "С Новым годом!".to_string(),
+                                "Спасибо, что поделились теплом и сделали этот год чуточку светлее.".to_string(),
+                                format!("Все {} поздравлений просмотрены", count)
+                            )
+                        };
+                        Some(html!("section", {
+                            .class("presentation-card")
+                            .attr("role", "dialog")
+                            .attr("aria-modal", "true")
+                            .attr("aria-labelledby", "presentation-title")
+                            .child(html!("div", {.class("kicker").text("CONGRATIS · NEW YEAR PRESENTATION")}))
+                            .child(html!("h2", {
+                                .attr("id", "presentation-title")
+                                .text(&title)
+                            }))
+                            .child(html!("p", {
+                                .class("presentation-message")
+                                .text(&message)
+                            }))
+                            .child(html!("div", {
+                                .class("presentation-counter")
+                                .text(&counter)
+                            }))
+                            .child(html!("div", {
+                                .class("presentation-controls")
+                                .child(if index > 0 {
+                                    html!("button", {
+                                        .class("secondary")
+                                        .attr("type", "button")
+                                        .attr("aria-label", "Предыдущее поздравление")
+                                        .text("← Назад")
+                                        .event(clone!(state => move |_: events::Click| set_presentation_index(&state, index - 1)))
+                                    })
+                                } else {
+                                    html!("button", {
+                                        .class("secondary")
+                                        .attr("type", "button")
+                                        .attr("disabled", "")
+                                        .text("← Назад")
+                                    })
+                                })
+                                .child(if index < count {
+                                    html!("button", {
+                                        .class("secondary")
+                                        .attr("type", "button")
+                                        .attr("aria-label", "Следующее поздравление")
+                                        .text("Вперёд →")
+                                        .event(clone!(state => move |_: events::Click| set_presentation_index(&state, index + 1)))
+                                    })
+                                } else {
+                                    html!("button", {
+                                        .class("secondary")
+                                        .attr("type", "button")
+                                        .attr("disabled", "")
+                                        .text("Вперёд →")
+                                    })
+                                })
+                            }))
+                            .child(html!("div", {
+                                .class("presentation-audio-controls")
+                                .child(html!("button", {
+                                    .class("secondary")
+                                    .attr("type", "button")
+                                    .attr("aria-label", "Пауза или продолжение музыки")
+                                    .text_signal(state.presentation_paused.signal().map(|paused| if paused { "Продолжить музыку" } else { "Пауза музыки" }))
+                                    .event(clone!(state => move |_: events::Click| toggle_presentation_pause(state.clone())))
+                                }))
+                                .child(html!("button", {
+                                    .class("secondary")
+                                    .attr("type", "button")
+                                    .attr("aria-label", "Включить или выключить звук")
+                                    .text_signal(state.music_muted.signal().map(|muted| if muted { "Включить звук" } else { "Выключить звук" }))
+                                    .event(clone!(state => move |_: events::Click| toggle_music_mute(state.clone())))
+                                }))
+                                .child(html!("label", {
+                                    .class("volume-control")
+                                    .text("Громкость")
+                                    .child(html!("input", {
+                                        .attr("type", "range")
+                                        .attr("min", "0")
+                                        .attr("max", "1")
+                                        .attr("step", "0.05")
+                                        .attr("aria-label", "Громкость музыки")
+                                        .property("value", &state.music_volume.get().to_string())
+                                        .event(clone!(state => move |event: events::Input| {
+                                            if let Some(target) = event.target() {
+                                                if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
+                                                    set_music_volume(&state, input.value_as_number());
+                                                }
+                                            }
+                                        }))
+                                    }))
+                                }))
+                            }))
+                            .child(html!("div", {
+                                .class("presentation-footer-controls")
+                                .child(html!("button", {
+                                    .class("secondary")
+                                    .attr("type", "button")
+                                    .text("Повторить")
+                                    .event(clone!(state => move |_: events::Click| {
+                                        set_presentation_index(&state, 0);
+                                        state.presentation_paused.set(false);
+                                        play_presentation_audio(state.clone());
+                                    }))
+                                }))
+                                .child(html!("button", {
+                                    .class("primary")
+                                    .attr("type", "button")
+                                    .text("Вернуться к ёлке")
+                                    .event(clone!(state => move |_: events::Click| exit_presentation(state.clone())))
+                                }))
+                            }))
+                            .child(html!("p", {
+                                .class("audio-attribution")
+                                .text("Музыка: ")
+                                .child(html!("a", {
+                                    .attr("href", "https://commons.wikimedia.org/wiki/File:Jingle_Bells.ogg")
+                                    .attr("target", "_blank")
+                                    .attr("rel", "noopener noreferrer")
+                                    .text("Jingle Bells — Kevin MacLeod")
+                                }))
+                                .child(html!("span", {.text(" · CC BY 3.0")}))
+                            }))
+                        }))
+                    })))
+                }))
+            }
         })))
     })
 }

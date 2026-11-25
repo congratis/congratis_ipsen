@@ -20,3 +20,21 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{
 .progress-count{flex:none;min-width:54px;padding:5px 10px;border:1px solid #fff5;border-radius:999px;background:#08241de8;color:#fff5dc;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;text-shadow:0 1px 2px #000}
 @media(max-width:600px){.tree-progress{left:10px;right:10px;bottom:8px}.progress-content{gap:7px}.candy-track{height:15px}.progress-count{min-width:46px;padding:4px 7px;font-size:10px}}
 @media(prefers-reduced-motion:reduce){.candy-fill{transition:none}}
+
+.tree-progress{pointer-events:none}
+.presentation-launch{pointer-events:auto;flex:none;border:1px solid #f8e9c4aa;border-radius:999px;padding:8px 13px;background:linear-gradient(120deg,#f0d58d,#c69a4c);color:#24352a;font-weight:800;font-size:12px;box-shadow:0 3px 12px #0008}
+.ornament.presenting{outline:3px solid #fff4a8;outline-offset:4px;filter:brightness(1.35);z-index:5;animation:presentation-glow 1.6s ease-in-out infinite alternate}
+@keyframes presentation-glow{to{box-shadow:0 0 18px #ffe7a0,0 0 30px #f2c96d}}
+.presentation-overlay{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;padding:20px;background:radial-gradient(ellipse at 50% 20%,#205644f5,#061a16f7 72%);backdrop-filter:blur(12px)}
+.presentation-card{width:min(100%,760px);max-height:92vh;overflow-y:auto;padding:clamp(24px,5vw,52px);border:1px solid #e8c77b88;border-radius:26px;background:linear-gradient(145deg,#174336f5,#071e19f8);box-shadow:0 28px 100px #000b;text-align:center}
+.presentation-card h2{font:600 clamp(30px,5vw,48px)/1.12 'Playfair Display',serif;color:var(--gold);margin:18px 0}
+.presentation-message{max-height:38vh;overflow-y:auto;overflow-wrap:anywhere;white-space:pre-wrap;color:#fff5dc;font-size:clamp(17px,2.2vw,22px);line-height:1.7;margin:22px auto;max-width:620px}
+.presentation-counter{color:#c3d5c9;font-size:13px;font-variant-numeric:tabular-nums;margin:14px 0}
+.presentation-controls,.presentation-audio-controls,.presentation-footer-controls{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:16px}
+.presentation-controls .secondary,.presentation-audio-controls .secondary,.presentation-footer-controls .secondary{padding:10px 16px}
+.volume-control{display:flex;align-items:center;gap:9px;margin:0;color:#e6d8b7;font-size:12px}
+.volume-control input{width:112px;margin:0;padding:0;accent-color:var(--gold)}
+.audio-attribution{margin:22px 0 0;color:#9fb6a8;font-size:11px}
+.audio-attribution a{color:var(--gold)}
+@media(max-width:600px){.presentation-overlay{padding:10px}.presentation-card{padding:28px 16px 20px;border-radius:18px}.presentation-message{max-height:34vh}.presentation-audio-controls{gap:7px}.presentation-audio-controls .secondary{font-size:11px;padding:9px 11px}.volume-control{width:100%;justify-content:center;margin-top:4px}.volume-control input{width:140px}}
+@media(prefers-reduced-motion:reduce){.ornament.presenting{animation:none}}
