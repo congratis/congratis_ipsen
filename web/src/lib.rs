@@ -148,7 +148,7 @@ fn participant_tree(state: AppState) -> Dom {
         }))
         .child(html!("div", {.class("note").text_signal(state.note.signal_cloned())}))
         .child(html!("footer", {.text("С теплом и верой в маленькие чудеса ✨")}))
-        .child_signal(state.selected.signal_cloned().map(|selected| selected.map(|g| html!("div", {
+        .child_signal(state.selected.signal_cloned().map(clone!(state => move |selected| selected.map(|g| html!("div", {
             .class("overlay").event(clone!(state => move |event: events::Click| { if event.target()==event.current_target(){state.selected.set(None);} }))
             .child(html!("section", {.class("dialog")
                 .child(html!("button", {.class("close").text("×").event(clone!(state => move |_| state.selected.set(None)))}))
