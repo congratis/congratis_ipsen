@@ -477,31 +477,101 @@ fn admin_login(state: AppState) -> Dom {
         }))
     })
 }
-fn render(state: AppState) -> Dom {
-    html!("div", {.child_signal(state.user.signal_cloned().map(clone!(state => move |user| {
-        if let Some(user)=user {
-            if user.role=="admin" {
-                let is_admin=web_sys::window().map(|w|w.location().hash().unwrap_or_default().contains("/admin")).unwrap_or(false);
-                if is_admin { admin_screen(state.clone()) } else { participant_tree(state.clone()) }
-            } else { participant_tree(state.clone()) }
-        } else {
-            let hash=web_sys::window().map(|w|w.location().hash().unwrap_or_default()).unwrap_or_default();
-            if hash.starts_with("#invite=") {
-                let token=hash.trim_start_matches("#invite=").to_string();
-                if let Some(w)=web_sys::window(){if let Ok(history)=w.history(){let _=history.replace_state_with_url(&wasm_bindgen::JsValue::NULL,"","/");}}
-                let s=state.clone();
-                spawn_local(async move {
-                    match post_json::<User>("/api/auth/participant/exchange",&serde_json::json!({"token":token}),None).await {
-                        Ok(user)=>{s.user.set(Some(user));load_greetings(s.clone()).await;connect_events(s);}
-                        Err(e)=>set_note(&s,format!("Не удалось активировать приглашение: {e}"))
-                    }
-                });
-                html!("main", {.class("shell").child(html!("h1", {.text("Открываем твоё приглашение…")})).child(html!("p", {.class("note").text_signal(state.note.signal_cloned())}))})
-            } else if hash.contains("/admin") { admin_login(state.clone()) }
-            else { html!("main", {.class("shell").child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")})).child(html!("h1", {.text("Ёлка добрых ").child(html!("span", {.text("пожеланий")}))})).child(html!("p", {.class("lead").text("Чтобы увидеть общую ёлку, открой персональную ссылку-приглашение.")})).child(html!("button", {.class("primary").text("Вход администратора").event(|_|{if let Some(w)=web_sys::window(){let _=w.location().set_hash("/admin");let _=w.location().reload();}})))}))}) }
-        }
-    })))})
+fn landing_screen() -> Dom {
+    html!("main", {
+        .class("shell")
+        .child(html!("div", {
+            .class("eyebrow")
+            .text("A LITTLE CHRISTMAS MAGIC")
+        }))
+        .child(html!("h1", {
+            .text("Ёлка добрых ")
+            .child(html!("span", {.text("пожеланий")}))
+        }))
+        .child(html!("p", {
+            .class("lead")
+            .text("Чтобы увидеть общую ёлку, открой персональную ссылку-приглашение.")
+        }))
+        .child(html!("button", {
+            .class("primary")
+            .text("Вход администратора")
+            .event(|_| {
+                if let Some(window) = web_sys::window() {
+                    let _ = window.location().set_hash("/admin");
+                    let _ = window.location().reload();
+                }
+            })
+        }))
+    })
 }
+
+fn render(state: AppState) -> Dom {
+    html!("div", {
+        .child_signal(state.user.signal_cloned().map(clone!(state => move |user| {
+            if let Some(user) = user {
+                if user.role == "admin" {
+                    let is_admin = web_sys::window()
+                        .map(|window| window.location().hash().unwrap_or_default().contains("/admin"))
+                        .unwrap_or(false);
+                    if is_admin {
+                        admin_screen(state.clone())
+                    } else {
+                        participant_tree(state.clone())
+                    }
+                } else {
+                    participant_tree(state.clone())
+                }
+            } else {
+                let hash = web_sys::window()
+                    .map(|window| window.location().hash().unwrap_or_default())
+                    .unwrap_or_default();
+                if hash.starts_with("#invite=") {
+                    let token = hash.trim_start_matches("#invite=").to_string();
+                    if let Some(window) = web_sys::window() {
+                        if let Ok(history) = window.history() {
+                            let _ = history.replace_state_with_url(
+                                &wasm_bindgen::JsValue::NULL,
+                                "",
+                                Some("/"),
+                            );
+                        }
+                    }
+                    let current = state.clone();
+                    spawn_local(async move {
+                        let body = serde_json::json!({"token": token});
+                        match post_json::<User>(
+                            "/api/auth/participant/exchange",
+                            &body,
+                            None,
+                        ).await {
+                            Ok(user) => {
+                                current.user.set(Some(user));
+                                load_greetings(current.clone()).await;
+                                connect_events(current);
+                            }
+                            Err(error) => {
+                                set_note(&current, format!("Не удалось активировать приглашение: {error}"));
+                            }
+                        }
+                    });
+                    html!("main", {
+                        .class("shell")
+                        .child(html!("h1", {.text("Открываем твоё приглашение…")}))
+                        .child(html!("p", {
+                            .class("note")
+                            .text_signal(state.note.signal_cloned())
+                        }))
+                    })
+                } else if hash.contains("/admin") {
+                    admin_login(state.clone())
+                } else {
+                    landing_screen()
+                }
+            }
+        })))
+    })
+}
+
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn main() {
     console_error_panic_hook::set_once();
