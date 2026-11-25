@@ -901,6 +901,14 @@ fn admin_screen(state: AppState) -> Dom {
                                         .class("secondary")
                                         .text("Отозвать")
                                         .event(clone!(state => move |_: events::Click| {
+                                            let confirmed = web_sys::window()
+                                                .and_then(|window| window.confirm_with_message(
+                                                    &format!("Отозвать приглашение для шара №{number}? Ссылка перестанет работать.")
+                                                ).ok())
+                                                .unwrap_or(false);
+                                            if !confirmed {
+                                                return;
+                                            }
                                             let csrf = state.csrf();
                                             let current = state.clone();
                                             spawn_local(async move {
