@@ -12,12 +12,15 @@ struct User { subject_id: String, role: String, csrf_token: String }
 struct Greeting { ornament_number: i16, display_name: String, message: String }
 #[derive(Clone, Deserialize)]
 struct Participant { ornament_number: i16, activated: bool, submitted: bool, revoked: bool, display_name: Option<String>, created_at: i64, used_at: Option<i64> }
+#[derive(Clone, Deserialize)]
+struct CampaignSummary { participant_count: usize, submitted_count: usize }
 
 #[derive(Clone)]
 struct AppState {
     user: Mutable<Option<User>>,
     greetings: Mutable<Vec<Greeting>>,
     participants: Mutable<Vec<Participant>>,
+    campaign_count: Mutable<usize>,
     selected: Mutable<Option<Greeting>>,
     name: Mutable<String>,
     message: Mutable<String>,
@@ -29,7 +32,7 @@ struct AppState {
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), selected: Mutable::new(None), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), submitting: Mutable::new(false) }
+        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), campaign_count: Mutable::new(0), selected: Mutable::new(None), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), submitting: Mutable::new(false) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -61,6 +64,40 @@ async fn load_participants(state: AppState) {
         Ok(items) => state.participants.set(items),
         Err(error) => set_note(&state, format!("Не удалось загрузить участников: {error}")),
     }
+}
+async fn load_campaign(state: AppState) {
+    match get_json::<CampaignSummary>("/api/campaign").await {
+        Ok(summary) => state.campaign_count.set(summary.participant_count),
+        Err(error) => set_note(&state, format!("Не удалось загрузить параметры кампании: {error}")),
+    }
+}
+fn ornament_positions(count: usize) -> Vec<(f64, f64)> {
+    const DEFAULT: [(f64, f64); 20] = [
+        (50.2,18.3),(46.2,27.9),(55.1,28.7),(41.5,38.1),(50.5,38.5),
+        (59.1,38.6),(37.7,49.8),(46.5,50.3),(55.2,50.5),(63.8,50.7),
+        (35.9,60.4),(45.0,61.0),(55.3,61.1),(64.5,61.6),(32.3,72.5),
+        (42.7,73.2),(56.0,73.6),(66.0,73.3),(45.4,85.2),(59.7,85.5)
+    ];
+    if count == 20 { return DEFAULT.to_vec(); }
+    let row_capacity = [1usize, 2, 3, 4, 5, 6, 7, 7];
+    let row_y = [17.5, 27.0, 36.5, 46.0, 55.5, 65.0, 74.5, 84.0];
+    let mut remaining = count.min(35);
+    let mut points = Vec::with_capacity(remaining);
+    for (row, capacity) in row_capacity.iter().enumerate() {
+        if remaining == 0 { break; }
+        let columns = remaining.min(*capacity);
+        let half_span = if columns <= 1 { 0.0 } else { 5.0 + row as f64 * 1.9 };
+        for column in 0..columns {
+            let offset = if columns <= 1 {
+                0.0
+            } else {
+                (column as f64 / (columns - 1) as f64) * 2.0 - 1.0
+            };
+            points.push((50.0 + offset * half_span, row_y[row]));
+        }
+        remaining -= columns;
+    }
+    points
 }
 fn connect_events(state: AppState) {
     let Ok(source) = EventSource::new("/api/events") else { return; };
@@ -108,7 +145,7 @@ fn field(label: &'static str, placeholder: &'static str, value: Mutable<String>,
 }
 fn participant_tree(state: AppState) -> Dom {
     let user = state.user.lock_ref().clone().unwrap();
-    let points: [(f64,f64);20] = [(50.2,18.3),(46.2,27.9),(55.1,28.7),(41.5,38.1),(50.5,38.5),(59.1,38.6),(37.7,49.8),(46.5,50.3),(55.2,50.5),(63.8,50.7),(35.9,60.4),(45.0,61.0),(55.3,61.1),(64.5,61.6),(32.3,72.5),(42.7,73.2),(56.0,73.6),(66.0,73.3),(45.4,85.2),(59.7,85.5)];
+    let points = ornament_positions(state.campaign_count.get());
     let is_mine = user.role == "participant";
     let pill_label = if is_mine { format!("Твой шар №{}", user.subject_id) } else { "Режим администратора".to_string() };
     html!("main", {
@@ -154,7 +191,7 @@ fn participant_tree(state: AppState) -> Dom {
             }))
         }))
         .child(html!("div", {.class("tree-frame")
-            .child(html!("img", {.class("tree-art").attr("src","/christmas-tree.webp").attr("alt","Иллюстрированная новогодняя ёлка с двадцатью шарами")}))
+            .child(html!("img", {.class("tree-art").attr("src","/christmas-tree.webp").attr("alt","Иллюстрированная новогодняя ёлка")}))
             .child_signal(state.greetings.signal_cloned().map(clone!(state => move |greeting_snapshot| {
                 Some(html!("div", {.class("hotspots").children(points.iter().enumerate().map(|(index,(x,y))| {
                     let number=(index+1) as i16;
@@ -162,6 +199,7 @@ fn participant_tree(state: AppState) -> Dom {
                     let mine=is_mine && user.subject_id.parse::<i16>().ok()==Some(number);
                     html!("button", {
                         .class("ornament")
+                        .class_signal("dense", futures_signals::signal::always(points.len() > 20))
                         .class_signal("filled", futures_signals::signal::always(greeting.is_some()))
                         .class_signal("mine", futures_signals::signal::always(mine))
                         .style("left", &format!("{x}%")).style("top",&format!("{y}%"))
@@ -311,7 +349,7 @@ fn admin_screen(state: AppState) -> Dom {
         }))
         .child(html!("p", {
             .class("lead")
-            .text("Управление приглашениями и статусом двадцати шаров.")
+            .text("Управление приглашениями и статусом участников кампании.")
         }))
         .child(html!("div", {
             .class("toolbar")
@@ -580,6 +618,7 @@ fn render(state: AppState) -> Dom {
                                     }
                                 }
                                 current.user.set(Some(user));
+                                load_campaign(current.clone()).await;
                                 load_greetings(current.clone()).await;
                                 connect_events(current);
                             }
@@ -618,6 +657,7 @@ pub fn main() {
     spawn_local(async move {
         if let Ok(user)=get_json::<User>("/api/me").await {
             s.user.set(Some(user.clone()));
+            load_campaign(s.clone()).await;
             if user.role=="admin" {load_participants(s.clone()).await;} else {load_greetings(s.clone()).await;connect_events(s.clone());}
         }
     });

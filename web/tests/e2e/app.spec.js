@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 const participant = { subject_id: "1", role: "participant", csrf_token: "csrf-test" };
 const admin = { subject_id: "admin", role: "admin", csrf_token: "csrf-admin" };
 
-async function mockParticipantSession(page, { exchangeStatus = 200 } = {}) {
+async function mockParticipantSession(page, { exchangeStatus = 200, participantCount = 20 } = {}) {
   await page.route("**/api/me", route =>
     route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ message: "Требуется авторизация" }) })
   );
@@ -22,6 +22,13 @@ async function mockParticipantSession(page, { exchangeStatus = 200 } = {}) {
       body: JSON.stringify(participant)
     });
   });
+  await page.route("**/api/campaign", route =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ participant_count: participantCount, submitted_count: 0 })
+    })
+  );
   await page.route("**/api/greetings", route => {
     if (route.request().method() === "GET") {
       return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
@@ -41,6 +48,15 @@ test("successful invite exchange opens the tree and clears the token from the ad
   await expect(page.getByText("Твой шар №1")).toBeVisible();
   await expect(page.locator(".ornament")).toHaveCount(20);
   await expect.poll(() => page.evaluate(() => location.hash)).toBe("");
+});
+
+test("campaign size from the backend controls the number of ornaments", async ({ page }) => {
+  await mockParticipantSession(page, { participantCount: 35 });
+  await page.goto("/#invite=valid-invite-token");
+
+  await expect(page.locator(".tree-frame")).toBeVisible();
+  await expect(page.locator(".ornament")).toHaveCount(35);
+  await expect(page.locator(".ornament.dense")).toHaveCount(35);
 });
 
 test("failed invite exchange keeps the invitation token available for retry", async ({ page }) => {
