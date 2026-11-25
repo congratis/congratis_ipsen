@@ -439,6 +439,13 @@ test("greeting viewer navigates in deterministic ornament order and exposes dial
 
   const dialog = page.getByRole("dialog", { name: "С теплом, Анна" });
   await expect(dialog).toBeVisible();
+  const close = dialog.getByRole("button", { name: "Закрыть поздравление" });
+  const returnButton = dialog.getByRole("button", { name: "Вернуться к ёлке" });
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(returnButton).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(close).toBeFocused();
   await expect(dialog.getByText("Поздравление 1 из 2")).toBeVisible();
   await expect(dialog.getByText("Счастья и здоровья!")).toBeVisible();
 
@@ -449,6 +456,9 @@ test("greeting viewer navigates in deterministic ornament order and exposes dial
 
   await page.getByRole("dialog").getByRole("button", { name: "Предыдущее поздравление" }).click();
   await expect(page.getByRole("dialog", { name: "С теплом, Анна" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Шар номер 1", exact: true })).toBeFocused();
 });
 
 test("campaign summary drives the accessible candy cane progress indicator", async ({ page }) => {
