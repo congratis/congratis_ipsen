@@ -29,7 +29,7 @@ async function mockParticipantSession(page, { exchangeStatus = 200 } = {}) {
     return route.continue();
   });
   await page.route("**/api/events", route =>
-    route.fulfill({ status: 200, contentType: "text/event-stream", body: ": connected\\n\\n" })
+    route.fulfill({ status: 200, contentType: "text/event-stream", body: ": connected\n\n" })
   );
 }
 
@@ -160,7 +160,7 @@ test("participant receives a published greeting through the SSE stream", async (
       status: 200,
       contentType: "text/event-stream",
       headers: { "cache-control": "no-cache", connection: "keep-alive" },
-      body: 'event: greeting\\ndata: {"ornament_number":2,"display_name":"Мария","message":"Счастья и радости!"}\\n\\n'
+      body: 'event: greeting\ndata: {"ornament_number":2,"display_name":"Мария","message":"Счастья и радости!"}\n\n'
     })
   );
 
