@@ -561,8 +561,7 @@ fn render(state: AppState) -> Dom {
                     .unwrap_or_default();
                 if hash.starts_with("#invite=") {
                     let token = hash.trim_start_matches("#invite=").to_string();
-                    if let Some(window) = web_sys::window() {
-                        let current = state.clone();
+                    let current = state.clone();
                     spawn_local(async move {
                         let body = serde_json::json!({"token": token});
                         match post_json::<User>(
