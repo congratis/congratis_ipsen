@@ -73,8 +73,8 @@ test("participant can submit a greeting only once even after a rapid double clic
   await page.getByRole("button", { name: "Шар номер 1", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Добавь своё пожелание" })).toBeVisible();
 
-  await page.getByLabel("Как тебя зовут?").locator("input").fill("Алексей");
-  await page.getByLabel("Твоё поздравление").locator("textarea").fill("Счастья и добра в новом году!");
+  await page.getByRole("textbox", { name: "Как тебя зовут?", exact: true }).fill("Алексей");
+  await page.getByRole("textbox", { name: "Твоё поздравление", exact: true }).fill("Счастья и добра в новом году!");
   const submit = page.getByRole("button", { name: "Опубликовать поздравление" });
   await submit.click();
   await submit.click();
