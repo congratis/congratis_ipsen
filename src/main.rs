@@ -1,4 +1,4 @@
-use argon2::{Argon2, PasswordHash, PasswordVerifier};
+use argon2::{password_hash::{PasswordHash, PasswordVerifier}, Argon2};
 use axum::{
     extract::State,
     http::{header, HeaderMap, HeaderValue, StatusCode},

@@ -1,4 +1,4 @@
-use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
+use argon2::{password_hash::{PasswordHasher, SaltString}, Argon2};
 use rand::{rngs::OsRng, RngCore};
 use std::env;
 
