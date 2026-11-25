@@ -593,6 +593,7 @@ fn participant_tree(state: AppState) -> Dom {
                         clone!(state => move |event: events::KeyDown| {
                             match event.key().as_str() {
                                 "Escape" => {
+                                    web_sys::console::log_1(&"ESCAPE HANDLER CALLED".into());
                                     event.prevent_default();
                                     state.selected.set(None);
                                     restore_dialog_focus(&state);
