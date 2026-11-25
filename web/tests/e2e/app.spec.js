@@ -211,11 +211,55 @@ test("admin can revoke an unused invitation and the participant list reflects th
   await expect(page.getByRole("heading", { name: /Панель администратора/ })).toBeVisible();
   await expect(page.getByText("Ожидает участника")).toBeVisible();
 
+  page.once("dialog", async dialog => {
+    expect(dialog.type()).toBe("confirm");
+    expect(dialog.message()).toContain("шар №1");
+    await dialog.accept();
+  });
   await page.getByRole("button", { name: "Отозвать" }).click();
 
   await expect(page.getByText("Приглашение отозвано")).toBeVisible();
   await expect(page.getByRole("button", { name: "Отозвать" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Перевыпустить ссылку" })).toHaveCount(0);
+});
+
+
+test("admin can cancel invitation revocation without changing its status", async ({ page }) => {
+  await page.route("**/api/me", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(admin) })
+  );
+  let revokeRequests = 0;
+  await page.route("**/api/admin/participants", route =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{
+        ornament_number: 1,
+        activated: false,
+        submitted: false,
+        revoked: false,
+        display_name: null,
+        created_at: 0,
+        used_at: null
+      }])
+    })
+  );
+  await page.route("**/api/admin/invitations/1/revoke", async route => {
+    revokeRequests += 1;
+    await route.fulfill({ status: 204 });
+  });
+
+  await page.goto("/#/admin");
+  await expect(page.getByText("Ожидает участника")).toBeVisible();
+  page.once("dialog", async dialog => {
+    expect(dialog.type()).toBe("confirm");
+    await dialog.dismiss();
+  });
+  await page.getByRole("button", { name: "Отозвать" }).click();
+
+  await expect(page.getByText("Ожидает участника")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Отозвать" })).toBeVisible();
+  expect(revokeRequests).toBe(0);
 });
 
 
