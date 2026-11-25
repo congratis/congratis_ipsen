@@ -25,8 +25,6 @@ server {
     http2 on;
     server_name ${DOMAIN} www.${DOMAIN};
 
-    root /usr/share/nginx/html;
-    index index.html;
     client_max_body_size 1m;
 
     ssl_certificate ${CERT_ROOT}/live/${DOMAIN}/fullchain.pem;
@@ -75,6 +73,11 @@ server {
     }
 
     location / {
-        try_files $uri $uri/ /index.html;
+        proxy_pass http://congratis_app;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
