@@ -302,9 +302,7 @@ test("admin can create a campaign with a selected participant count and receive 
   await page.route("**/api/campaign", route =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ participant_count: 0, submitted_count: 0 }) })
   );
-  await page.route("**/api/admin/participants", route =>
-    route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
-  );
+  let participantReads = 0;
   let submittedCount = 0;
   await page.route("**/api/admin/campaign", async route => {
     const request = route.request();
@@ -323,16 +321,18 @@ test("admin can create a campaign with a selected participant count and receive 
       ])
     });
   });
-  await page.route("**/api/admin/participants", route =>
-    route.fulfill({
+  await page.route("**/api/admin/participants", route => {
+    participantReads += 1;
+    const participants = participantReads === 1 ? [] : Array.from({ length: 3 }, (_, index) => ({
+      ornament_number: index + 1, activated: false, submitted: false, revoked: false,
+      display_name: null, created_at: 0, used_at: null
+    }));
+    return route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(Array.from({ length: 3 }, (_, index) => ({
-        ornament_number: index + 1, activated: false, submitted: false, revoked: false,
-        display_name: null, created_at: 0, used_at: null
-      })))
-    })
-  );
+      body: JSON.stringify(participants)
+    });
+  });
 
   await page.goto("/#/admin");
   await expect(page.getByRole("heading", { name: "Создать новогоднюю кампанию" })).toBeVisible();
