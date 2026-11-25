@@ -171,7 +171,7 @@ Only after both checks succeed, set `TLS_PROVIDER=globalsign` in `.env`, then re
 
 ```bash
 cd /opt/congratis
-docker compose up -d --no-deps nginx
+docker compose up -d --build --no-deps nginx
 docker compose exec nginx nginx -t
 curl -fsS https://congratis.online/api/health
 curl -fsS https://www.congratis.online/api/health
