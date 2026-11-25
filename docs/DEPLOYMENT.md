@@ -105,6 +105,17 @@ Set the following production values in `.env`:
 
 Do not add a certificate email or any Certbot settings. Never print or share `.env`.
 
+For an existing production checkout that still has the old `TLS_PROVIDER=globalsign` setting, migrate the variable before recreating Nginx:
+
+```bash
+cd /opt/congratis
+sed -i '/^TLS_PROVIDER=/d; /^TLS_MODE=/d' .env
+printf '\\nTLS_MODE=globalsign\\n' >> .env
+grep -n '^TLS_MODE=' .env
+```
+
+The output must show exactly `TLS_MODE=globalsign`. This edits only the TLS mode setting and does not print secrets.
+
 Generate the Argon2id hash using the built image:
 
 ```bash
