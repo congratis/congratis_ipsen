@@ -145,7 +145,6 @@ fn field(label: &'static str, placeholder: &'static str, value: Mutable<String>,
 }
 fn participant_tree(state: AppState) -> Dom {
     let user = state.user.lock_ref().clone().unwrap();
-    let points = ornament_positions(state.campaign_count.get());
     let is_mine = user.role == "participant";
     let pill_label = if is_mine { format!("Твой шар №{}", user.subject_id) } else { "Режим администратора".to_string() };
     html!("main", {
@@ -193,6 +192,7 @@ fn participant_tree(state: AppState) -> Dom {
         .child(html!("div", {.class("tree-frame")
             .child(html!("img", {.class("tree-art").attr("src","/christmas-tree.webp").attr("alt","Иллюстрированная новогодняя ёлка")}))
             .child_signal(state.greetings.signal_cloned().map(clone!(state => move |greeting_snapshot| {
+                let points = ornament_positions(state.campaign_count.get());
                 Some(html!("div", {.class("hotspots").children(points.iter().enumerate().map(|(index,(x,y))| {
                     let number=(index+1) as i16;
                     let greeting=greeting_snapshot.iter().find(|g|g.ornament_number==number).cloned();
