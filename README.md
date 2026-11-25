@@ -32,7 +32,7 @@
 
 ## Важное ограничение
 
-Текущая ветка `feat/dominator-spa` содержит RethinkDB, атомарное погашение приглашений, Changefeed/SSE и Nginx в Docker. Для production-развёртывания используйте Ubuntu 24.04 LTS; установите Docker Engine скриптом `deploy/scripts/install-docker-ubuntu.sh`. Перед реальным запуском укажите домен, настройте DNS и firewall, получите Let's Encrypt сертификат и завершите production smoke-test. Не публикуйте RethinkDB или порт приложения напрямую.
+Текущая ветка `feat/dominator-spa` содержит RethinkDB, атомарное погашение приглашений, Changefeed/SSE и Nginx в Docker. Для production-развёртывания используйте Ubuntu 26.04 LTS; установите Docker Engine скриптом `deploy/scripts/install-docker-ubuntu.sh`. Перед реальным запуском укажите домен, настройте DNS и firewall, получите Let's Encrypt сертификат и завершите production smoke-test. Не публикуйте RethinkDB или порт приложения напрямую.
 
 Не коммитьте `.env` или файл с приглашениями. Первый выпуск TLS: `bash deploy/scripts/issue-certificate.sh`. Автоматическое продление настраивается systemd unit/timer из `deploy/systemd/`.
 
