@@ -168,7 +168,9 @@ jobs:
       - name: Validate deployment scripts
         run: bash -n deploy/scripts/*.sh && sh -n deploy/nginx/entrypoint.sh
       - name: Prepare Compose validation environment
-        run: cp .env.example .env
+        run: |
+          cp .env.example .env
+          sed -i 's/^COOKIE_SECURE=.*/COOKIE_SECURE=false/' .env
       - name: Validate production Compose configuration
         run: docker compose config --quiet
       - name: Build Nginx edge image
@@ -193,7 +195,7 @@ jobs:
       github.event_name == 'push' && github.ref == 'refs/heads/main' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule' ||
-      github.event_name == 'pull_request' && github.base_ref == 'main' && needs.changes.outputs.infrastructure == 'true'
+      github.event_name == 'pull_request' && github.base_ref == 'main' && (needs.changes.outputs.infrastructure == 'true' || needs.changes.outputs.backend == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -216,12 +218,16 @@ jobs:
           docker compose up -d nginx
           for attempt in $(seq 1 30); do
             if docker compose exec -T nginx wget -q -O /dev/null http://127.0.0.1/api/health; then
-              exit 0
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker compose logs nginx app rethinkdb
+              exit 1
             fi
             sleep 2
           done
-          docker compose logs nginx app rethinkdb
-          exit 1
+      - name: Exercise real backend HTTP API
+        run: bash deploy/scripts/smoke-test-api.sh
       - name: Stop Compose stack
         if: always()
         run: if [ -f .env ]; then docker compose down --volumes --remove-orphans; fi
