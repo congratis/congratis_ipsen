@@ -12,3 +12,11 @@ button,input,textarea{font:inherit}button{cursor:pointer}.shell{width:min(1120px
 button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
 @media(max-width:480px){.dialog{padding:38px 18px 22px}.greeting-navigation{gap:6px}.greeting-navigation .secondary{padding:9px 10px;font-size:12px}.greeting-counter{font-size:11px}}
 @media(prefers-reduced-motion:reduce){body:before{animation:none}*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
+
+.tree-progress{position:absolute;z-index:4;left:clamp(12px,5%,44px);right:clamp(12px,5%,44px);bottom:clamp(10px,2.2%,20px);pointer-events:none}
+.progress-content{display:flex;align-items:center;gap:12px}
+.candy-track{height:19px;flex:1;min-width:0;padding:2px;border:1px solid #fff9;border-radius:999px;background:#08241dcc;box-shadow:0 3px 12px #0009,inset 0 1px 3px #0009;overflow:hidden}
+.candy-fill{height:100%;border-radius:999px;background:repeating-linear-gradient(45deg,#fff8e8 0 7px,#c93648 7px 14px);box-shadow:0 0 8px #fff5;transition:width .55s ease}
+.progress-count{flex:none;min-width:54px;padding:5px 10px;border:1px solid #fff5;border-radius:999px;background:#08241de8;color:#fff5dc;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;text-shadow:0 1px 2px #000}
+@media(max-width:600px){.tree-progress{left:10px;right:10px;bottom:8px}.progress-content{gap:7px}.candy-track{height:15px}.progress-count{min-width:46px;padding:4px 7px;font-size:10px}}
+@media(prefers-reduced-motion:reduce){.candy-fill{transition:none}}
