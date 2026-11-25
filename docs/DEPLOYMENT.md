@@ -34,8 +34,8 @@ Run commands from the repository directory:
 
     cd /opt/congratis
     git fetch origin
-    git switch feat/rethinkdb-sse
-    git pull --ff-only origin feat/rethinkdb-sse
+    git switch feat/dominator-spa
+    git pull --ff-only origin feat/dominator-spa
     cp -n .env.example .env
     chmod 600 .env
 
@@ -124,7 +124,7 @@ The service expects the repository at /opt/congratis.
     docker compose exec nginx nginx -t
 
     # Update after reviewing the Git changes
-    git pull --ff-only origin feat/rethinkdb-sse
+    git pull --ff-only origin feat/dominator-spa
     docker compose up -d --build
 
 RethinkDB data is stored in the named rethinkdb_data volume. Back up the database regularly using RethinkDB dump/restore tools and test restoring to a separate temporary instance. Securely back up .env and the Let's Encrypt volume as well.

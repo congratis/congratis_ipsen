@@ -32,14 +32,14 @@
 
 ## Важное ограничение
 
-Ветка `feat/rethinkdb-sse` содержит RethinkDB, атомарное погашение приглашений, Changefeed/SSE и Nginx в Docker. Для production-развёртывания используйте Ubuntu 26.04 LTS; установите Docker Engine скриптом `deploy/scripts/install-docker-ubuntu.sh`. Перед реальным запуском укажите домен, настройте DNS и firewall, получите Let's Encrypt сертификат и завершите production smoke-test. Не публикуйте RethinkDB или порт приложения напрямую.
+Текущая ветка `feat/dominator-spa` содержит RethinkDB, атомарное погашение приглашений, Changefeed/SSE и Nginx в Docker. Для production-развёртывания используйте Ubuntu 26.04 LTS; установите Docker Engine скриптом `deploy/scripts/install-docker-ubuntu.sh`. Перед реальным запуском укажите домен, настройте DNS и firewall, получите Let's Encrypt сертификат и завершите production smoke-test. Не публикуйте RethinkDB или порт приложения напрямую.
 
 Не коммитьте `.env` или файл с приглашениями. Первый выпуск TLS: `bash deploy/scripts/issue-certificate.sh`. Автоматическое продление настраивается systemd unit/timer из `deploy/systemd/`.
 
 Подробности — [ADR RethinkDB](docs/ADR-RETHINKDB-REALTIME.md) и [Deployment](docs/DEPLOYMENT.md).
 
 
-## Backend authentication API (frontend integration is a separate step)
+## Backend authentication API and frontend
 
 The backend uses role-based sessions. Participant invitation tokens are exchanged once at `POST /api/auth/participant/exchange`; the raw token is sent in the JSON body, never in a query string. The response sets an HttpOnly session cookie and a readable CSRF cookie. Send the CSRF cookie value in the `X-CSRF-Token` header for state-changing authenticated requests.
 
@@ -54,4 +54,4 @@ Authenticated endpoints:
 - `POST /api/admin/invitations/{number}/reissue` — rotate an unactivated invitation; returns the new raw token once.
 - `POST /api/admin/invitations/{number}/revoke` — revoke an unactivated invitation.
 
-`/api/health` remains public and returns only service availability. The existing frontend has deliberately not been adapted yet; frontend work follows after backend validation.
+`/api/health` remains public and returns only service availability. The Dominator/WASM frontend uses these endpoints for participant and administrator flows; browser tests cover invitation activation, greeting submission, admin invitation management, mobile layout and SSE updates.

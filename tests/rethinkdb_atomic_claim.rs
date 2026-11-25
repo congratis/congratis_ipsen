@@ -18,10 +18,22 @@ async fn concurrent_redemption_claims_invitation_exactly_once() {
     let hash = token_hash(&token);
 
     // The CI job uses a dedicated, disposable database for this test.
+    let mut invitations = vec![(1, hash.clone())];
+    for number in 2..=35 {
+        invitations.push((number, token_hash(&format!("{token}-{number}"))));
+    }
+    assert!(
+        store.insert_invitations(&[(36, token_hash("out-of-range"))]).await.is_err(),
+        "a campaign must reject more than 35 participants"
+    );
     store
-        .insert_invitations(&[(1, hash.clone())])
+        .insert_invitations(&invitations)
         .await
-        .expect("seed one invitation");
+        .expect("seed a 35-participant campaign");
+    assert_eq!(
+        store.list_participants().await.expect("list campaign participants").len(),
+        35
+    );
 
     let (first, second) = tokio::join!(
         store.claim_invitation(&hash, "First", "First concurrent greeting"),
