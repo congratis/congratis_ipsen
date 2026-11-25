@@ -78,11 +78,7 @@ request 204 --request POST "$BASE_URL/api/auth/logout" \
   --header "X-CSRF-Token: $csrf" --cookie "$COOKIE_JAR"
 request 401 "$BASE_URL/api/me" --cookie "$COOKIE_JAR"
 
-echo "Configuring a disposable administrator credential..."
 admin_password='CI-Only-Admin-Password-2026'
-admin_hash="$(docker compose run --rm -T -e ADMIN_PASSWORD="$admin_password" app hash-admin-password)"
-sed -i "s|^ADMIN_PASSWORD_HASH=.*|ADMIN_PASSWORD_HASH=$admin_hash|" .env
-
 echo "Authenticating administrator and checking management endpoints..."
 admin_payload="$(jq -cn --arg username admin --arg password "$admin_password" '{username:$username,password:$password}')"
 request 200 --request POST "$BASE_URL/api/auth/admin/login" \
