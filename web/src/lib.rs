@@ -486,6 +486,24 @@ fn participant_tree(state: AppState) -> Dom {
             } else {
                 Some(html!("div", {
                     .class("presentation-overlay")
+                    .event(clone!(state => move |event: events::Click| {
+                        if let Some(target) = event.target() {
+                            if let Ok(element) = target.dyn_into::<web_sys::Element>() {
+                                match element.get_attribute("data-presentation-action").as_deref() {
+                                    Some("previous") => {
+                                        let current = state.presentation_index.get();
+                                        if current > 0 { set_presentation_index(&state, current - 1); }
+                                    }
+                                    Some("next") => {
+                                        let current = state.presentation_index.get();
+                                        let total = state.greetings.lock_ref().len();
+                                        if current < total { set_presentation_index(&state, current + 1); }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }))
                     .child_signal(state.presentation_index.signal().map(clone!(state => move |index| {
                         let greetings = state.greetings.get_cloned();
                         let count = greetings.len();
@@ -534,11 +552,8 @@ fn participant_tree(state: AppState) -> Dom {
                                         .class("secondary")
                                         .attr("type", "button")
                                         .attr("aria-label", "Предыдущее поздравление")
+                                        .attr("data-presentation-action", "previous")
                                         .text("← Назад")
-                                        .event(clone!(state => move |_: events::Click| {
-                                            let current = state.presentation_index.get();
-                                            if current > 0 { set_presentation_index(&state, current - 1); }
-                                        }))
                                     })
                                 } else {
                                     html!("button", {
@@ -553,12 +568,8 @@ fn participant_tree(state: AppState) -> Dom {
                                         .class("secondary")
                                         .attr("type", "button")
                                         .attr("aria-label", "Следующее поздравление")
+                                        .attr("data-presentation-action", "next")
                                         .text("Вперёд →")
-                                        .event(clone!(state => move |_: events::Click| {
-                                            let current = state.presentation_index.get();
-                                            let total = state.greetings.lock_ref().len();
-                                            if current < total { set_presentation_index(&state, current + 1); }
-                                        }))
                                     })
                                 } else {
                                     html!("button", {
