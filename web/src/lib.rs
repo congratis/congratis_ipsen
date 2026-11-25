@@ -21,6 +21,7 @@ struct AppState {
     greetings: Mutable<Vec<Greeting>>,
     participants: Mutable<Vec<Participant>>,
     campaign_count: Mutable<usize>,
+    submitted_count: Mutable<usize>,
     selected: Mutable<Option<Greeting>>,
     name: Mutable<String>,
     message: Mutable<String>,
@@ -32,7 +33,7 @@ struct AppState {
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), campaign_count: Mutable::new(0), selected: Mutable::new(None), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), submitting: Mutable::new(false) }
+        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), submitting: Mutable::new(false) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -70,7 +71,10 @@ async fn load_participants(state: AppState) {
 }
 async fn load_campaign(state: AppState) {
     match get_json::<CampaignSummary>("/api/campaign").await {
-        Ok(summary) => state.campaign_count.set(summary.participant_count),
+        Ok(summary) => {
+            state.campaign_count.set(summary.participant_count);
+            state.submitted_count.set(summary.submitted_count);
+        },
         Err(error) => set_note(&state, format!("Не удалось загрузить параметры кампании: {error}")),
     }
 }
@@ -113,6 +117,9 @@ fn connect_events(state: AppState) {
                     if let Some(old) = all.iter_mut().find(|g| g.ornament_number == greeting.ornament_number) { *old = greeting; }
                     else { all.push(greeting); }
                     all.sort_by_key(|item| item.ornament_number);
+                    let submitted_count = all.len();
+                    drop(all);
+                    greeting_state.submitted_count.set(submitted_count);
                 }
             }
         }
@@ -122,10 +129,25 @@ fn connect_events(state: AppState) {
     let resync_state = state.clone();
     let resync_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
         let state = resync_state.clone();
-        spawn_local(async move { load_greetings(state).await; });
+        spawn_local(async move {
+            load_greetings(state.clone()).await;
+            load_campaign(state).await;
+        });
     });
     let _ = source.add_event_listener_with_callback("resync", resync_handler.as_ref().unchecked_ref());
     resync_handler.forget();
+    // EventSource fires "open" both on the initial connection and after reconnects.
+    // Reconcile against the API so a missed SSE notification cannot leave stale progress.
+    let open_state = state.clone();
+    let open_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+        let state = open_state.clone();
+        spawn_local(async move {
+            load_greetings(state.clone()).await;
+            load_campaign(state).await;
+        });
+    });
+    let _ = source.add_event_listener_with_callback("open", open_handler.as_ref().unchecked_ref());
+    open_handler.forget();
     std::mem::forget(source);
 }
 fn field(label: &'static str, placeholder: &'static str, value: Mutable<String>, is_textarea: bool) -> Dom {
@@ -216,6 +238,36 @@ fn participant_tree(state: AppState) -> Dom {
                         }))
                     })
                 }))}))
+            })))
+            .child_signal(state.campaign_count.signal().map(clone!(state => move |participant_count| {
+                Some(html!("div", {
+                    .class("tree-progress")
+                    .child_signal(state.submitted_count.signal().map(move |submitted_count| {
+                        let safe_submitted = submitted_count.min(participant_count);
+                        let percent = if participant_count == 0 { 0.0 } else {
+                            safe_submitted as f64 / participant_count as f64 * 100.0
+                        };
+                        Some(html!("div", {
+                            .class("progress-content")
+                            .child(html!("div", {
+                                .class("candy-track")
+                                .attr("role", "progressbar")
+                                .attr("aria-label", "Опубликованные поздравления")
+                                .attr("aria-valuemin", "0")
+                                .attr("aria-valuemax", &participant_count.to_string())
+                                .attr("aria-valuenow", &safe_submitted.to_string())
+                                .child(html!("div", {
+                                    .class("candy-fill")
+                                    .style("width", &format!("{percent:.2}%"))
+                                }))
+                            }))
+                            .child(html!("span", {
+                                .class("progress-count")
+                                .text(&format!("{safe_submitted} / {participant_count}"))
+                            }))
+                        }))
+                    }))
+                }))
             })))
         }))
         .child(html!("div", {.class("legend")
