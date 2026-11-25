@@ -325,6 +325,7 @@ test("presentation mode navigates greetings and supports audio controls and sile
 
   // The last forward action must lead to a distinct finale, not a blank/overflow state.
   await page.getByRole("button", { name: "Следующее поздравление" }).click();
+  console.log("SLIDE_AFTER_NEXT", await page.locator(".presentation-card").innerText(), await page.locator(".presentation-content").getAttribute("class"));
   const finale = page.locator(".presentation-finale");
   await expect(finale).toBeVisible();
   await expect(finale.locator("h2")).toHaveText("С Новым годом!");
