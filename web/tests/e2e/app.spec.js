@@ -180,6 +180,45 @@ test("admin can reissue an invitation and select the resulting URL for copying",
     .toBeGreaterThan(10);
 });
 
+test("admin can revoke an unused invitation and the participant list reflects the change", async ({ page }) => {
+  await page.route("**/api/me", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(admin) })
+  );
+
+  let revoked = false;
+  await page.route("**/api/admin/participants", route =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{
+        ornament_number: 1,
+        activated: false,
+        submitted: false,
+        revoked,
+        display_name: null,
+        created_at: 0,
+        used_at: null
+      }])
+    })
+  );
+  await page.route("**/api/admin/invitations/1/revoke", async route => {
+    expect(route.request().method()).toBe("POST");
+    revoked = true;
+    await route.fulfill({ status: 204 });
+  });
+
+  await page.goto("/#/admin");
+  await expect(page.getByRole("heading", { name: /Панель администратора/ })).toBeVisible();
+  await expect(page.getByText("Ожидает участника")).toBeVisible();
+
+  await page.getByRole("button", { name: "Отозвать" }).click();
+
+  await expect(page.getByText("Приглашение отозвано")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Отозвать" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Перевыпустить ссылку" })).toHaveCount(0);
+});
+
+
 
 test("mobile viewport keeps the tree and all ornaments inside the screen", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
