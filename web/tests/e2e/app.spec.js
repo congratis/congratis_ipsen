@@ -114,29 +114,32 @@ test("failed invite exchange keeps the invitation token available for retry", as
   await expect.poll(() => page.evaluate(() => location.hash)).toBe("#invite=one-time-token");
 });
 
-test("participant draft is saved locally and restored after reopening the invitation", async ({ page }) => {
+test("participant draft is restored from local storage and updated while typing", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("congratis:draft:1", JSON.stringify({
+      display_name: "Мария",
+      message: "Пусть новый год принесёт радость!"
+    }));
+  });
   await mockParticipantSession(page);
   await page.goto("/#invite=valid-invite-token");
   await expect(page.locator(".tree-frame")).toBeVisible();
   await page.getByRole("button", { name: "Шар номер 1", exact: true }).click();
 
-  await page.getByRole("textbox", { name: "Как тебя зовут?", exact: true }).fill("Мария");
-  await page.getByRole("textbox", { name: "Твоё поздравление", exact: true }).fill("Пусть новый год принесёт радость!");
+  const name = page.getByRole("textbox", { name: "Как тебя зовут?", exact: true });
+  const message = page.getByRole("textbox", { name: "Твоё поздравление", exact: true });
+  await expect(name).toHaveValue("Мария");
+  await expect(message).toHaveValue("Пусть новый год принесёт радость!");
 
+  await name.fill("Иван");
+  await message.fill("Здоровья и исполнения желаний!");
   const draft = await page.evaluate(() => JSON.parse(localStorage.getItem("congratis:draft:1")));
   expect(draft).toEqual({
-    display_name: "Мария",
-    message: "Пусть новый год принесёт радость!"
+    display_name: "Иван",
+    message: "Здоровья и исполнения желаний!"
   });
-
-  // Simulate reopening the same invitation after a reload/navigation.
-  await page.goto("/#invite=valid-invite-token");
-  await expect(page.locator(".tree-frame")).toBeVisible();
-  await page.getByRole("button", { name: "Шар номер 1", exact: true }).click();
-  await expect(page.getByRole("textbox", { name: "Как тебя зовут?", exact: true })).toHaveValue("Мария");
-  await expect(page.getByRole("textbox", { name: "Твоё поздравление", exact: true }))
-    .toHaveValue("Пусть новый год принесёт радость!");
 });
+
 
 test("Escape closes the greeting form without discarding its saved draft", async ({ page }) => {
   await mockParticipantSession(page);
