@@ -213,7 +213,7 @@ test("admin can revoke an unused invitation and the participant list reflects th
 
   page.once("dialog", async dialog => {
     expect(dialog.type()).toBe("confirm");
-    expect(dialog.message()).toContain("шар №1");
+    expect(dialog.message()).toContain("шара №1");
     await dialog.accept();
   });
   await page.getByRole("button", { name: "Отозвать" }).click();
