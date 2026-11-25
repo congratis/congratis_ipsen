@@ -5,8 +5,9 @@
 - Host OS: Ubuntu 26.04 LTS (Resolute), amd64 or arm64.
 - Domain: `congratis.online`.
 - Stack: Rust/Axum + RethinkDB 2.4.4 + Nginx in Docker Compose.
+- Production TLS: manually managed GlobalSign certificate.
 
-Only Nginx publishes host ports 80/443. The Rust app and RethinkDB stay on private Docker networks.
+Only Nginx publishes host ports 80/443. The Rust app and RethinkDB stay on private Docker networks. Certbot and ACME are not part of this deployment.
 
 ## 1. VPS prerequisites
 
@@ -93,7 +94,27 @@ cp -n .env.example .env
 chmod 600 .env
 ```
 
-Set `RETHINKDB_PASSWORD` (long random secret), `DOMAIN=congratis.online`, a real `LETSENCRYPT_EMAIL`, `PUBLIC_BASE_URL=https://congratis.online`, `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH` and `COOKIE_SECURE=true`.
+Set the following production values in `.env`:
+
+- `DOMAIN=congratis.online`
+- `TLS_MODE=globalsign`
+- `PUBLIC_BASE_URL=https://congratis.online`
+- `COOKIE_SECURE=true`
+- a long random `RETHINKDB_PASSWORD`
+- `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH`
+
+Do not add a certificate email or any Certbot settings. Never print or share `.env`.
+
+For an existing production checkout that still has the old `TLS_PROVIDER=globalsign` setting, migrate the variable before recreating Nginx:
+
+```bash
+cd /opt/congratis
+sed -i '/^TLS_PROVIDER=/d; /^TLS_MODE=/d' .env
+printf '\nTLS_MODE=globalsign\n' >> .env
+grep -n '^TLS_MODE=' .env
+```
+
+The output must show exactly `TLS_MODE=globalsign`. This edits only the TLS mode setting and does not print secrets.
 
 Generate the Argon2id hash using the built image:
 
@@ -101,87 +122,66 @@ Generate the Argon2id hash using the built image:
 docker compose run --rm -e ADMIN_PASSWORD='your-long-password' app hash-admin-password
 ```
 
-Put the resulting hash into `ADMIN_PASSWORD_HASH` in `.env`. Do not put the plaintext password there. Never print or share `.env`.
+Put the resulting hash into `ADMIN_PASSWORD_HASH` in `.env`. Do not put the plaintext password there.
 
-## 5. Verify DNS and firewall before TLS
+## 5. Install and verify the GlobalSign certificate
 
-Required records: `congratis.online A` → VPS IPv4; `www.congratis.online CNAME` → `congratis.online`.
+The production certificate and private key are stored outside the repository on the VPS:
 
-```bash
-dig @ns8-l2.nic.ru congratis.online A +norecurse
-dig @ns4-l2.nic.ru congratis.online A +norecurse
-dig @1.1.1.1 congratis.online A
-dig @8.8.8.8 congratis.online A
+```text
+/etc/congratis/tls/live/congratis.online/fullchain.pem
+/etc/congratis/tls/live/congratis.online/privkey.pem
 ```
 
-Do not request a Let's Encrypt certificate until public DNS resolves to this VPS and inbound TCP 80 is reachable.
+The `fullchain.pem` must contain the leaf certificate followed by the intermediate certificate. Do not append the root certificate. Keep the private key out of Git and outside the repository.
 
-## 6. Build and start the HTTP stack
+The certificate must cover both `congratis.online` and `www.congratis.online`. Verify the installed files and key pair before starting or recreating Nginx:
+
+```bash
+sudo test -s /etc/congratis/tls/live/congratis.online/fullchain.pem
+sudo test -s /etc/congratis/tls/live/congratis.online/privkey.pem
+sudo openssl x509 -in /etc/congratis/tls/live/congratis.online/fullchain.pem -noout -subject -issuer -dates -ext subjectAltName
+openssl x509 -in /etc/congratis/tls/live/congratis.online/fullchain.pem -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum
+sudo openssl pkey -in /etc/congratis/tls/live/congratis.online/privkey.pem -pubout -outform DER | sha256sum
+```
+
+The two SHA-256 hashes must be identical. Restrict private-key permissions:
+
+```bash
+sudo chown root:root /etc/congratis/tls/live/congratis.online/privkey.pem
+sudo chmod 600 /etc/congratis/tls/live/congratis.online/privkey.pem
+```
+
+Compose mounts `/etc/congratis/tls` read-only into Nginx at `/etc/globalsign`. Nginx reads the certificate from that mount. GlobalSign DV Free certificates are renewed manually; arrange and install a replacement before the current certificate expires, then validate and reload Nginx. No automatic certificate-renewal service is installed by this project.
+
+## 6. Build and start the stack
+
+First validate the Compose configuration:
 
 ```bash
 cd /opt/congratis
 docker compose config --quiet
-docker compose up -d --build
+```
+
+Build and start the stack:
+
+```bash
+docker compose up -d --build --pull never --remove-orphans
 docker compose ps
 docker compose logs --tail=100 rethinkdb app nginx
-curl -fsS http://congratis.online/api/health
-```
-
-Nginx starts with the HTTP-only bootstrap template when no certificate exists. The health endpoint checks the app's RethinkDB connection; do not continue until it returns HTTP 200.
-
-## 7. Issue the first TLS certificate with Let's Encrypt (optional)
-
-If using Let's Encrypt, after public DNS and HTTP health are confirmed:
-
-```bash
-bash deploy/scripts/issue-certificate.sh
-curl -fsS https://congratis.online/api/health
-```
-
-Certbot uses the shared ACME webroot. Nginx switches to HTTPS after certificate files exist.
-
-## 8. Install a GlobalSign certificate
-
-The Nginx service supports either Let's Encrypt (default) or a manually managed GlobalSign certificate. For the GlobalSign certificate, the server certificate must be concatenated with the intermediate certificate in `fullchain.pem`. Do not append the root certificate. Keep the private key out of Git and outside the repository.
-
-On the VPS, create the certificate directory and install the files with restrictive permissions:
-
-```bash
-sudo install -d -o root -g root -m 700 /etc/congratis/tls/live/congratis.online
-sudo install -o root -g root -m 644 www_congratis_online_2027_06_11.crt /etc/congratis/tls/live/congratis.online/server.crt
-sudo sh -c 'cat /etc/congratis/tls/live/congratis.online/server.crt /path/to/intermediate.crt > /etc/congratis/tls/live/congratis.online/fullchain.pem'
-sudo install -o root -g root -m 600 /path/to/private.key /etc/congratis/tls/live/congratis.online/privkey.pem
-```
-
-Before switching, verify that the private key matches the certificate by comparing the SHA-256 hashes of their public keys:
-
-```bash
-openssl x509 -in /etc/congratis/tls/live/congratis.online/server.crt -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum
-sudo openssl pkey -in /etc/congratis/tls/live/congratis.online/privkey.pem -pubout -outform DER | sha256sum
-```
-
-The two hashes must be identical. Validate the chain and both hostnames:
-
-```bash
-openssl verify -purpose sslserver -verify_hostname congratis.online -CAfile /path/to/root.crt -untrusted /path/to/intermediate.crt /etc/congratis/tls/live/congratis.online/server.crt
-openssl verify -purpose sslserver -verify_hostname www.congratis.online -CAfile /path/to/root.crt -untrusted /path/to/intermediate.crt /etc/congratis/tls/live/congratis.online/server.crt
-```
-
-Only after both checks succeed, set `TLS_PROVIDER=globalsign` in `.env`, then recreate Nginx:
-
-```bash
-cd /opt/congratis
-docker compose up -d --build --no-deps nginx
-docker compose exec nginx nginx -t
 curl -fsS https://congratis.online/api/health
 curl -fsS https://www.congratis.online/api/health
 ```
 
-The certificate covers both `congratis.online` and `www.congratis.online`. Nginx reads it from the host directory mounted read-only at `/etc/globalsign`. The Let's Encrypt volume remains intact; set `TLS_PROVIDER=letsencrypt` to switch back.
+The Nginx container must report healthy and both HTTPS health checks must return HTTP 200. Check the active Nginx configuration with:
 
-GlobalSign DV Free certificates are not renewed by Certbot. Arrange a replacement certificate before 11 June 2027, install its matching key and chain in the same paths, then reload Nginx with `docker compose exec nginx nginx -s reload`. The existing Certbot timer, if enabled, only renews Let's Encrypt certificates.
+```bash
+docker compose exec nginx nginx -t
+```
 
-## 9. Create the campaign and distribute invitations
+For local development without TLS, use `TLS_MODE=http` and `COOKIE_SECURE=false`. Production must use `TLS_MODE=globalsign` and `COOKIE_SECURE=true`.
+
+## 7. Create the campaign and distribute invitations
 
 Open `https://congratis.online`, choose administrator login and authenticate using `ADMIN_USERNAME` and the password whose Argon2id hash is in `.env`.
 
@@ -197,21 +197,7 @@ It accepts a count from 1 to 35 and prints raw tokens once. Do not run it after 
 
 The CI-only script `deploy/scripts/smoke-test-api.sh` creates invitations and submits test data. It requires a fresh disposable database and must not be run against production data.
 
-## 10. Certificate renewal
-
-For Let's Encrypt only:
-
-```bash
-sudo cp deploy/systemd/congratis-certbot-renew.service /etc/systemd/system/
-sudo cp deploy/systemd/congratis-certbot-renew.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now congratis-certbot-renew.timer
-systemctl list-timers congratis-certbot-renew.timer
-```
-
-The service expects the repository at `/opt/congratis`.
-
-## 11. Updates and operations
+## 8. Updates and operations
 
 Review Git status first. Preserve local configuration and never overwrite `.env`.
 
@@ -227,8 +213,24 @@ docker compose ps
 curl -fsS https://congratis.online/api/health
 ```
 
+Docker Compose reuses locally available base images and build cache by default. `--pull never` prevents Compose from pulling service images; the Docker build also reuses the locally cached base-image layers. Do not use `--no-cache` for a routine rebuild.
+
 Useful checks: `docker compose logs -f app nginx rethinkdb`, `docker compose exec nginx nginx -t`, `docker compose ps`.
 
-RethinkDB data is stored in the named `rethinkdb_data` volume. Back up the database regularly using RethinkDB dump/restore tools and test restoring to a separate temporary instance. Securely back up `.env` and the Let's Encrypt volume.
+RethinkDB data is stored in the named `rethinkdb_data` volume. Back up the database regularly using RethinkDB dump/restore tools and test restoring to a separate temporary instance. Securely back up `.env` and the GlobalSign certificate/private key.
 
-**Never run `docker compose down -v` on production.** It deletes persistent database and certificate volumes. A Docker restart is not a backup, and a single VPS is not highly available.
+**Never run `docker compose down -v` on production.** It deletes persistent volumes. A Docker restart is not a backup, and a single VPS is not highly available.
+
+## 9. Remove legacy Certbot units (one-time migration)
+
+This project no longer deploys or uses Certbot. If the old systemd timer was installed on the VPS, disable it and remove its unit files:
+
+```bash
+sudo systemctl disable --now congratis-certbot-renew.timer
+sudo rm -f /etc/systemd/system/congratis-certbot-renew.timer
+sudo rm -f /etc/systemd/system/congratis-certbot-renew.service
+sudo systemctl daemon-reload
+sudo systemctl reset-failed
+```
+
+Run these commands only if those legacy units exist. Do not remove the GlobalSign certificate directory. The old `letsencrypt` and `acme_webroot` Docker volumes are not referenced by the current Compose project; leave them untouched until the new deployment is verified and you have explicitly confirmed they are no longer needed.
