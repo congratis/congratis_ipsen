@@ -2,6 +2,7 @@ use dominator::{append_dom, clone, events, html, Dom};
 use futures_signals::signal::{Mutable, SignalExt};
 use gloo_net::http::Request;
 use serde::{Deserialize, Serialize};
+use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::{closure::Closure, JsCast};
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 use web_sys::{EventSource, HtmlAudioElement, HtmlInputElement, HtmlTextAreaElement, MessageEvent};
@@ -19,6 +20,11 @@ struct CreatedInvitation { ornament_number: i16, token: String }
 #[derive(Clone)]
 struct InvitationLink { ornament_number: i16, url: String }
 
+struct EventSourceConnection {
+    source: EventSource,
+    handlers: Vec<(&'static str, Closure<dyn FnMut(web_sys::Event)>)>,
+}
+
 #[derive(Clone)]
 struct AppState {
     user: Mutable<Option<User>>,
@@ -34,6 +40,7 @@ struct AppState {
     music_muted: Mutable<bool>,
     music_volume: Mutable<f64>,
     audio: Mutable<Option<HtmlAudioElement>>,
+    sse_connection: Rc<RefCell<Option<EventSourceConnection>>>,
     name: Mutable<String>,
     message: Mutable<String>,
     admin_name: Mutable<String>,
@@ -47,7 +54,7 @@ struct AppState {
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false) }
+        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -217,9 +224,29 @@ fn ornament_positions(count: usize) -> Vec<(f64, f64)> {
     }
     points
 }
+fn disconnect_events(state: &AppState) {
+    let Some(connection) = state.sse_connection.borrow_mut().take() else { return; };
+    for (event_name, handler) in &connection.handlers {
+        let _ = connection.source.remove_event_listener_with_callback(
+            event_name,
+            handler.as_ref().unchecked_ref(),
+        );
+    }
+    connection.source.close();
+}
+
 fn connect_events(state: AppState) {
+    // Replacing a connection must release its listeners before the new EventSource is created.
+    disconnect_events(&state);
     let Ok(source) = EventSource::new("/api/events") else { return; };
-    let greeting_state = state.clone();
+    let mut handlers = Vec::with_capacity(3);
+    // Event callbacks share application data but must not retain the connection that owns them.
+    let callback_state = AppState {
+        sse_connection: Rc::new(RefCell::new(None)),
+        ..state.clone()
+    };
+
+    let greeting_state = callback_state.clone();
     let greeting_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
         if let Ok(message) = event.dyn_into::<MessageEvent>() {
             if let Some(raw) = message.data().as_string() {
@@ -236,8 +263,9 @@ fn connect_events(state: AppState) {
         }
     });
     let _ = source.add_event_listener_with_callback("greeting", greeting_handler.as_ref().unchecked_ref());
-    greeting_handler.forget();
-    let resync_state = state.clone();
+    handlers.push(("greeting", greeting_handler));
+
+    let resync_state = callback_state.clone();
     let resync_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
         let state = resync_state.clone();
         spawn_local(async move {
@@ -246,10 +274,11 @@ fn connect_events(state: AppState) {
         });
     });
     let _ = source.add_event_listener_with_callback("resync", resync_handler.as_ref().unchecked_ref());
-    resync_handler.forget();
+    handlers.push(("resync", resync_handler));
+
     // EventSource fires "open" both on the initial connection and after reconnects.
     // Reconcile against the API so a missed SSE notification cannot leave stale progress.
-    let open_state = state.clone();
+    let open_state = callback_state.clone();
     let open_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
         let state = open_state.clone();
         spawn_local(async move {
@@ -258,8 +287,9 @@ fn connect_events(state: AppState) {
         });
     });
     let _ = source.add_event_listener_with_callback("open", open_handler.as_ref().unchecked_ref());
-    open_handler.forget();
-    std::mem::forget(source);
+    handlers.push(("open", open_handler));
+
+    *state.sse_connection.borrow_mut() = Some(EventSourceConnection { source, handlers });
 }
 fn field(label: &'static str, placeholder: &'static str, value: Mutable<String>, is_textarea: bool) -> Dom {
     if is_textarea {
@@ -314,6 +344,7 @@ fn participant_tree(state: AppState) -> Dom {
                     spawn_local(async move {
                         match post_empty("/api/auth/logout", &csrf).await {
                             Ok(()) => {
+                                disconnect_events(&s);
                                 s.user.set(None);
                                 if let Some(window) = web_sys::window() {
                                     let _ = window.location().set_hash("");
