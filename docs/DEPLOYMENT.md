@@ -129,9 +129,9 @@ curl -fsS http://congratis.online/api/health
 
 Nginx starts with the HTTP-only bootstrap template when no certificate exists. The health endpoint checks the app's RethinkDB connection; do not continue until it returns HTTP 200.
 
-## 7. Issue the first TLS certificate
+## 7. Issue the first TLS certificate with Let's Encrypt (optional)
 
-After public DNS and HTTP health are confirmed:
+If using Let's Encrypt, after public DNS and HTTP health are confirmed:
 
 ```bash
 bash deploy/scripts/issue-certificate.sh
@@ -140,7 +140,48 @@ curl -fsS https://congratis.online/api/health
 
 Certbot uses the shared ACME webroot. Nginx switches to HTTPS after certificate files exist.
 
-## 8. Create the campaign and distribute invitations
+## 8. Install a GlobalSign certificate
+
+The Nginx service supports either Let's Encrypt (default) or a manually managed GlobalSign certificate. For the GlobalSign certificate, the server certificate must be concatenated with the intermediate certificate in `fullchain.pem`. Do not append the root certificate. Keep the private key out of Git and outside the repository.
+
+On the VPS, create the certificate directory and install the files with restrictive permissions:
+
+```bash
+sudo install -d -o root -g root -m 700 /etc/congratis/tls/live/congratis.online
+sudo install -o root -g root -m 644 www_congratis_online_2027_06_11.crt /etc/congratis/tls/live/congratis.online/server.crt
+sudo sh -c 'cat /etc/congratis/tls/live/congratis.online/server.crt /path/to/intermediate.crt > /etc/congratis/tls/live/congratis.online/fullchain.pem'
+sudo install -o root -g root -m 600 /path/to/private.key /etc/congratis/tls/live/congratis.online/privkey.pem
+```
+
+Before switching, verify that the private key matches the certificate by comparing the SHA-256 hashes of their public keys:
+
+```bash
+openssl x509 -in /etc/congratis/tls/live/congratis.online/server.crt -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum
+sudo openssl pkey -in /etc/congratis/tls/live/congratis.online/privkey.pem -pubout -outform DER | sha256sum
+```
+
+The two hashes must be identical. Validate the chain and both hostnames:
+
+```bash
+openssl verify -purpose sslserver -verify_hostname congratis.online -CAfile /path/to/root.crt -untrusted /path/to/intermediate.crt /etc/congratis/tls/live/congratis.online/server.crt
+openssl verify -purpose sslserver -verify_hostname www.congratis.online -CAfile /path/to/root.crt -untrusted /path/to/intermediate.crt /etc/congratis/tls/live/congratis.online/server.crt
+```
+
+Only after both checks succeed, set `TLS_PROVIDER=globalsign` in `.env`, then recreate Nginx:
+
+```bash
+cd /opt/congratis
+docker compose up -d --build --no-deps nginx
+docker compose exec nginx nginx -t
+curl -fsS https://congratis.online/api/health
+curl -fsS https://www.congratis.online/api/health
+```
+
+The certificate covers both `congratis.online` and `www.congratis.online`. Nginx reads it from the host directory mounted read-only at `/etc/globalsign`. The Let's Encrypt volume remains intact; set `TLS_PROVIDER=letsencrypt` to switch back.
+
+GlobalSign DV Free certificates are not renewed by Certbot. Arrange a replacement certificate before 11 June 2027, install its matching key and chain in the same paths, then reload Nginx with `docker compose exec nginx nginx -s reload`. The existing Certbot timer, if enabled, only renews Let's Encrypt certificates.
+
+## 9. Create the campaign and distribute invitations
 
 Open `https://congratis.online`, choose administrator login and authenticate using `ADMIN_USERNAME` and the password whose Argon2id hash is in `.env`.
 
@@ -156,7 +197,9 @@ It accepts a count from 1 to 35 and prints raw tokens once. Do not run it after 
 
 The CI-only script `deploy/scripts/smoke-test-api.sh` creates invitations and submits test data. It requires a fresh disposable database and must not be run against production data.
 
-## 9. Certificate renewal
+## 10. Certificate renewal
+
+For Let's Encrypt only:
 
 ```bash
 sudo cp deploy/systemd/congratis-certbot-renew.service /etc/systemd/system/
@@ -168,7 +211,7 @@ systemctl list-timers congratis-certbot-renew.timer
 
 The service expects the repository at `/opt/congratis`.
 
-## 10. Updates and operations
+## 11. Updates and operations
 
 Review Git status first. Preserve local configuration and never overwrite `.env`.
 
