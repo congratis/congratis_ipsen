@@ -1,132 +1,191 @@
 # Production deployment — Congratis
 
-Target host: Ubuntu 26.04 LTS (resolute).
-Domain: congratis.online.
-Application stack: Rust/Axum + RethinkDB 2.4.4 + Nginx in Docker Compose.
+- Repository: `congratis/congratis_ipsen` (private).
+- Production branch: `main`.
+- Host OS: Ubuntu 26.04 LTS (Resolute), amd64 or arm64.
+- Domain: `congratis.online`.
+- Stack: Rust/Axum + RethinkDB 2.4.4 + Nginx in Docker Compose.
 
 Only Nginx publishes host ports 80/443. The Rust app and RethinkDB stay on private Docker networks.
 
 ## 1. VPS prerequisites
 
-- Ubuntu 26.04 LTS, amd64 or arm64.
-- DNS A record for congratis.online pointing to the VPS IPv4 address.
-- Inbound TCP 22 (restricted to your administration IP), TCP 80 and TCP 443.
-- Persistent disk space for Docker images, database data and backups.
-- This VPS currently has about 1.6 GiB RAM and no swap. Add 2 GiB swap before building Rust release images to reduce the risk of an out-of-memory build. Swap is a safety net, not a replacement for RAM.
+- Ubuntu 26.04 LTS and supported CPU architecture.
+- DNS A record for `congratis.online` pointing to the VPS; `www` CNAME to the apex.
+- Inbound TCP 22 restricted to the administrator's IP, TCP 80 and TCP 443.
+- Persistent disk space for Docker images, database data, backups and certificates.
 
-Use the VPS provider firewall/security group as the primary inbound firewall. Docker-published ports can bypass ordinary UFW filtering depending on the ruleset. Do not publish ports 8080, 28015, 29015 or the RethinkDB admin UI.
+The target VPS was previously measured at roughly 1.6 GiB RAM with no swap. Add 2 GiB swap before building Rust release images. First inspect:
 
-## 2. Install Docker
+```bash
+free -h
+swapon --show
+df -h /
+```
 
-The repository includes an installer that explicitly checks for Ubuntu 26.04 (resolute) and supported CPU architecture:
+If there is no existing swap and `/swapfile` does not exist:
 
-    cd /opt/congratis
-    sudo bash deploy/scripts/install-docker-ubuntu.sh
-    docker version
-    docker compose version
-    systemctl is-active docker
+```bash
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+swapon --show
+```
 
-The script installs Docker Engine, Buildx and the Compose plugin from Docker's signed Ubuntu APT repository. It preserves an existing /etc/docker/daemon.json.
+Do not overwrite an existing swapfile; inspect it first. Use the VPS provider firewall as the primary inbound firewall. Do not publish ports 8080, 28015, 29015 or the RethinkDB admin UI.
 
-## 3. Prepare the application
+## 2. Configure private GitHub access
 
-Run commands from the repository directory:
+The repository is private. Configure a read-only deploy key for the Linux account that will run Git commands:
 
-    cd /opt/congratis
-    git fetch origin
-    git switch feat/dominator-spa
-    git pull --ff-only origin feat/dominator-spa
-    cp -n .env.example .env
-    chmod 600 .env
+```bash
+ssh-keygen -t ed25519 -C 'congratis-vps-readonly' -f ~/.ssh/congratis_github -N ''
+cat ~/.ssh/congratis_github.pub
+```
 
-Edit .env and set:
+Add the public key in repository **Settings → Deploy keys** with read-only access. Configure SSH:
 
-- RETHINKDB_PASSWORD: generate a long random secret with openssl rand -hex 32; put it in the file without committing it.
-- DOMAIN=congratis.online.
-- LETSENCRYPT_EMAIL: a real email address that you monitor.
-- PUBLIC_BASE_URL=https://congratis.online.
+```sshconfig
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/congratis_github
+  IdentitiesOnly yes
+```
 
-The application connects to RethinkDB using the Docker service hostname rethinkdb, not 127.0.0.1. Compose also explicitly sets this hostname for the app and probe containers.
+Verify with `ssh -T git@github.com`. Never copy the private key into the repository or share it.
 
-Never print or share the contents of .env. The file is ignored by Git.
+For a first checkout:
 
-## 4. Verify DNS before TLS
+```bash
+sudo mkdir -p /opt/congratis
+sudo chown "$USER":"$(id -gn)" /opt/congratis
+git clone git@github.com:congratis/congratis_ipsen.git /opt/congratis
+cd /opt/congratis
+git switch main
+```
 
-The authoritative NIC.RU nameservers should return:
+If `/opt/congratis` already contains a checkout, do not clone over it. Inspect Git status and remotes, preserve local changes, then fetch and switch to `main`.
 
-- congratis.online A 46.243.187.13
-- www.congratis.online CNAME congratis.online
+## 3. Install Docker
 
-Check authoritative answers:
+Run from the repository directory:
 
-    dig @ns8-l2.nic.ru congratis.online A +norecurse
-    dig @ns4-l2.nic.ru congratis.online A +norecurse
-    dig @ns8-l2.nic.ru www.congratis.online A +norecurse
+```bash
+cd /opt/congratis
+sudo bash deploy/scripts/install-docker-ubuntu.sh
+docker version
+docker compose version
+systemctl is-active docker
+```
 
-Then check public recursive resolvers from a network that can reach them:
+The installer checks Ubuntu 26.04 (Resolute) and supported architecture, installs Docker Engine, Buildx and Compose from Docker's signed APT repository, and preserves an existing `/etc/docker/daemon.json`.
 
-    dig @1.1.1.1 congratis.online A
-    dig @8.8.8.8 congratis.online A
+## 4. Prepare production environment
 
-Do not request a Let's Encrypt certificate until public DNS resolves to this VPS and inbound TCP 80 is reachable. If recursive DNS is unavailable from the VPS, test from another network; do not treat a timeout as proof that the DNS record is wrong.
+Create `.env` only if it does not already exist:
 
-## 5. Validate and start the HTTP stack
+```bash
+cd /opt/congratis
+cp -n .env.example .env
+chmod 600 .env
+```
 
-    cd /opt/congratis
-    docker compose config --quiet
-    docker compose up -d --build
-    docker compose ps
-    docker compose logs --tail=100 rethinkdb app nginx
+Set `RETHINKDB_PASSWORD` (long random secret), `DOMAIN=congratis.online`, a real `LETSENCRYPT_EMAIL`, `PUBLIC_BASE_URL=https://congratis.online`, `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH` and `COOKIE_SECURE=true`.
 
-Nginx starts with the HTTP-only bootstrap template when no certificate exists. After DNS is correct, test:
+Generate the Argon2id hash using the built image:
 
-    curl -fsS http://congratis.online/api/health
+```bash
+docker compose run --rm -e ADMIN_PASSWORD='your-long-password' app hash-admin-password
+```
 
-The health endpoint checks the application's connection to RethinkDB.
+Put the resulting hash into `ADMIN_PASSWORD_HASH` in `.env`. Do not put the plaintext password there. Never print or share `.env`.
 
-## 6. Issue the first TLS certificate
+## 5. Verify DNS and firewall before TLS
 
-Only after the HTTP health endpoint is reachable from the public Internet:
+Required records: `congratis.online A` → VPS IPv4; `www.congratis.online CNAME` → `congratis.online`.
 
-    bash deploy/scripts/issue-certificate.sh
-    curl -fsS https://congratis.online/api/health
+```bash
+dig @ns8-l2.nic.ru congratis.online A +norecurse
+dig @ns4-l2.nic.ru congratis.online A +norecurse
+dig @1.1.1.1 congratis.online A
+dig @8.8.8.8 congratis.online A
+```
 
-Certbot uses the shared ACME webroot. Nginx restarts and selects the HTTPS template after the certificate files exist. The HTTP challenge path remains available while other HTTP requests redirect to HTTPS.
+Do not request a Let's Encrypt certificate until public DNS resolves to this VPS and inbound TCP 80 is reachable.
 
-## 7. Provision invitations
+## 6. Build and start the HTTP stack
 
-The invitation generator is a one-time operation. Do not run it until the site has passed its smoke tests and you are ready to distribute the 20 personal links.
+```bash
+cd /opt/congratis
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=100 rethinkdb app nginx
+curl -fsS http://congratis.online/api/health
+```
 
-    docker compose exec app generate-tokens 20
+Nginx starts with the HTTP-only bootstrap template when no certificate exists. The health endpoint checks the app's RethinkDB connection; do not continue until it returns HTTP 200.
 
-Store the output securely and distribute each personal URL only to its intended recipient. The database stores token hashes, not raw tokens. The generator refuses to initialize a non-empty table; do not rerun it as part of routine deployment.
+## 7. Issue the first TLS certificate
 
-## 8. Certificate renewal
+After public DNS and HTTP health are confirmed:
 
-Install the included systemd service and timer:
+```bash
+bash deploy/scripts/issue-certificate.sh
+curl -fsS https://congratis.online/api/health
+```
 
-    sudo cp deploy/systemd/congratis-certbot-renew.service /etc/systemd/system/
-    sudo cp deploy/systemd/congratis-certbot-renew.timer /etc/systemd/system/
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now congratis-certbot-renew.timer
-    systemctl list-timers congratis-certbot-renew.timer
+Certbot uses the shared ACME webroot. Nginx switches to HTTPS after certificate files exist.
 
-The service expects the repository at /opt/congratis.
+## 8. Create the campaign and distribute invitations
 
-## 9. Operations
+Open `https://congratis.online`, choose administrator login and authenticate using `ADMIN_USERNAME` and the password whose Argon2id hash is in `.env`.
 
-    # Status and logs
-    docker compose ps
-    docker compose logs -f app nginx rethinkdb
+Create the campaign in the admin panel with 1–35 participants. Save every one-time invitation link securely and distribute it only to its intended recipient. Raw tokens are shown once and cannot be recovered from the database.
 
-    # Health and Nginx configuration
-    curl -fsS https://congratis.online/api/health
-    docker compose exec nginx nginx -t
+**Choose only one provisioning method.** If the admin panel creates the campaign, do not run `generate-tokens`. The CLI is an alternative for a fresh empty database:
 
-    # Update after reviewing the Git changes
-    git pull --ff-only origin feat/dominator-spa
-    docker compose up -d --build
+```bash
+docker compose exec app generate-tokens 20
+```
 
-RethinkDB data is stored in the named rethinkdb_data volume. Back up the database regularly using RethinkDB dump/restore tools and test restoring to a separate temporary instance. Securely back up .env and the Let's Encrypt volume as well.
+It accepts a count from 1 to 35 and prints raw tokens once. Do not run it after campaign creation or as part of routine deployment.
 
-**Never run docker compose down -v on production.** It deletes the persistent database and certificate volumes. A Docker restart is not a backup, and a single VPS is not highly available.
+The CI-only script `deploy/scripts/smoke-test-api.sh` creates invitations and submits test data. It requires a fresh disposable database and must not be run against production data.
+
+## 9. Certificate renewal
+
+```bash
+sudo cp deploy/systemd/congratis-certbot-renew.service /etc/systemd/system/
+sudo cp deploy/systemd/congratis-certbot-renew.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now congratis-certbot-renew.timer
+systemctl list-timers congratis-certbot-renew.timer
+```
+
+The service expects the repository at `/opt/congratis`.
+
+## 10. Updates and operations
+
+Review Git status first. Preserve local configuration and never overwrite `.env`.
+
+```bash
+cd /opt/congratis
+git status --short --branch
+git fetch origin
+git switch main
+git pull --ff-only origin main
+docker compose config --quiet
+docker compose up -d --build --remove-orphans
+docker compose ps
+curl -fsS https://congratis.online/api/health
+```
+
+Useful checks: `docker compose logs -f app nginx rethinkdb`, `docker compose exec nginx nginx -t`, `docker compose ps`.
+
+RethinkDB data is stored in the named `rethinkdb_data` volume. Back up the database regularly using RethinkDB dump/restore tools and test restoring to a separate temporary instance. Securely back up `.env` and the Let's Encrypt volume.
+
+**Never run `docker compose down -v` on production.** It deletes persistent database and certificate volumes. A Docker restart is not a backup, and a single VPS is not highly available.
