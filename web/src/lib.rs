@@ -1,11 +1,11 @@
-use dominator::{append_dom, clone, events, html, Dom};
+use dominator::{append_dom, clone, events, html, Dom, EventOptions};
 use futures_signals::signal::{Mutable, SignalExt};
 use gloo_net::http::Request;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::{closure::Closure, JsCast};
 use wasm_bindgen_futures::{spawn_local, JsFuture};
-use web_sys::{EventSource, HtmlAudioElement, HtmlInputElement, HtmlTextAreaElement, MessageEvent};
+use web_sys::{Element, EventSource, HtmlAudioElement, HtmlElement, HtmlInputElement, HtmlTextAreaElement, MessageEvent, NodeList};
 
 #[derive(Clone, Deserialize, Serialize)]
 struct User { subject_id: String, role: String, csrf_token: String }
@@ -110,69 +110,59 @@ fn schedule_dialog_focus(dialog_id: &'static str) {
     let _ = window.request_animation_frame(callback.unchecked_ref());
 }
 
-const DIALOG_FOCUSABLE: &str =
-    "button:not([disabled]):not([hidden]):not([aria-hidden='true']), \
-     input:not([disabled]):not([type='hidden']):not([hidden]):not([aria-hidden='true']), \
-     select:not([disabled]):not([hidden]):not([aria-hidden='true']), \
-     textarea:not([disabled]):not([hidden]):not([aria-hidden='true']), \
-     a[href]:not([hidden]):not([aria-hidden='true']), \
-     summary:not([hidden]):not([aria-hidden='true']), \
-     [contenteditable='true']:not([hidden]):not([aria-hidden='true']), \
-     [tabindex]:not([tabindex='-1']):not([hidden]):not([aria-hidden='true'])";
+fn dialog_focusable_selector() -> String {
+    const VISIBLE: &str = ":not([hidden]):not([aria-hidden='true'])";
 
-fn trap_dialog_focus(event: &events::KeyDown, dialog_id: &str) {
-    if event.key() != "Tab" {
-        return;
-    }
+    [
+        "button:not([disabled])",
+        "input:not([disabled]):not([type='hidden'])",
+        "select:not([disabled])",
+        "textarea:not([disabled])",
+        "a[href]",
+        "summary",
+        "[contenteditable='true']",
+        "[tabindex]:not([tabindex='-1'])",
+    ]
+    .iter()
+    .map(|selector| format!("{selector}{VISIBLE}"))
+    .collect::<Vec<_>>()
+    .join(", ")
+}
 
-    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
-        return;
-    };
-    let Some(dialog) = document.get_element_by_id(dialog_id) else {
-        return;
-    };
-    let Ok(items) = dialog.query_selector_all(DIALOG_FOCUSABLE) else {
-        return;
-    };
-    let Some(last_index) = items.length().checked_sub(1) else {
-        return;
-    };
-    let Some(first) = items
-        .item(0)
-        .and_then(|item| item.dyn_into::<web_sys::HtmlElement>().ok())
-    else {
-        return;
-    };
-    let Some(last) = items
-        .item(last_index)
-        .and_then(|item| item.dyn_into::<web_sys::HtmlElement>().ok())
-    else {
-        return;
-    };
-    let Some(active) = document.active_element() else {
-        return;
-    };
+fn html_elements(list: &NodeList) -> Vec<HtmlElement> {
+    (0..list.length())
+        .filter_map(|i| list.item(i)?.dyn_into().ok())
+        .collect()
+}
 
-    let active_on_dialog = active.is_same_node(Some(dialog.as_ref()));
-    let active_on_first = active.is_same_node(Some(first.as_ref()));
-    let active_on_last = active.is_same_node(Some(last.as_ref()));
+fn same(a: &Element, b: &Element) -> bool {
+    a.is_same_node(Some(b.as_ref()))
+}
 
-    let target = if event.shift_key() {
-        if active_on_dialog || active_on_first {
-            Some(last)
-        } else {
-            None
-        }
-    } else if active_on_dialog || active_on_last {
-        Some(first)
+fn trap_dialog_focus(event: &events::KeyDown, dialog_id: &str) -> Option<()> {
+    (event.key() == "Tab").then_some(())?;
+
+    let document = web_sys::window()?.document()?;
+    let dialog = document.get_element_by_id(dialog_id)?;
+    let active = document.active_element()?;
+
+    let items = html_elements(&dialog.query_selector_all(&dialog_focusable_selector()).ok()?);
+    let (first, last) = (items.first()?, items.last()?);
+
+    // Shift+Tab уходит с первого на последний, Tab — с последнего на первый.
+    let (edge, opposite) = if event.shift_key() {
+        (first, last)
     } else {
-        None
+        (last, first)
     };
 
-    if let Some(target) = target {
+    let outside = !dialog.contains(Some(active.as_ref()));
+    let must_wrap = outside || same(&active, dialog.as_ref()) || same(&active, edge);
+
+    must_wrap.then(|| {
         event.prevent_default();
-        let _ = target.focus();
-    }
+        let _ = opposite.focus();
+    })
 }
 const JINGLE_BELLS_URL: &str = "https://upload.wikimedia.org/wikipedia/commons/f/f0/Jingle_Bells_%2890bpm%29_%28Kevin_MacLeod%29_%28ISRC_USUAN1100187%29.oga";
 
@@ -598,17 +588,22 @@ fn participant_tree(state: AppState) -> Dom {
                     .class("overlay")
                     .attr("id", "greeting-dialog")
                     .attr("aria-labelledby", "greeting-title")
-                    .event(clone!(state => move |event: events::KeyDown| {
-                        match event.key().as_str() {
-                            "Escape" => {
-                                event.prevent_default();
-                                state.selected.set(None);
-                                restore_dialog_focus(&state);
+                    .event_with_options(
+                        &EventOptions { bubbles: true, preventable: true },
+                        clone!(state => move |event: events::KeyDown| {
+                            match event.key().as_str() {
+                                "Escape" => {
+                                    event.prevent_default();
+                                    state.selected.set(None);
+                                    restore_dialog_focus(&state);
+                                }
+                                "Tab" => {
+                                    trap_dialog_focus(&event, "greeting-dialog");
+                                }
+                                _ => {}
                             }
-                            "Tab" => trap_dialog_focus(&event, "greeting-dialog"),
-                            _ => {}
-                        }
-                    }))
+                        }),
+                    )
                     .child(html!("section", {
                         .class("dialog")
                         
