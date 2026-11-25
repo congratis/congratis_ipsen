@@ -59,6 +59,53 @@ test("campaign size from the backend controls the number of ornaments", async ({
   await expect(page.locator(".ornament.dense")).toHaveCount(35);
 });
 
+for (const participantCount of [1, 2, 20, 35]) {
+  test(`campaign layout supports ${participantCount} participants on mobile and desktop`, async ({ page }) => {
+    for (const viewport of [{ width: 375, height: 812 }, { width: 1440, height: 900 }]) {
+      await page.setViewportSize(viewport);
+      await mockParticipantSession(page, { participantCount });
+      await page.goto("/#invite=valid-invite-token");
+
+      const ornaments = page.locator(".ornament");
+      await expect(ornaments).toHaveCount(participantCount);
+      await expect(ornaments.first()).toHaveAttribute("aria-label", "Шар номер 1");
+      await expect(ornaments.last()).toHaveAttribute("aria-label", `Шар номер ${participantCount}`);
+
+      const layout = await page.evaluate(() => {
+        const frame = document.querySelector(".tree-frame").getBoundingClientRect();
+        const items = [...document.querySelectorAll(".ornament")].map(item => item.getBoundingClientRect());
+        return {
+          viewportWidth: window.innerWidth,
+          documentWidth: document.documentElement.scrollWidth,
+          frameLeft: frame.left,
+          frameRight: frame.right,
+          ornaments: items.map(rect => ({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }))
+        };
+      });
+
+      expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+      for (const item of layout.ornaments) {
+        expect(item.left).toBeGreaterThanOrEqual(layout.frameLeft - 1);
+        expect(item.right).toBeLessThanOrEqual(layout.frameRight + 1);
+        expect(item.top).toBeGreaterThanOrEqual(0);
+      }
+      await page.unrouteAll({ behavior: "wait" });
+    }
+  });
+}
+
+test("ornaments are keyboard-operable and expose an accessible focus target", async ({ page }) => {
+  await mockParticipantSession(page);
+  await page.goto("/#invite=valid-invite-token");
+
+  const ownOrnament = page.getByRole("button", { name: "Шар номер 1", exact: true });
+  await ownOrnament.focus();
+  await expect(ownOrnament).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "Добавь своё пожелание" })).toBeVisible();
+});
+
+
 test("failed invite exchange keeps the invitation token available for retry", async ({ page }) => {
   await mockParticipantSession(page, { exchangeStatus: 409 });
   await page.goto("/#invite=one-time-token");
