@@ -92,36 +92,16 @@ fn restore_dialog_focus(state: &AppState) {
 fn focus_first_dialog_control(dialog_id: &'static str) {
     let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
     let Some(dialog) = document.get_element_by_id(dialog_id) else { return; };
-    let Ok(Some(control)) = dialog.query_selector(
+    let Ok(dialog) = dialog.dyn_into::<web_sys::HtmlDialogElement>() else { return; };
+    if !dialog.open() {
+        let _ = dialog.show_modal();
+    }
+    if let Ok(Some(control)) = dialog.query_selector(
         "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])"
-    ) else { return; };
-    if let Ok(control) = control.dyn_into::<web_sys::HtmlElement>() {
-        let _ = control.focus();
-    }
-}
-
-fn focus_last_dialog_control(dialog_id: &'static str) {
-    let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
-    let Some(dialog) = document.get_element_by_id(dialog_id) else { return; };
-    let Ok(items) = dialog.query_selector_all(
-        "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])"
-    ) else { return; };
-    let count = items.length();
-    if count == 0 { return; }
-    if let Some(control) = items.item(count - 1).and_then(|item| item.dyn_into::<web_sys::HtmlElement>().ok()) {
-        let _ = control.focus();
-    }
-}
-fn wrap_focus_from_first(event: &events::KeyDown, dialog_id: &'static str) {
-    if event.key() == "Tab" && event.shift_key() {
-        event.prevent_default();
-        focus_last_dialog_control(dialog_id);
-    }
-}
-fn wrap_focus_from_last(event: &events::KeyDown, dialog_id: &'static str) {
-    if event.key() == "Tab" && !event.shift_key() {
-        event.prevent_default();
-        focus_first_dialog_control(dialog_id);
+    ) {
+        if let Ok(control) = control.dyn_into::<web_sys::HtmlElement>() {
+            let _ = control.focus();
+        }
     }
 }
 fn schedule_dialog_focus(dialog_id: &'static str) {
@@ -551,28 +531,25 @@ fn participant_tree(state: AppState) -> Dom {
                 let counter = current_index.map(|index| format!("Поздравление {} из {}", index + 1, ordered.len())).unwrap_or_default();
                 html!("div", {
                     .class("overlay")
+                    .attr("id", "greeting-dialog")
+                    .attr("aria-labelledby", "greeting-title")
+                    .event(clone!(state => move |event: events::KeyDown| {
+                        if event.key() == "Escape" {
+                            event.prevent_default();
+                            state.selected.set(None);
+                            restore_dialog_focus(&state);
+                        }
+                    }))
                     .child(html!("section", {
                         .class("dialog")
-                        .attr("id", "greeting-dialog")
-                        .attr("role", "dialog")
-                        .attr("tabindex", "-1")
-                        .event(clone!(state => move |event: events::KeyDown| {
-                            if event.key() == "Escape" {
-                                event.prevent_default();
-                                state.selected.set(None);
-                                restore_dialog_focus(&state);
-                            }
-                        }))
-                        .attr("aria-modal", "true")
-                        .attr("aria-labelledby", "greeting-title")
+                        
                         .child(html!("button", {
                             .class("close")
                             .attr("type", "button")
                             .attr("aria-label", "Закрыть поздравление")
                             .attr("autofocus", "")
                             .text("×")
-                            .event(|event: events::KeyDown| wrap_focus_from_first(&event, "greeting-dialog"))
-                            .event(clone!(state => move |_: events::Click| {
+                                                        .event(clone!(state => move |_: events::Click| {
                                 state.selected.set(None);
                                 restore_dialog_focus(&state);
                             }))
@@ -632,8 +609,7 @@ fn participant_tree(state: AppState) -> Dom {
                             .class("primary")
                             .attr("type", "button")
                             .text("Вернуться к ёлке")
-                            .event(|event: events::KeyDown| wrap_focus_from_last(&event, "greeting-dialog"))
-                            .event(clone!(state => move |_: events::Click| {
+                                                        .event(clone!(state => move |_: events::Click| {
                                 state.selected.set(None);
                                 restore_dialog_focus(&state);
                             }))
@@ -648,20 +624,17 @@ fn participant_tree(state: AppState) -> Dom {
             } else {
                 Some(html!("div", {
                     .class("presentation-overlay")
+                    .attr("id", "presentation-dialog")
+                    .attr("aria-labelledby", "presentation-title")
+                    .event(clone!(state => move |event: events::KeyDown| {
+                        if event.key() == "Escape" {
+                            event.prevent_default();
+                            exit_presentation(state.clone());
+                        }
+                    }))
                     .child(html!("section", {
                         .class("presentation-card")
-                        .attr("id", "presentation-dialog")
-                        .attr("role", "dialog")
-                        .attr("tabindex", "-1")
-                        .event(clone!(state => move |event: events::KeyDown| {
-                            if event.key() == "Escape" {
-                                event.prevent_default();
-                                exit_presentation(state.clone());
-                                restore_dialog_focus(&state);
-                            }
-                        }))
-                        .attr("aria-modal", "true")
-                        .attr("aria-labelledby", "presentation-title")
+                        
                         .child_signal(state.presentation_index.signal().map(clone!(state => move |index| {
                             let greetings = state.greetings.get_cloned();
                             let count = greetings.len();
@@ -712,8 +685,7 @@ fn participant_tree(state: AppState) -> Dom {
                                 .attr("aria-label", "Предыдущее поздравление")
                                 .attr("autofocus", "")
                                 .text("← Назад")
-                                .event(|event: events::KeyDown| wrap_focus_from_first(&event, "presentation-dialog"))
-                                .event(clone!(state => move |_: events::Click| {
+                                                                .event(clone!(state => move |_: events::Click| {
                                     let current = state.presentation_index.get();
                                     if current > 0 { set_presentation_index(&state, current - 1); }
                                 }))
@@ -782,8 +754,7 @@ fn participant_tree(state: AppState) -> Dom {
                                 .class("primary")
                                 .attr("type", "button")
                                 .text("Вернуться к ёлке")
-                                .event(|event: events::KeyDown| wrap_focus_from_last(&event, "presentation-dialog"))
-                                .event(clone!(state => move |_: events::Click| exit_presentation(state.clone())))
+                                                                .event(clone!(state => move |_: events::Click| exit_presentation(state.clone())))
                             }))
                         }))
                         .child(html!("p", {
@@ -809,27 +780,24 @@ fn show_form(state: AppState) {
         .map(|user| user.subject_id.clone()).unwrap_or_default();
     let dialog = html!("div", {
         .class("overlay")
+        .attr("id", "submission-dialog")
+        .attr("aria-labelledby", "submission-title")
+        .event(clone!(form_state => move |event: events::KeyDown| {
+            if event.key() == "Escape" {
+                event.prevent_default();
+                if let Some(window) = web_sys::window() { let _ = window.location().reload(); }
+            }
+        }))
         .child(html!("section", {
             .class("dialog")
-            .attr("role", "dialog")
-            .attr("aria-modal", "true")
-            .attr("id", "submission-dialog")
-            .attr("aria-labelledby", "submission-title")
-            .attr("tabindex", "-1")
-            .event(clone!(form_state => move |event: events::KeyDown| {
-                if event.key() == "Escape" {
-                    event.prevent_default();
-                    if let Some(window) = web_sys::window() { let _ = window.location().reload(); }
-                }
-            }))
+            
             .child(html!("button", {
                 .class("close")
                 .attr("type", "button")
                 .attr("aria-label", "Закрыть форму поздравления")
                 .attr("autofocus", "")
                 .text("×")
-                .event(|event: events::KeyDown| wrap_focus_from_first(&event, "submission-dialog"))
-                .event(|_: events::Click| {
+                                .event(|_: events::Click| {
                     if let Some(window) = web_sys::window() {
                         let _ = window.location().reload();
                     }
@@ -856,8 +824,7 @@ fn show_form(state: AppState) {
             .child(html!("button", {
                 .class("primary")
                 .text("Опубликовать поздравление")
-                .event(|event: events::KeyDown| wrap_focus_from_last(&event, "submission-dialog"))
-                .event(clone!(form_state => move |_: events::Click| {
+                                .event(clone!(form_state => move |_: events::Click| {
                     if form_state.submitting.get() {
                         return;
                     }
