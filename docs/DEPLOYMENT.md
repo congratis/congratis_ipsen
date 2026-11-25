@@ -1,6 +1,6 @@
 # Production deployment — Congratis
 
-Target host: Ubuntu 24.04 LTS (noble).
+Target host: Ubuntu 26.04 LTS (resolute).
 Domain: congratis.online.
 Application stack: Rust/Axum + RethinkDB 2.4.4 + Nginx in Docker Compose.
 
@@ -8,7 +8,7 @@ Only Nginx publishes host ports 80/443. The Rust app and RethinkDB stay on priva
 
 ## 1. VPS prerequisites
 
-- Ubuntu 24.04 LTS, amd64 or arm64.
+- Ubuntu 26.04 LTS, amd64 or arm64.
 - DNS A record for congratis.online pointing to the VPS IPv4 address.
 - Inbound TCP 22 (restricted to your administration IP), TCP 80 and TCP 443.
 - Persistent disk space for Docker images, database data and backups.
@@ -18,7 +18,7 @@ Use the VPS provider firewall/security group as the primary inbound firewall. Do
 
 ## 2. Install Docker
 
-The repository includes an installer that explicitly checks for Ubuntu 24.04 (noble) and supported CPU architecture:
+The repository includes an installer that explicitly checks for Ubuntu 26.04 (resolute) and supported CPU architecture:
 
     cd /opt/congratis
     sudo bash deploy/scripts/install-docker-ubuntu.sh
