@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "20".into())
         .parse()?;
-    anyhow::ensure!((1..=20).contains(&count), "count must be between 1 and 20");
+    anyhow::ensure!((1..=35).contains(&count), "count must be between 1 and 35");
 
         let store = Store::connect().await?;
 

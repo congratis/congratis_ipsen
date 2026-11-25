@@ -34,6 +34,11 @@ struct Greeting {
     display_name: String,
     message: String,
 }
+#[derive(Serialize)]
+struct CampaignSummary {
+    participant_count: usize,
+    submitted_count: usize,
+}
 #[derive(Deserialize)]
 struct ParticipantExchange { token: String }
 #[derive(Deserialize)]
@@ -194,6 +199,19 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Res
     clear_cookies(&mut response, &state);
     Ok(response)
 }
+async fn campaign_summary(
+    State(state): State<AppState>, headers: HeaderMap
+) -> Result<Json<CampaignSummary>, ApiError> {
+    authenticated(&state, &headers).await?;
+    let participants = state.store.list_participants().await.map_err(|e| {
+        tracing::error!(?e, "campaign summary lookup failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить состояние кампании")
+    })?;
+    let participant_count = participants.len();
+    let submitted_count = participants.iter().filter(|participant| participant.submitted).count();
+    Ok(Json(CampaignSummary { participant_count, submitted_count }))
+}
+
 async fn list_greetings(
     State(state): State<AppState>, headers: HeaderMap
 ) -> Result<Json<Vec<Greeting>>, ApiError> {
@@ -252,7 +270,7 @@ async fn admin_reissue_invitation(
     let session = authenticated(&state, &headers).await?;
     if session.role != "admin" { return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав")); }
     verify_csrf(&headers, &session)?;
-    if !(1..=20).contains(&number) { return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректный номер шара")); }
+    if !(1..=35).contains(&number) { return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректный номер шара")); }
     let token = random_secret();
     let changed = state.store.reissue_invitation(number, &digest(&token)).await.map_err(|e| {
         tracing::error!(?e, "invitation reissue failed");
@@ -267,7 +285,7 @@ async fn admin_revoke_invitation(
     let session = authenticated(&state, &headers).await?;
     if session.role != "admin" { return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав")); }
     verify_csrf(&headers, &session)?;
-    if !(1..=20).contains(&number) { return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректный номер шара")); }
+    if !(1..=35).contains(&number) { return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректный номер шара")); }
     let changed = state.store.revoke_invitation(number).await.map_err(|e| {
         tracing::error!(?e, "invitation revoke failed");
         ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось отозвать приглашение")
@@ -317,6 +335,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/me", get(me))
         .route("/api/events", get(sse_events))
         .route("/api/greetings", get(list_greetings).post(submit))
+        .route("/api/campaign", get(campaign_summary))
         .route("/api/admin/participants", get(admin_participants))
         .route("/api/admin/invitations/{number}/reissue", post(admin_reissue_invitation))
         .route("/api/admin/invitations/{number}/revoke", post(admin_revoke_invitation))

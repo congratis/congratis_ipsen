@@ -198,9 +198,9 @@ impl Store {
     }
 
     pub async fn list_ornaments(&self) -> Result<Vec<Ornament>> {
-        // Read the base table stream and sort the small fixed (max 20 row)
-        // collection in Rust. This also avoids an ordered-stream query over an
-        // empty table, which the pinned driver decodes inconsistently.
+        // Read the base table stream and sort the bounded campaign collection
+        // in Rust. This also avoids an ordered-stream query over an empty table,
+        // which the pinned driver decodes inconsistently.
         let mut stream = r
             .db(self.database.as_str())
             .table(TABLE)
@@ -232,8 +232,8 @@ impl Store {
         let mut numbers = std::collections::HashSet::new();
         let mut hashes = std::collections::HashSet::new();
         for (number, token_hash) in invitations {
-            if !(1..=20).contains(number) || !numbers.insert(*number) {
-                bail!("invitation ornament numbers must be unique values between 1 and 20");
+            if !(1..=35).contains(number) || !numbers.insert(*number) {
+                bail!("invitation ornament numbers must be unique values between 1 and 35");
             }
             if !hashes.insert(token_hash) {
                 bail!("duplicate invitation token hash in batch");
