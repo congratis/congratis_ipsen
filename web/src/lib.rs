@@ -240,8 +240,13 @@ fn connect_events(state: AppState) {
     disconnect_events(&state);
     let Ok(source) = EventSource::new("/api/events") else { return; };
     let mut handlers = Vec::with_capacity(3);
+    // Event callbacks share application data but must not retain the connection that owns them.
+    let callback_state = AppState {
+        sse_connection: Rc::new(RefCell::new(None)),
+        ..state.clone()
+    };
 
-    let greeting_state = state.clone();
+    let greeting_state = callback_state.clone();
     let greeting_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
         if let Ok(message) = event.dyn_into::<MessageEvent>() {
             if let Some(raw) = message.data().as_string() {
@@ -260,7 +265,7 @@ fn connect_events(state: AppState) {
     let _ = source.add_event_listener_with_callback("greeting", greeting_handler.as_ref().unchecked_ref());
     handlers.push(("greeting", greeting_handler));
 
-    let resync_state = state.clone();
+    let resync_state = callback_state.clone();
     let resync_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
         let state = resync_state.clone();
         spawn_local(async move {
@@ -273,7 +278,7 @@ fn connect_events(state: AppState) {
 
     // EventSource fires "open" both on the initial connection and after reconnects.
     // Reconcile against the API so a missed SSE notification cannot leave stale progress.
-    let open_state = state.clone();
+    let open_state = callback_state.clone();
     let open_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
         let state = open_state.clone();
         spawn_local(async move {

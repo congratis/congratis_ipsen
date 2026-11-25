@@ -278,7 +278,7 @@ test("SSE reconnect reconciles greetings and campaign progress after a dropped c
       status: 200,
       contentType: "text/event-stream",
       headers: { "cache-control": "no-cache" },
-      body: `retry: ${retryDelay}\\n\\n`
+      body: `retry: ${retryDelay}\n\n`
     });
   });
 
