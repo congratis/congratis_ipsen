@@ -11,12 +11,6 @@ server {
 
     client_max_body_size 1m;
 
-    location ^~ /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-        default_type text/plain;
-        try_files $uri =404;
-    }
-
     location = /api/events {
         proxy_pass http://congratis_app/api/events;
         proxy_http_version 1.1;
