@@ -64,6 +64,7 @@ services:
     init: true
     environment:
       DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+      TLS_PROVIDER: ${TLS_PROVIDER:-letsencrypt}
     depends_on:
       app:
         condition: service_started
@@ -73,6 +74,7 @@ services:
     volumes:
       - letsencrypt:/etc/letsencrypt:ro
       - acme_webroot:/var/www/certbot:ro
+      - /etc/congratis/tls:/etc/globalsign:ro
     security_opt:
       - no-new-privileges:true
     cap_drop:
