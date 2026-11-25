@@ -1,57 +1,60 @@
 # Congratis
 
-Интерактивная новогодняя ёлка с 20 шарами и персональными одноразовыми приглашениями.
+Интерактивная новогодняя кампания: организатор создаёт ёлку, выпускает персональные одноразовые приглашения, участники публикуют поздравления, а команда смотрит их в общей презентации.
 
-## Stack
+## Возможности
 
-- Rust, Axum, Tokio
-- RethinkDB 2.4.x через закреплённый Rust-драйвер `reql = 0.11.2`
-- HTML/CSS/JavaScript
-- Docker Compose
-- Nginx 1.30.8 в отдельном контейнере, SSE через Changefeed
+- Кампании на **1–35 участников**.
+- Персональные одноразовые ссылки и сессии с HttpOnly cookie и CSRF-защитой.
+- Одно поздравление на участника; повторная отправка блокируется backend.
+- Динамическая ёлка, статусы шаров и прогресс в реальном времени через SSE.
+- Просмотр поздравлений с навигацией и режим презентации.
+- Управление музыкой и лицензированная запись Jingle Bells.
+- Админ-панель: создание кампании, просмотр участников, перевыпуск и подтверждённый отзыв приглашений.
+- Сохранение черновика в браузере до успешной публикации.
 
-## Локальный запуск RethinkDB-ветки
+## Стек
+
+- Backend: Rust, Axum, Tokio.
+- Frontend: Rust, Dominator, WebAssembly, **Rollup**.
+- Database: RethinkDB 2.4.4.
+- Deployment: Docker Compose, Nginx 1.30.8, Let's Encrypt.
+- Browser tests: Playwright.
+
+## Локальный запуск
 
 1. Скопируйте `.env.example` в `.env`.
-2. Установите длинный случайный `RETHINKDB_PASSWORD`.
-3. Запустите приложение и базу: `docker compose up -d --build`.
-4. Создайте приглашения один раз: `docker compose exec app generate-tokens 20`.
-5. Сохраните одноразовые токены из вывода команды и передайте их участникам защищённым способом. После подключения frontend токен будет обмениваться на сессию через backend API.
+2. Задайте длинный `RETHINKDB_PASSWORD`, локальный `DOMAIN` и `COOKIE_SECURE=false`.
+3. Сгенерируйте Argon2id-хеш пароля администратора:
 
-Сайт будет доступен на `http://localhost` (до выпуска сертификата) или `https://$DOMAIN` после настройки DNS и Let's Encrypt.
+   ```bash
+   docker compose run --rm -e ADMIN_PASSWORD='your-long-password' app hash-admin-password
+   ```
 
-## Архитектура текущей ветки
+4. Запишите полученный хеш в `ADMIN_PASSWORD_HASH` в `.env`. Открытый пароль в `.env` не храните.
+5. Соберите и запустите приложение:
 
-- Одна запись `ornaments` на шар; `id` равен номеру шара и защищает от повторного назначения номера.
-- В БД хранится SHA-256 токена, исходный токен выводится только в персональной ссылке.
-- Погашение приглашения — условный ReQL update одного документа; проверка `used` и запись поздравления выполняются атомарно.
-- Конкурентный интеграционный тест проверяет, что из двух одновременных отправок проходит ровно одна.
-- Отдельная сессия RethinkDB читает Changefeed; Axum публикует события через SSE.
-- `EventSource` обновляет отдельный шар, а при подключении/переподключении загружает snapshot.
-- Nginx обслуживает frontend, проксирует API и отключает buffering для SSE.
+   ```bash
+   docker compose up -d --build
+   docker compose ps
+   ```
 
-## Важное ограничение
+6. Откройте `http://localhost`, перейдите во вход администратора и войдите с `ADMIN_USERNAME` и паролем, соответствующим хешу.
+7. Создайте кампанию в админ-панели на 1–35 участников. Сохраните одноразовые ссылки: исходные токены повторно получить нельзя.
 
-Текущая ветка `feat/dominator-spa` содержит RethinkDB, атомарное погашение приглашений, Changefeed/SSE и Nginx в Docker. Для production-развёртывания используйте Ubuntu 26.04 LTS; установите Docker Engine скриптом `deploy/scripts/install-docker-ubuntu.sh`. Перед реальным запуском укажите домен, настройте DNS и firewall, получите Let's Encrypt сертификат и завершите production smoke-test. Не публикуйте RethinkDB или порт приложения напрямую.
+Для production используйте HTTPS и `COOKIE_SECURE=true`. Подробности — [Production deployment](docs/DEPLOYMENT.md).
 
-Не коммитьте `.env` или файл с приглашениями. Первый выпуск TLS: `bash deploy/scripts/issue-certificate.sh`. Автоматическое продление настраивается systemd unit/timer из `deploy/systemd/`.
+## Важные правила
 
-Подробности — [ADR RethinkDB](docs/ADR-RETHINKDB-REALTIME.md) и [Deployment](docs/DEPLOYMENT.md).
+- Создавайте кампанию либо через админ-панель, либо отдельной CLI-командой `generate-tokens N`. Не запускайте оба способа: кампания создаётся только в пустой таблице.
+- `generate-tokens N` поддерживает N от 1 до 35 и выводит исходные токены один раз. Не используйте эту команду при обычном обновлении приложения.
+- Не коммитьте `.env`, открытые пароли или файлы с одноразовыми ссылками.
+- Не публикуйте RethinkDB и порт приложения в интернет. Публичные порты — только 80/443 на Nginx.
+- Никогда не выполняйте `docker compose down -v` на production: команда удалит постоянные volumes базы и сертификатов.
 
+## Документация
 
-## Backend authentication API and frontend
-
-The backend uses role-based sessions. Participant invitation tokens are exchanged once at `POST /api/auth/participant/exchange`; the raw token is sent in the JSON body, never in a query string. The response sets an HttpOnly session cookie and a readable CSRF cookie. Send the CSRF cookie value in the `X-CSRF-Token` header for state-changing authenticated requests.
-
-Administrator login is `POST /api/auth/admin/login` with `username` and `password`. Configure `ADMIN_USERNAME` and an Argon2id `ADMIN_PASSWORD_HASH` in the private `.env` file. Generate the hash with `docker compose run --rm -e ADMIN_PASSWORD='your-long-password' app hash-admin-password`. Do not store the plaintext password in `.env` or source control.
-
-Authenticated endpoints:
-- `GET /api/me` — current identity and CSRF token.
-- `POST /api/auth/logout` — revoke current session (CSRF required).
-- `GET /api/greetings` and `GET /api/events` — shared team tree (participant or admin).
-- `POST /api/greetings` — participant-only, one greeting per invitation (CSRF required).
-- `GET /api/admin/participants` — administrator-only participant and invitation status.
-- `POST /api/admin/invitations/{number}/reissue` — rotate an unactivated invitation; returns the new raw token once.
-- `POST /api/admin/invitations/{number}/revoke` — revoke an unactivated invitation.
-
-`/api/health` remains public and returns only service availability. The Dominator/WASM frontend uses these endpoints for participant and administrator flows; browser tests cover invitation activation, greeting submission, admin invitation management, mobile layout and SSE updates.
+- [Roadmap](Roadmap.md)
+- [Production deployment](docs/DEPLOYMENT.md)
+- [RethinkDB architecture decision](docs/ADR-RETHINKDB-REALTIME.md)
+- [Audio attribution and license](AUDIO_ATTRIBUTION.md)
