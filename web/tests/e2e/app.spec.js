@@ -246,5 +246,5 @@ test("campaign summary drives the accessible candy cane progress indicator", asy
   await expect(progress).toHaveAttribute("aria-valuemax", "4");
   await expect(progress).toHaveAttribute("aria-valuenow", "2");
   await expect(page.locator(".progress-count")).toHaveText("2 / 4");
-  await expect(page.locator(".candy-fill")).toHaveAttribute("style", /width:\\s*50\\.00%/);
+  await expect.poll(() => page.locator(".candy-fill").evaluate(element => element.style.width)).toBe("50%");
 });
