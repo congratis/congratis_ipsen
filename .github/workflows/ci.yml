@@ -205,6 +205,9 @@ jobs:
         run: |
           cp .env.example .env
           sed -i 's/^COOKIE_SECURE=.*/COOKIE_SECURE=false/' .env
+          # GitHub-hosted runners may already have services bound to 80/443.
+          # Keep the production defaults but isolate the smoke-test ports.
+          printf '\nHTTP_PORT=18080\nHTTPS_PORT=18443\n' >> .env
       - name: Validate production Compose configuration
         run: docker compose config --quiet
       - name: Tag application image for Compose
@@ -233,6 +236,8 @@ jobs:
             sleep 2
           done
       - name: Exercise real backend HTTP API
+        env:
+          BASE_URL: http://127.0.0.1:18080
         run: bash deploy/scripts/smoke-test-api.sh
       - name: Stop Compose stack
         if: always()
