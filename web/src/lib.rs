@@ -196,7 +196,7 @@ fn admin_screen(state: AppState) -> Dom {
         .child(html!("h1", {.text("Панель ").child(html!("span", {.text("администратора")}))}))
         .child(html!("p", {.class("lead").text("Управление приглашениями и статусом двадцати шаров.")}))
         .child(html!("div", {.class("toolbar")
-            .child(html!("button", {.class("secondary").text("К ёлке").event(|_| {if let Some(w)=web_sys::window(){let _=w.location().set_hash("");}})}))
+            .child(html!("button", {.class("secondary").text("К ёлке").event(|_| {if let Some(w)=web_sys::window(){let _=w.location().set_hash("");let _=w.location().reload();}})}))
             .child(html!("button", {.class("secondary").text("Обновить").event(clone!(state => move |_| {let s=state.clone();spawn_local(async move{load_participants(s).await;});})}))
         }))
         .child_signal(state.participants.signal_cloned().map(clone!(state => move |participants| {
