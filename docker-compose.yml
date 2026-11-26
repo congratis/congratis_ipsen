@@ -115,6 +115,29 @@ services:
     networks:
       - data
 
+  rethinkdb-reset:
+    image: congratis:rethinkdb
+    profiles: ["tools"]
+    command: ["rethinkdb-reset"]
+    env_file:
+      - .env
+    environment:
+      RETHINKDB_HOST: rethinkdb
+      RETHINKDB_PORT: "28015"
+      RETHINKDB_USER: admin
+      RETHINKDB_PASSWORD: ${RETHINKDB_PASSWORD:?Set RETHINKDB_PASSWORD in .env}
+      RETHINKDB_DB: ${RETHINKDB_DB:-congratis}
+    depends_on:
+      rethinkdb:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    networks:
+      - data
+
 volumes:
   rethinkdb_data:
 
