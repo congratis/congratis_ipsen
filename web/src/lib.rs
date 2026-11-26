@@ -508,8 +508,8 @@ fn participant_tree(state: AppState) -> Dom {
     let is_mine = user.role == "participant";
     let pill_label = if is_mine { format!("Твой шар №{}", user.subject_id) } else { "Режим администратора".to_string() };
     html!("main", {
-        .class("shell authenticated-shell")
-        .child(ipsen_brand())
+        .class(if is_mine { "shell authenticated-shell" } else { "shell" })
+        .child_signal(futures_signals::signal::always(is_mine).map(|visible| visible.then(ipsen_brand)))
         .child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")}))
         .child(html!("h1", {.text("Ёлка добрых ").child(html!("span", {.text("пожеланий")}))}))
         .child(html!("p", {.class("team-subtitle").text("команда редких заболеваний")}))
@@ -967,8 +967,7 @@ fn show_form(state: AppState) {
 
 fn admin_screen(state: AppState) -> Dom {
     html!("main", {
-        .class("shell authenticated-shell")
-        .child(ipsen_brand())
+        .class("shell")
         .child(html!("div", {
             .class("eyebrow")
             .text("CONGRATIS · CONTROL ROOM")
