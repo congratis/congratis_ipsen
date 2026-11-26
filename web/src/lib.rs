@@ -1429,22 +1429,25 @@ fn begin_invitation(state: AppState, token: String) {
 
     spawn_local(async move {
         let body = serde_json::json!({ "token": token });
-        match post_json::<User>("/api/auth/participant/exchange", &body, None).await {
+        let result = post_json::<User>("/api/auth/participant/exchange", &body, None).await;
+
+        // The invitation token is single-use and is no longer needed after the exchange attempt.
+        // Always leave the invitation route so a failed exchange cannot be restarted by watch_routes.
+        routing::replace_url("/");
+
+        match result {
             Ok(user) => {
-                routing::replace_url("/");
                 reset_session_state(&state);
                 restore_draft(&state, &user.subject_id);
                 state.user.set(Some(user.clone()));
                 load_session_data(state.clone(), &user).await;
-                state.auth_ready.set(true);
-                state.exchanging.set(false);
             }
             Err(error) => {
-                state.auth_ready.set(true);
-                state.exchanging.set(false);
                 set_note(&state, format!("Не удалось активировать приглашение: {error}"));
             }
         }
+        state.auth_ready.set_neq(true);
+        state.exchanging.set(false);
     });
 }
 
@@ -1476,8 +1479,8 @@ fn render_route(state: AppState, route: Route, user: Option<User>, ready: bool) 
 
     match user {
         Some(user) if user.role == "admin" => match route {
-            Route::Admin | Route::Invitation(_) => admin_screen(state),
-            Route::Landing => participant_tree(state, user),
+            Route::Admin => admin_screen(state),
+            Route::Landing | Route::Invitation(_) => participant_tree(state, user),
         },
         Some(user) => participant_tree(state, user),
         None => match route {
