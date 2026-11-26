@@ -36,3 +36,7 @@ path = "src/bin/rethinkdb_probe.rs"
 [[bin]]
 name = "hash-admin-password"
 path = "src/bin/hash_admin_password.rs"
+
+[[bin]]
+name = "rethinkdb-reset"
+path = "src/bin/rethinkdb_reset.rs"
