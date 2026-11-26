@@ -1288,9 +1288,14 @@ fn landing_screen() -> Dom {
             .class("team-subtitle")
             .text("команда редких заболеваний")
         }))
-        .child(html!("p", {
-            .class("lead")
-            .text("Чтобы увидеть общую ёлку, открой персональную ссылку-приглашение.")
+        .child(html!("div", {
+            .class("no-invitation-art")
+            .child(html!("img", {
+                .attr("src", "/no-invitation.webp")
+                .attr("alt", "У Вас нет приглашения? Свяжитесь с администратором.")
+                .attr("loading", "eager")
+                .attr("decoding", "async")
+            }))
         }))
         .child(html!("button", {
             .class("primary")

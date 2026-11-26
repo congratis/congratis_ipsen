@@ -7,7 +7,7 @@
     "watch": "rimraf dist/js && rollup --bundleConfigAsCjs --config --watch",
     "finalize:assets": "node scripts/finalize-assets.mjs",
     "test:e2e": "playwright test",
-    "prepare:e2e": "cp index.html dist/index.html && cp style.css dist/style.css && cp ../frontend/christmas-tree.webp dist/christmas-tree.webp && npm run finalize:assets"
+    "prepare:e2e": "cp index.html dist/index.html && cp style.css dist/style.css && cp ../frontend/christmas-tree.webp dist/christmas-tree.webp && cp ../frontend/no-invitation.webp dist/no-invitation.webp && npm run finalize:assets"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",
