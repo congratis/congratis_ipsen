@@ -5,7 +5,10 @@ const admin = { subject_id: "admin", role: "admin", csrf_token: "csrf-admin" };
 
 test.beforeEach(async ({ page }) => {
   page.on("console", message => console.log("[console]", message.type(), message.text()));
-  page.on("pageerror", error => console.log("[pageerror]", error.message));
+  page.on("pageerror", error => {
+    console.error("[pageerror]", error);
+    throw error;
+  });
   page.on("response", response => {
     if (response.url().includes("/api/")) {
       console.log("[api]", response.status(), response.url());
