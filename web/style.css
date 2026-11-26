@@ -80,7 +80,7 @@ dialog.presentation-overlay::backdrop{background:radial-gradient(ellipse at 50% 
 .no-invitation-art img{display:block;width:100%;height:auto;aspect-ratio:1280/853;object-fit:contain}
 @media(max-width:600px){.no-invitation-art{margin:14px auto 20px;border-radius:12px}}
 
-/* Ipsen branding is shown only on authenticated screens. */
+/* Ipsen branding is shown only on the invited participant tree. */
 .ipsen-brand{position:fixed;top:18px;right:24px;z-index:20;display:block;width:168px;height:48px}
 .ipsen-brand img{display:block;width:100%;height:100%;object-fit:contain}
 .authenticated-shell{padding-top:92px}
