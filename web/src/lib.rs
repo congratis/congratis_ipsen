@@ -594,7 +594,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
     let pill_label = if is_mine { format!("Твой шар №{}", user.subject_id) } else { "Режим администратора".to_string() };
     html!("main", {
         .class("shell")
-        .class_signal(futures_signals::signal::always(is_mine).map(|visible| visible.then_some("authenticated-shell")))
+        .class(if is_mine { "authenticated-shell" } else { "shell" })
         .child_signal(futures_signals::signal::always(is_mine).map(|visible| visible.then(ipsen_brand)))
         .child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")}))
         .child(html!("h1", {.text("Ёлка добрых ").child(html!("span", {.text("пожеланий")}))}))
