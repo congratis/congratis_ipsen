@@ -117,6 +117,30 @@ async fn fetch_me() -> Result<Option<User>, String> {
     response.json::<User>().await.map(Some).map_err(|error| error.to_string())
 }
 
+async fn restore_session(state: &AppState, during_exchange: bool) -> Result<(), String> {
+    let still_free = |state: &AppState| {
+        (during_exchange || !state.exchanging.get()) && state.user.lock_ref().is_none()
+    };
+
+    let Some(user) = fetch_me().await? else {
+        return Ok(());
+    };
+    if !still_free(state) {
+        return Ok(());
+    }
+
+    if user.role == "participant" {
+        restore_draft(state, &user.subject_id);
+    }
+    load_session_data(state.clone(), &user).await;
+
+    // An invitation exchange or another session may have won while data was loading.
+    if still_free(state) {
+        state.user.set(Some(user));
+    }
+    Ok(())
+}
+
 async fn get_json<T: for<'de> Deserialize<'de>>(path: &str) -> Result<T, String> {
     let response = Request::get(path).send().await.map_err(|e| e.to_string())?;
     if !response.ok() { return Err(response.text().await.unwrap_or_else(|_| "Ошибка запроса".into())); }
@@ -1444,6 +1468,9 @@ fn begin_invitation(state: AppState, token: String) {
             }
             Err(error) => {
                 set_note(&state, format!("Не удалось активировать приглашение: {error}"));
+                // Keep exchanging=true while restoring a pre-existing cookie session,
+                // so the landing page is not rendered between the failed exchange and recovery.
+                let _ = restore_session(&state, true).await;
             }
         }
         state.auth_ready.set_neq(true);
@@ -1529,23 +1556,13 @@ pub fn main() {
 
     let current = state.clone();
     spawn_local(async move {
-        match fetch_me().await {
-            Ok(Some(user)) if !current.exchanging.get() && current.user.lock_ref().is_none() => {
-                if user.role == "participant" {
-                    restore_draft(&current, &user.subject_id);
-                }
-                load_session_data(current.clone(), &user).await;
-                // An invitation exchange may have started while session data was loading.
-                if !current.exchanging.get() && current.user.lock_ref().is_none() {
-                    current.user.set(Some(user));
+        if !current.exchanging.get() {
+            if let Err(error) = restore_session(&current, false).await {
+                if !current.exchanging.get() {
+                    set_note(&current, format!("Не удалось проверить сессию: {error}"));
                 }
             }
-            Ok(_) => {}
-            Err(error) if !current.exchanging.get() => {
-                set_note(&current, format!("Не удалось проверить сессию: {error}"));
-            }
-            Err(_) => {}
         }
-        current.auth_ready.set(true);
+        current.auth_ready.set_neq(true);
     });
 }
