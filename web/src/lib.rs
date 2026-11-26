@@ -552,9 +552,7 @@ fn participant_tree(state: AppState) -> Dom {
                 .class("secondary")
                 .text("Админка")
                 .event(clone!(state => move |_: events::Click| {
-                    if let Some(window) = web_sys::window() {
-                        routing::go_to_url("/#/admin");
-                    }
+                    routing::go_to_url("/#/admin");
                 }))
             }))
             .child(html!("button", {
@@ -568,9 +566,7 @@ fn participant_tree(state: AppState) -> Dom {
                             Ok(()) => {
                                 disconnect_events(&s);
                                 s.user.set(None);
-                                if let Some(window) = web_sys::window() {
-                                    routing::go_to_url("/");
-                                }
+                                routing::go_to_url("/");
                             }
                             Err(error) => set_note(&s, error),
                         }
@@ -1012,9 +1008,7 @@ fn admin_screen(state: AppState) -> Dom {
                 .class("secondary")
                 .text("К ёлке")
                 .event(|_: events::Click| {
-                    if let Some(window) = web_sys::window() {
-                        routing::go_to_url("/");
-                    }
+                    routing::go_to_url("/");
                 })
             }))
             .child(html!("button", {
@@ -1287,9 +1281,7 @@ fn admin_login(state: AppState) -> Dom {
                         });
                         match post_json::<User>("/api/auth/admin/login", &body, None).await {
                             Ok(user) => {
-                                if let Some(window) = web_sys::window() {
-                                    routing::go_to_url("/#/admin");
-                                }
+                                routing::go_to_url("/#/admin");
                                 current.user.set(Some(user));
                                 load_participants(current.clone()).await;
                             }
