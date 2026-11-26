@@ -1,10 +1,11 @@
 # Jingle Bells audio attribution
 
-The presentation uses the recording **“Jingle Bells (90bpm)” by Kevin MacLeod**.
+The presentation uses the more energetic **“Jingle Bells” (120 BPM, stage-production arrangement) by Kevin MacLeod**.
 
 - Artist: Kevin MacLeod (Incompetech)
-- Recording source: https://commons.wikimedia.org/wiki/File:Jingle_Bells.ogg
-- Direct audio file: https://upload.wikimedia.org/wikipedia/commons/f/f0/Jingle_Bells_%2890bpm%29_%28Kevin_MacLeod%29_%28ISRC_USUAN1100187%29.oga
+- Recording source: https://commons.wikimedia.org/wiki/File:Jingle_Bells_(120bpm)_(Kevin_MacLeod)_(ISRC_USUAN1100187).opus
+- Audio file used: https://upload.wikimedia.org/wikipedia/commons/4/4d/Jingle_Bells_%28ISRC_USUAN1100187%29.mp3
+- Arrangement: piano, glockenspiel and celesta; bright, bouncy, uplifting; 120 BPM.
 - License: Creative Commons Attribution 3.0 Unported (CC BY 3.0): https://creativecommons.org/licenses/by/3.0/
 - Required attribution: “Jingle Bells” Kevin MacLeod (incompetech.com), licensed under CC BY 3.0.
 - Changes: none.

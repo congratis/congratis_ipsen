@@ -12,7 +12,8 @@ RUN npm install --no-audit --no-fund \
     && npm run build \
     && cp index.html dist/index.html \
     && cp style.css dist/style.css \
-    && cp ../frontend/christmas-tree.webp dist/christmas-tree.webp
+    && cp ../frontend/christmas-tree.webp dist/christmas-tree.webp \
+    && npm run finalize:assets
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
