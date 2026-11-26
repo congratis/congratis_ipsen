@@ -1343,9 +1343,12 @@ fn render_route(state: AppState, route: Route, user: Option<User>) -> Dom {
                     let body = serde_json::json!({ "token": token });
                     match post_json::<User>("/api/auth/participant/exchange", &body, None).await {
                         Ok(user) => {
-                            routing::replace_url("/");
                             restore_draft(&current, &user.subject_id);
+                            // Publish the authenticated state before changing the route.
+                            // Otherwise replacing the URL can tear down the invitation view
+                            // while its nested user signal is still waiting to render the tree.
                             current.user.set(Some(user));
+                            routing::replace_url("/");
                             load_campaign(current.clone()).await;
                             load_greetings(current.clone()).await;
                             connect_events(current);
