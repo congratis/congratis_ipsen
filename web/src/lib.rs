@@ -1436,9 +1436,11 @@ fn begin_invitation(state: AppState, token: String) {
                 restore_draft(&state, &user.subject_id);
                 state.user.set(Some(user.clone()));
                 load_session_data(state.clone(), &user).await;
+                state.auth_ready.set(true);
                 state.exchanging.set(false);
             }
             Err(error) => {
+                state.auth_ready.set(true);
                 state.exchanging.set(false);
                 set_note(&state, format!("Не удалось активировать приглашение: {error}"));
             }
@@ -1456,14 +1458,12 @@ fn watch_routes(state: AppState) {
     };
 
     spawn_local(signal.for_each(move |(route, user, ready)| {
-        if ready {
-            match (&route, &user) {
-                (Route::Invitation(token), _) => begin_invitation(state.clone(), token.clone()),
-                (Route::Admin, Some(user)) if user.role != "admin" => {
-                    routing::replace_url("/");
-                }
-                _ => {}
+        match (&route, &user) {
+            (Route::Invitation(token), _) => begin_invitation(state.clone(), token.clone()),
+            (Route::Admin, Some(user)) if ready && user.role != "admin" => {
+                routing::replace_url("/");
             }
+            _ => {}
         }
         async {}
     }));
@@ -1527,15 +1527,21 @@ pub fn main() {
     let current = state.clone();
     spawn_local(async move {
         match fetch_me().await {
-            Ok(Some(user)) => {
+            Ok(Some(user)) if !current.exchanging.get() && current.user.lock_ref().is_none() => {
                 if user.role == "participant" {
                     restore_draft(&current, &user.subject_id);
                 }
                 load_session_data(current.clone(), &user).await;
-                current.user.set(Some(user));
+                // An invitation exchange may have started while session data was loading.
+                if !current.exchanging.get() && current.user.lock_ref().is_none() {
+                    current.user.set(Some(user));
+                }
             }
-            Ok(None) => {}
-            Err(error) => set_note(&current, format!("Не удалось проверить сессию: {error}")),
+            Ok(_) => {}
+            Err(error) if !current.exchanging.get() => {
+                set_note(&current, format!("Не удалось проверить сессию: {error}"));
+            }
+            Err(_) => {}
         }
         current.auth_ready.set(true);
     });
