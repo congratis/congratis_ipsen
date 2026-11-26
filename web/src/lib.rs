@@ -19,12 +19,25 @@ enum Route {
 
 impl Route {
     fn from_url(url: &str) -> Self {
-        let fragment = url.split_once('#').map(|(_, fragment)| fragment).unwrap_or_default();
+        // Dominator's routing URL is the full href. Read the live fragment as
+        // well so invite links remain reliable if the browser URL is updated
+        // before the routing signal's next notification.
+        let live_hash = web_sys::window()
+            .and_then(|window| window.location().hash().ok())
+            .unwrap_or_default();
+        let fragment = live_hash
+            .strip_prefix('#')
+            .filter(|fragment| !fragment.is_empty())
+            .map(str::to_owned)
+            .or_else(|| url.rsplit_once('#').map(|(_, fragment)| fragment.to_owned()))
+            .unwrap_or_default();
+
         if let Some(token) = fragment.strip_prefix("invite=") {
             if !token.is_empty() {
                 return Self::Invitation(token.to_owned());
             }
         }
+
         let path = fragment
             .split('?')
             .next()
