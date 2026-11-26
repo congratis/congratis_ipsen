@@ -78,13 +78,19 @@ async fn main() -> Result<()> {
 
     println!("Connected to database: {database}");
     for table in ["ornaments", "auth_sessions"] {
-        let before: u64 = first(
-            r.db(database.as_str()).table(table).count(),
-            &session,
-        )
-        .await?;
+        let mut rows = r
+            .db(database.as_str())
+            .table(table)
+            .run::<_, serde_json::Value>(&session);
+        let mut before = 0u64;
+        while rows.try_next().await?.is_some() {
+            before += 1;
+        }
+
         let result: DeleteResult = first(
-            r.db(database.as_str()).table(table).delete(),
+            r.db(database.as_str())
+                .table(table)
+                .delete(reql::cmd::delete::Options::default()),
             &session,
         )
         .await?;
@@ -103,13 +109,12 @@ async fn main() -> Result<()> {
             );
         }
 
-        let remaining: u64 = first(
-            r.db(database.as_str()).table(table).count(),
-            &session,
-        )
-        .await?;
-        if remaining != 0 {
-            bail!("{database}.{table} is not empty after reset: {remaining} rows remain");
+        let mut remaining_rows = r
+            .db(database.as_str())
+            .table(table)
+            .run::<_, serde_json::Value>(&session);
+        if remaining_rows.try_next().await?.is_some() {
+            bail!("{database}.{table} is not empty after reset");
         }
 
         println!("{table}: {before} records found, {} deleted, verified empty", result.deleted);
