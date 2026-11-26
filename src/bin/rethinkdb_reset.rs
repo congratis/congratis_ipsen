@@ -78,9 +78,16 @@ async fn main() -> Result<()> {
 
     println!("Connected to database: {database}");
     for table in ["ornaments", "auth_sessions"] {
-        let query = r.db(database.as_str()).table(table);
-        let before: u64 = first(query.clone().count(), &session).await?;
-        let result: DeleteResult = first(query.delete(), &session).await?;
+        let before: u64 = first(
+            r.db(database.as_str()).table(table).count(),
+            &session,
+        )
+        .await?;
+        let result: DeleteResult = first(
+            r.db(database.as_str()).table(table).delete(),
+            &session,
+        )
+        .await?;
 
         if result.errors != 0 {
             bail!(
