@@ -1,5 +1,5 @@
 use dominator::{append_dom, clone, events, html, routing, Dom};
-use futures_signals::signal::{Mutable, SignalExt};
+use futures_signals::{map_ref, signal::{Mutable, SignalExt}};
 use gloo_net::http::Request;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, rc::Rc};
@@ -19,17 +19,10 @@ enum Route {
 
 impl Route {
     fn from_url(url: &str) -> Self {
-        // Dominator's routing URL is the full href. Read the live fragment as
-        // well so invite links remain reliable if the browser URL is updated
-        // before the routing signal's next notification.
-        let live_hash = web_sys::window()
-            .and_then(|window| window.location().hash().ok())
-            .unwrap_or_default();
-        let fragment = live_hash
-            .strip_prefix('#')
-            .filter(|fragment| !fragment.is_empty())
-            .map(str::to_owned)
-            .or_else(|| url.rsplit_once('#').map(|(_, fragment)| fragment.to_owned()))
+        // routing::url() is the sole source of navigation state.
+        let fragment = url
+            .split_once('#')
+            .map(|(_, fragment)| fragment)
             .unwrap_or_default();
 
         if let Some(token) = fragment.strip_prefix("invite=") {
@@ -69,6 +62,8 @@ struct EventSourceConnection {
 #[derive(Clone)]
 struct AppState {
     user: Mutable<Option<User>>,
+    auth_ready: Mutable<bool>,
+    exchanging: Mutable<bool>,
     greetings: Mutable<Vec<Greeting>>,
     participants: Mutable<Vec<Participant>>,
     campaign_count: Mutable<usize>,
@@ -96,7 +91,7 @@ struct AppState {
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
+        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), participants: Mutable::new(Vec::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -544,8 +539,7 @@ fn ipsen_brand() -> Dom {
     })
 }
 
-fn participant_tree(state: AppState) -> Dom {
-    let user = state.user.lock_ref().clone().unwrap();
+fn participant_tree(state: AppState, user: User) -> Dom {
     let is_mine = user.role == "participant";
     let pill_label = if is_mine { format!("Твой шар №{}", user.subject_id) } else { "Режим администратора".to_string() };
     html!("main", {
@@ -561,11 +555,11 @@ fn participant_tree(state: AppState) -> Dom {
                 .class("pill")
                 .text(&pill_label)
             }))
-            .child(html!("button", {
-                .class("secondary")
-                .text("Админка")
-                .event(clone!(state => move |_: events::Click| {
-                    routing::go_to_url("/#/admin");
+            .child_signal(futures_signals::signal::always(!is_mine).map(|visible| {
+                visible.then(|| html!("button", {
+                    .class("secondary")
+                    .text("Админка")
+                    .event(|_: events::Click| routing::go_to_url("/#/admin"))
                 }))
             }))
             .child(html!("button", {
@@ -577,8 +571,7 @@ fn participant_tree(state: AppState) -> Dom {
                     spawn_local(async move {
                         match post_empty("/api/auth/logout", &csrf).await {
                             Ok(()) => {
-                                disconnect_events(&s);
-                                s.user.set(None);
+                                reset_session_state(&s);
                                 routing::go_to_url("/");
                             }
                             Err(error) => set_note(&s, error),
@@ -1294,9 +1287,9 @@ fn admin_login(state: AppState) -> Dom {
                         });
                         match post_json::<User>("/api/auth/admin/login", &body, None).await {
                             Ok(user) => {
+                                current.user.set(Some(user.clone()));
                                 routing::go_to_url("/#/admin");
-                                current.user.set(Some(user));
-                                load_participants(current.clone()).await;
+                                load_session_data(current.clone(), &user).await;
                             }
                             Err(error) => set_note(&current, error),
                         }
@@ -1309,13 +1302,18 @@ fn admin_login(state: AppState) -> Dom {
         }))
     })
 }
-fn landing_screen() -> Dom {
+fn loading_screen() -> Dom {
     html!("main", {
         .class("shell")
-        .child(html!("div", {
-            .class("eyebrow")
-            .text("A LITTLE CHRISTMAS MAGIC")
-        }))
+        .attr("aria-busy", "true")
+        .child(html!("h1", {.text("Загрузка…")}))
+    })
+}
+
+fn landing_screen(state: AppState) -> Dom {
+    html!("main", {
+        .class("shell")
+        .child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")}))
         .child(html!("h1", {
             .text("Ёлка добрых ")
             .child(html!("span", {.text("пожеланий")}))
@@ -1329,85 +1327,170 @@ fn landing_screen() -> Dom {
                 .attr("decoding", "async")
             }))
         }))
+        .child(html!("div", {.class("note").text_signal(state.note.signal_cloned())}))
         .child(html!("button", {
             .class("primary")
             .text("Вход администратора")
-            .event(|_: events::Click| {
-                if let Some(window) = web_sys::window() {
-                    routing::go_to_url("/#/admin");
-                }
-            })
+            .event(|_: events::Click| routing::go_to_url("/#/admin"))
         }))
     })
 }
 
-fn render_route(state: AppState, route: Route, user: Option<User>) -> Dom {
-    match user {
-        Some(user) if user.role == "admin" => {
-            if route == Route::Admin { admin_screen(state) } else { participant_tree(state) }
+fn reset_session_state(state: &AppState) {
+    disconnect_events(state);
+    if let Some(audio) = state.audio.get_cloned() {
+        audio.pause();
+    }
+    state.audio.set(None);
+
+    state.user.set(None);
+    state.greetings.set(Vec::new());
+    state.participants.set(Vec::new());
+    state.campaign_count.set(0);
+    state.submitted_count.set(0);
+    state.selected.set(None);
+    state.presentation.set(false);
+    state.presentation_paused.set(false);
+    state.presentation_index.set(0);
+    state.presentation_ornament.set(None);
+    state.invite_url.set(String::new());
+    state.invite_urls.set(Vec::new());
+    state.name.set(String::new());
+    state.message.set(String::new());
+    state.admin_name.set(String::new());
+    state.admin_password.set(String::new());
+    state.campaign_creating.set(false);
+    state.submitting.set(false);
+    state.note.set(String::new());
+}
+
+async fn load_session_data(state: AppState, user: &User) {
+    load_campaign(state.clone()).await;
+    load_greetings(state.clone()).await;
+    if user.role == "admin" {
+        load_participants(state.clone()).await;
+    }
+    connect_events(state);
+}
+
+fn begin_invitation(state: AppState, token: String) {
+    if state.exchanging.replace(true) {
+        return;
+    }
+
+    // Remove the one-time token from the address bar and browser history immediately.
+    routing::replace_url("/");
+
+    spawn_local(async move {
+        let body = serde_json::json!({ "token": token });
+        match post_json::<User>("/api/auth/participant/exchange", &body, None).await {
+            Ok(user) => {
+                reset_session_state(&state);
+                restore_draft(&state, &user.subject_id);
+                state.user.set(Some(user.clone()));
+                load_session_data(state.clone(), &user).await;
+                state.exchanging.set(false);
+            }
+            Err(error) => {
+                state.exchanging.set(false);
+                set_note(&state, format!("Не удалось активировать приглашение: {error}"));
+            }
         }
-        Some(_) => participant_tree(state),
+    });
+}
+
+fn watch_routes(state: AppState) {
+    let signal = map_ref! {
+        let url = routing::url().signal_cloned(),
+        let user = state.user.signal_cloned(),
+        let ready = state.auth_ready.signal() => {
+            (Route::from_url(&url), user.clone(), *ready)
+        }
+    };
+
+    spawn_local(signal.for_each(move |(route, user, ready)| {
+        if ready {
+            match (&route, &user) {
+                (Route::Invitation(token), _) => begin_invitation(state.clone(), token.clone()),
+                (Route::Admin, Some(user)) if user.role != "admin" => {
+                    routing::replace_url("/");
+                }
+                _ => {}
+            }
+        }
+        async {}
+    }));
+}
+
+fn render_route(state: AppState, route: Route, user: Option<User>, ready: bool) -> Dom {
+    if !ready {
+        return loading_screen();
+    }
+
+    match user {
+        Some(user) if user.role == "admin" => match route {
+            Route::Admin => admin_screen(state),
+            Route::Invitation(_) => loading_screen(),
+            Route::Landing => participant_tree(state, user),
+        },
+        Some(user) => match route {
+            Route::Invitation(_) => loading_screen(),
+            _ => participant_tree(state, user),
+        },
         None => match route {
             Route::Admin => admin_login(state),
-            Route::Landing => landing_screen(),
-            Route::Invitation(token) => {
-                let current = state.clone();
-                spawn_local(async move {
-                    let body = serde_json::json!({ "token": token });
-                    match post_json::<User>("/api/auth/participant/exchange", &body, None).await {
-                        Ok(user) => {
-                            restore_draft(&current, &user.subject_id);
-                            // Publish the authenticated state before changing the route.
-                            // Otherwise replacing the URL can tear down the invitation view
-                            // while its nested user signal is still waiting to render the tree.
-                            current.user.set(Some(user));
-                            routing::replace_url("/");
-                            load_campaign(current.clone()).await;
-                            load_greetings(current.clone()).await;
-                            connect_events(current);
-                        }
-                        Err(error) => set_note(&current, format!("Не удалось активировать приглашение: {error}")),
-                    }
-                });
-                html!("main", {
-                    .class("shell")
-                    .child(html!("h1", {.text("Открываем твоё приглашение…")}))
-                    .child(html!("p", {.class("note").text_signal(state.note.signal_cloned())}))
-                })
-            }
+            Route::Landing => landing_screen(state),
+            Route::Invitation(_) => loading_screen(),
         },
     }
 }
 
 fn render(state: AppState) -> Dom {
+    let render_state = state.clone();
+    let view = map_ref! {
+        let url = routing::url().signal_cloned(),
+        let user = state.user.signal_cloned(),
+        let ready = state.auth_ready.signal(),
+        let exchanging = state.exchanging.signal() => {
+            let show_ready = *ready && !*exchanging;
+            Some(render_route(
+                render_state.clone(),
+                Route::from_url(&url),
+                user.clone(),
+                show_ready,
+            ))
+        }
+    };
+
     html!("div", {
-        .child_signal(routing::url().signal_ref(clone!(state => move |url| {
-            let route = Route::from_url(url);
-            Some(html!("div", {
-                .child_signal(state.user.signal_cloned().map(clone!(state, route => move |user| {
-                    Some(render_route(state.clone(), route.clone(), user))
-                })))
-            }))
-        })))
+        .child_signal(view)
     })
 }
 
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn main() {
     console_error_panic_hook::set_once();
-    let state=AppState::new();
+    let state = AppState::new();
     install_dialog_keyboard_handler(state.clone());
-    let app=render(state.clone());
-    if let Some(document)=web_sys::window().and_then(|w|w.document()) {
-        if let Some(root)=document.get_element_by_id("app"){append_dom(&root,app);}
+    watch_routes(state.clone());
+
+    let app = render(state.clone());
+    if let Some(root) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id("app"))
+    {
+        append_dom(&root, app);
     }
-    let s=state.clone();
+
+    let current = state.clone();
     spawn_local(async move {
-        if let Ok(user)=get_json::<User>("/api/me").await {
-            if user.role == "participant" { restore_draft(&s, &user.subject_id); }
-            s.user.set(Some(user.clone()));
-            load_campaign(s.clone()).await;
-            if user.role=="admin" {load_participants(s.clone()).await;} else {load_greetings(s.clone()).await;connect_events(s.clone());}
+        if let Ok(user) = get_json::<User>("/api/me").await {
+            if user.role == "participant" {
+                restore_draft(&current, &user.subject_id);
+            }
+            current.user.set(Some(user.clone()));
+            load_session_data(current.clone(), &user).await;
         }
+        current.auth_ready.set(true);
     });
 }
