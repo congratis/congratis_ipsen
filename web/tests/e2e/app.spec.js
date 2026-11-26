@@ -3,9 +3,24 @@ import { expect, test } from "@playwright/test";
 const participant = { subject_id: "1", role: "participant", csrf_token: "csrf-test" };
 const admin = { subject_id: "admin", role: "admin", csrf_token: "csrf-admin" };
 
-async function mockParticipantSession(page, { exchangeStatus = 200, participantCount = 20 } = {}) {
+test.beforeEach(async ({ page }) => {
+  page.on("console", message => console.log("[console]", message.type(), message.text()));
+  page.on("pageerror", error => {
+    console.error("[pageerror]", error);
+    throw error;
+  });
+  page.on("response", response => {
+    if (response.url().includes("/api/")) {
+      console.log("[api]", response.status(), response.url());
+    }
+  });
+});
+
+async function mockParticipantSession(page, { exchangeStatus = 200, participantCount = 20, meUser = null } = {}) {
   await page.route("**/api/me", route =>
-    route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ message: "Требуется авторизация" }) })
+    meUser
+      ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(meUser) })
+      : route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ message: "Требуется авторизация" }) })
   );
   await page.route("**/api/auth/participant/exchange", route => {
     if (exchangeStatus !== 200) {
@@ -106,12 +121,21 @@ test("ornaments are keyboard-operable and expose an accessible focus target", as
 });
 
 
-test("failed invite exchange keeps the invitation token available for retry", async ({ page }) => {
+test("failed invite exchange clears the consumed invitation token from the address", async ({ page }) => {
   await mockParticipantSession(page, { exchangeStatus: 409 });
   await page.goto("/#invite=one-time-token");
 
   await expect(page.getByText(/Не удалось активировать приглашение/)).toBeVisible();
-  await expect.poll(() => page.evaluate(() => location.hash)).toBe("#invite=one-time-token");
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("");
+});
+
+test("failed invite exchange preserves an existing cookie session", async ({ page }) => {
+  await mockParticipantSession(page, { exchangeStatus: 409, meUser: participant });
+  await page.goto("/#invite=one-time-token");
+
+  await expect(page.locator(".tree-frame")).toBeVisible();
+  await expect(page.getByText(/Не удалось активировать приглашение/)).toBeVisible();
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("");
 });
 
 test("participant draft is restored from local storage and updated while typing", async ({ page }) => {

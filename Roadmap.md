@@ -133,6 +133,10 @@ Congratis is an interactive New Year greeting experience. An organizer creates a
 6. Verify HTTPS, health, administrator login, campaign creation, invitation flow, greeting submission, SSE and persistence.
 7. Mark live deployment and Roadmap complete only after those checks succeed.
 
+## Separate technical-debt task
+
+- [ ] Investigate and fix the `wasm-opt: Fatal: error parsing wasm` warning emitted during the WASM/Rollup build. The build currently continues without WASM optimization; track this independently from browser-test failures and do not treat it as their root cause.
+
 ## Architecture principles
 
 - Backend data is authoritative for participant count, invitation status, greetings and progress.

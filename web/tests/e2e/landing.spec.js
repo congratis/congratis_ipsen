@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
 
+test.beforeEach(async ({ page }) => {
+  page.on("pageerror", error => {
+    console.error("[pageerror]", error);
+    throw error;
+  });
+});
+
 test("landing page shows the no-invitation artwork and keeps the admin entry point", async ({ page }) => {
   await page.route("**/api/me", route =>
     route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ message: "Требуется авторизация" }) })
