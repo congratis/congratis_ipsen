@@ -106,12 +106,12 @@ test("ornaments are keyboard-operable and expose an accessible focus target", as
 });
 
 
-test("failed invite exchange keeps the invitation token available for retry", async ({ page }) => {
+test("failed invite exchange clears the consumed invitation token from the address", async ({ page }) => {
   await mockParticipantSession(page, { exchangeStatus: 409 });
   await page.goto("/#invite=one-time-token");
 
   await expect(page.getByText(/Не удалось активировать приглашение/)).toBeVisible();
-  await expect.poll(() => page.evaluate(() => location.hash)).toBe("#invite=one-time-token");
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("");
 });
 
 test("participant draft is restored from local storage and updated while typing", async ({ page }) => {
