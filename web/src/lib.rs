@@ -25,7 +25,13 @@ impl Route {
                 return Self::Invitation(token.to_owned());
             }
         }
-        match fragment.trim_start_matches('/') {
+        let path = fragment
+            .split('?')
+            .next()
+            .unwrap_or_default()
+            .trim_matches('/');
+
+        match path {
             "admin" => Self::Admin,
             _ => Self::Landing,
         }
