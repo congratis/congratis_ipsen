@@ -1,4 +1,4 @@
-use dominator::{append_dom, clone, events, html, Dom};
+use dominator::{append_dom, clone, events, html, routing, Dom};
 use futures_signals::signal::{Mutable, SignalExt};
 use gloo_net::http::Request;
 use serde::{Deserialize, Serialize};
@@ -9,6 +9,30 @@ use web_sys::{Element, EventSource, HtmlAudioElement, HtmlElement, HtmlInputElem
 
 #[derive(Clone, Deserialize, Serialize)]
 struct User { subject_id: String, role: String, csrf_token: String }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Route {
+    Landing,
+    Admin,
+    Invitation(String),
+}
+
+impl Route {
+    fn from_url(url: &str) -> Self {
+        let fragment = url.split_once('#').map(|(_, fragment)| fragment).unwrap_or_default();
+
+        if let Some(token) = fragment.strip_prefix("invite=") {
+            if !token.is_empty() {
+                return Self::Invitation(token.to_owned());
+            }
+        }
+
+        match fragment.trim_start_matches('/') {
+            "admin" => Self::Admin,
+            _ => Self::Landing,
+        }
+    }
+}
 #[derive(Clone, Deserialize, Serialize)]
 struct Greeting { ornament_number: i16, display_name: String, message: String }
 #[derive(Clone, Deserialize)]
@@ -508,8 +532,7 @@ fn participant_tree(state: AppState) -> Dom {
                 .text("Админка")
                 .event(clone!(state => move |_: events::Click| {
                     if let Some(window) = web_sys::window() {
-                        let _ = window.location().set_hash("/admin");
-                        let _ = window.location().reload();
+                        routing::go_to_url("/#/admin");
                     }
                 }))
             }))
@@ -525,8 +548,7 @@ fn participant_tree(state: AppState) -> Dom {
                                 disconnect_events(&s);
                                 s.user.set(None);
                                 if let Some(window) = web_sys::window() {
-                                    let _ = window.location().set_hash("");
-                                    let _ = window.location().reload();
+                                    routing::go_to_url("/");
                                 }
                             }
                             Err(error) => set_note(&s, error),
@@ -970,8 +992,7 @@ fn admin_screen(state: AppState) -> Dom {
                 .text("К ёлке")
                 .event(|_: events::Click| {
                     if let Some(window) = web_sys::window() {
-                        let _ = window.location().set_hash("");
-                        let _ = window.location().reload();
+                        routing::go_to_url("/");
                     }
                 })
             }))
@@ -1246,7 +1267,7 @@ fn admin_login(state: AppState) -> Dom {
                         match post_json::<User>("/api/auth/admin/login", &body, None).await {
                             Ok(user) => {
                                 if let Some(window) = web_sys::window() {
-                                    let _ = window.location().set_hash("/admin");
+                                    routing::go_to_url("/#/admin");
                                 }
                                 current.user.set(Some(user));
                                 load_participants(current.clone()).await;
@@ -1287,79 +1308,71 @@ fn landing_screen() -> Dom {
             .text("Вход администратора")
             .event(|_: events::Click| {
                 if let Some(window) = web_sys::window() {
-                    let _ = window.location().set_hash("/admin");
-                    let _ = window.location().reload();
+                    routing::go_to_url("/#/admin");
                 }
             })
         }))
     })
 }
 
+fn render_route(state: AppState, route: Route, user: Option<User>) -> Dom {
+    match user {
+        Some(user) if user.role == "admin" => {
+            if route == Route::Admin {
+                admin_screen(state)
+            } else {
+                participant_tree(state)
+            }
+        }
+        Some(_) => participant_tree(state),
+        None => match route {
+            Route::Admin => admin_login(state),
+            Route::Landing => landing_screen(),
+            Route::Invitation(token) => {
+                let current = state.clone();
+                spawn_local(async move {
+                    let body = serde_json::json!({ "token": token });
+                    match post_json::<User>(
+                        "/api/auth/participant/exchange",
+                        &body,
+                        None,
+                    ).await {
+                        Ok(user) => {
+                            routing::replace_url("/");
+                            restore_draft(&current, &user.subject_id);
+                            current.user.set(Some(user));
+                            load_campaign(current.clone()).await;
+                            load_greetings(current.clone()).await;
+                            connect_events(current);
+                        }
+                        Err(error) => {
+                            set_note(&current, format!("Не удалось активировать приглашение: {error}"));
+                        }
+                    }
+                });
+
+                html!("main", {
+                    .class("shell")
+                    .child(html!("h1", {.text("Открываем твоё приглашение…")}))
+                    .child(html!("p", {
+                        .class("note")
+                        .text_signal(state.note.signal_cloned())
+                    }))
+                })
+            }
+        },
+    }
+}
+
 fn render(state: AppState) -> Dom {
     html!("div", {
-        .child_signal(state.user.signal_cloned().map(clone!(state => move |user| {
-            Some(if let Some(user) = user {
-                if user.role == "admin" {
-                    let is_admin = web_sys::window()
-                        .map(|window| window.location().hash().unwrap_or_default().contains("/admin"))
-                        .unwrap_or(false);
-                    if is_admin {
-                        admin_screen(state.clone())
-                    } else {
-                        participant_tree(state.clone())
-                    }
-                } else {
-                    participant_tree(state.clone())
-                }
-            } else {
-                let hash = web_sys::window()
-                    .map(|window| window.location().hash().unwrap_or_default())
-                    .unwrap_or_default();
-                if hash.starts_with("#invite=") {
-                    let token = hash.trim_start_matches("#invite=").to_string();
-                    let current = state.clone();
-                    spawn_local(async move {
-                        let body = serde_json::json!({"token": token});
-                        match post_json::<User>(
-                            "/api/auth/participant/exchange",
-                            &body,
-                            None,
-                        ).await {
-                            Ok(user) => {
-                                if let Some(window) = web_sys::window() {
-                                    if let Ok(history) = window.history() {
-                                        let _ = history.replace_state_with_url(
-                                            &wasm_bindgen::JsValue::NULL,
-                                            "",
-                                            Some("/"),
-                                        );
-                                    }
-                                }
-                                restore_draft(&current, &user.subject_id);
-                                current.user.set(Some(user));
-                                load_campaign(current.clone()).await;
-                                load_greetings(current.clone()).await;
-                                connect_events(current);
-                            }
-                            Err(error) => {
-                                set_note(&current, format!("Не удалось активировать приглашение: {error}"));
-                            }
-                        }
-                    });
-                    html!("main", {
-                        .class("shell")
-                        .child(html!("h1", {.text("Открываем твоё приглашение…")}))
-                        .child(html!("p", {
-                            .class("note")
-                            .text_signal(state.note.signal_cloned())
-                        }))
-                    })
-                } else if hash.contains("/admin") {
-                    admin_login(state.clone())
-                } else {
-                    landing_screen()
-                }
-            })
+        .child_signal(routing::url().signal_ref(clone!(state => move |url| {
+            let route = Route::from_url(url);
+            Some(html!("div", {
+                .child_signal(state.user.signal_cloned().map(clone!(state, route => move |user| {
+                    Some(render_route(state.clone(), route.clone(), user))
+                })))
+            }))
         })))
     })
 }
