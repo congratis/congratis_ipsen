@@ -487,12 +487,29 @@ fn field(
         })) })
     }
 }
+fn ipsen_brand() -> Dom {
+    html!("a", {
+        .class("ipsen-brand")
+        .attr("href", "https://www.ipsen.com/")
+        .attr("target", "_blank")
+        .attr("rel", "noopener noreferrer")
+        .attr("aria-label", "Ipsen — официальный сайт")
+        .child(html!("img", {
+            .attr("src", "https://www.ipsen.com/wp-content/uploads/2023/12/Latest_Ipsen-logo_168x48.svg")
+            .attr("alt", "Ipsen")
+            .attr("width", "168")
+            .attr("height", "48")
+        }))
+    })
+}
+
 fn participant_tree(state: AppState) -> Dom {
     let user = state.user.lock_ref().clone().unwrap();
     let is_mine = user.role == "participant";
     let pill_label = if is_mine { format!("Твой шар №{}", user.subject_id) } else { "Режим администратора".to_string() };
     html!("main", {
-        .class("shell")
+        .class(if is_mine { "shell authenticated-shell" } else { "shell" })
+        .child_signal(futures_signals::signal::always(is_mine).map(|visible| visible.then(ipsen_brand)))
         .child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")}))
         .child(html!("h1", {.text("Ёлка добрых ").child(html!("span", {.text("пожеланий")}))}))
         .child(html!("p", {.class("team-subtitle").text("команда редких заболеваний")}))
