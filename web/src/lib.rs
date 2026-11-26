@@ -201,7 +201,7 @@ fn install_dialog_keyboard_handler(state: AppState) {
         callback.forget();
     }
 }
-const JINGLE_BELLS_URL: &str = "https://upload.wikimedia.org/wikipedia/commons/4/4d/Jingle_Bells_%28ISRC_USUAN1100187%29.mp3";
+const PRESENTATION_AUDIO_URL: &str = "/music.mp3";
 
 fn set_presentation_index(state: &AppState, index: usize) {
     let greetings = state.greetings.get_cloned();
@@ -212,7 +212,7 @@ fn set_presentation_index(state: &AppState, index: usize) {
 fn play_presentation_audio(state: AppState) {
     let audio = match state.audio.get_cloned() {
         Some(audio) => audio,
-        None => match HtmlAudioElement::new_with_src(JINGLE_BELLS_URL) {
+        None => match HtmlAudioElement::new_with_src(PRESENTATION_AUDIO_URL) {
             Ok(audio) => {
                 audio.set_loop(true);
                 audio.set_volume(state.music_volume.get().clamp(0.0, 1.0));
@@ -840,17 +840,6 @@ fn participant_tree(state: AppState) -> Dom {
                                                                 .event(clone!(state => move |_: events::Click| exit_presentation(state.clone())))
                             }))
                         }))
-                        .child(html!("p", {
-                            .class("audio-attribution")
-                            .text("Музыка: ")
-                            .child(html!("a", {
-                                .attr("href", "https://commons.wikimedia.org/wiki/File:Jingle_Bells.ogg")
-                                .attr("target", "_blank")
-                                .attr("rel", "noopener noreferrer")
-                                .text("Jingle Bells — Kevin MacLeod")
-                            }))
-                            .child(html!("span", {.text(" · CC BY 3.0")}))
-                        }))
                     }))
                 }))
             }
@@ -1283,10 +1272,6 @@ fn landing_screen() -> Dom {
         .child(html!("h1", {
             .text("Ёлка добрых ")
             .child(html!("span", {.text("пожеланий")}))
-        }))
-        .child(html!("p", {
-            .class("team-subtitle")
-            .text("команда редких заболеваний")
         }))
         .child(html!("div", {
             .class("no-invitation-art")
