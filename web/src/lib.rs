@@ -105,6 +105,10 @@ impl AppState {
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
+fn trace(msg: &str) {
+    web_sys::console::log_1(&format!("[congratis] {msg}").into());
+}
+
 async fn fetch_me() -> Result<Option<User>, String> {
     let response = Request::get("/api/me").send().await.map_err(|error| error.to_string())?;
     let status = response.status();
@@ -1438,20 +1442,27 @@ fn reset_session_state(state: &AppState) {
 }
 
 async fn load_session_data(state: AppState, user: &User) {
+    trace("data: loading campaign");
     load_campaign(state.clone()).await;
+    trace("data: campaign loaded");
     load_greetings(state.clone()).await;
+    trace("data: greetings loaded");
     if user.role == "admin" {
         load_participants(state.clone()).await;
+        trace("data: participants loaded");
     }
     connect_events(state);
+    trace("data: SSE connected");
 }
 
 fn begin_invitation(state: AppState, token: String) {
     if state.exchanging.replace(true) {
+        trace("invite: exchange skipped (already exchanging)");
         return;
     }
 
     spawn_local(async move {
+        trace("invite: exchange started");
         let body = serde_json::json!({ "token": token });
         let result = post_json::<User>("/api/auth/participant/exchange", &body, None).await;
 
@@ -1461,20 +1472,27 @@ fn begin_invitation(state: AppState, token: String) {
 
         match result {
             Ok(user) => {
+                trace("exchange ok");
                 reset_session_state(&state);
+                trace("session reset");
                 restore_draft(&state, &user.subject_id);
                 state.user.set(Some(user.clone()));
+                trace("user set");
                 load_session_data(state.clone(), &user).await;
+                trace("data loaded");
             }
             Err(error) => {
+                trace(&format!("exchange error: {error}"));
                 set_note(&state, format!("Не удалось активировать приглашение: {error}"));
                 // Keep exchanging=true while restoring a pre-existing cookie session,
                 // so the landing page is not rendered between the failed exchange and recovery.
                 let _ = restore_session(&state, true).await;
+                trace("error: session restore finished");
             }
         }
         state.auth_ready.set_neq(true);
         state.exchanging.set(false);
+        trace("done");
     });
 }
 

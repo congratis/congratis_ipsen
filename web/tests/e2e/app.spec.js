@@ -3,6 +3,16 @@ import { expect, test } from "@playwright/test";
 const participant = { subject_id: "1", role: "participant", csrf_token: "csrf-test" };
 const admin = { subject_id: "admin", role: "admin", csrf_token: "csrf-admin" };
 
+test.beforeEach(async ({ page }) => {
+  page.on("console", message => console.log("[console]", message.type(), message.text()));
+  page.on("pageerror", error => console.log("[pageerror]", error.message));
+  page.on("response", response => {
+    if (response.url().includes("/api/")) {
+      console.log("[api]", response.status(), response.url());
+    }
+  });
+});
+
 async function mockParticipantSession(page, { exchangeStatus = 200, participantCount = 20, meUser = null } = {}) {
   await page.route("**/api/me", route =>
     meUser
