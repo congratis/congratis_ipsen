@@ -14,6 +14,10 @@ const CAMPAIGNS_TABLE: &str = "campaigns";
 pub const LEGACY_CAMPAIGN_ID: &str = "legacy-default";
 const INDEX_PROBE_TOKEN: &str = "__congratis_index_probe__";
 
+fn campaign_ornament_key(campaign_id: &str, ornament_number: i16) -> String {
+    format!("{campaign_id}:{ornament_number}")
+}
+
 fn token_index_options() -> reql::cmd::get_all::Options {
     let mut options = reql::cmd::get_all::Options::default();
     options.index = Some(TOKEN_INDEX.into());
@@ -513,7 +517,7 @@ impl Store {
             .iter()
             .map(|(number, token_hash)| {
                 json!({
-                    "id": format!("{campaign_id}:{number}"),
+                    "id": campaign_ornament_key(campaign_id, *number),
                     "ornament_number": number,
                     "campaign_id": campaign_id,
                     "token_hash": token_hash,
@@ -573,7 +577,7 @@ impl Store {
         ornament_number: i16,
         token_hash: &str,
     ) -> Result<bool> {
-        let id = format!("{campaign_id}:{ornament_number}");
+        let id = campaign_ornament_key(campaign_id, ornament_number);
         let update = reql::func!(|document| {
             r.branch(
                 r.args((
@@ -1019,6 +1023,49 @@ impl Store {
     }
 }
 
+
+#[cfg(test)]
+mod campaign_storage_model_tests {
+    use super::{campaign_ornament_key, Ornament};
+
+    fn ornament_json(id: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "ornament_number": 1,
+            "campaign_id": "campaign-a",
+            "token_hash": "hash",
+            "used": false,
+            "activated": false,
+            "revoked": false,
+            "display_name": null,
+            "message": null,
+            "created_at": 1,
+            "used_at": null
+        })
+    }
+
+    #[test]
+    fn legacy_numeric_primary_key_remains_compatible() {
+        let ornament: Ornament = serde_json::from_value(ornament_json(serde_json::json!(1)))
+            .expect("legacy numeric ID should deserialize");
+        assert_eq!(ornament.id, serde_json::json!(1));
+    }
+
+    #[test]
+    fn campaign_scoped_string_primary_key_deserializes() {
+        let ornament: Ornament =
+            serde_json::from_value(ornament_json(serde_json::json!("campaign-a:1")))
+                .expect("campaign-scoped string ID should deserialize");
+        assert_eq!(ornament.id, serde_json::json!("campaign-a:1"));
+    }
+
+    #[test]
+    fn identical_ornament_numbers_have_distinct_campaign_keys() {
+        assert_eq!(campaign_ornament_key("campaign-a", 1), "campaign-a:1");
+        assert_eq!(campaign_ornament_key("campaign-b", 1), "campaign-b:1");
+        assert_ne!(campaign_ornament_key("campaign-a", 1), campaign_ornament_key("campaign-b", 1));
+    }
+}
 
 #[cfg(test)]
 mod campaign_migration_compat_tests {
