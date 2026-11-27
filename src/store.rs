@@ -14,6 +14,10 @@ const CAMPAIGNS_TABLE: &str = "campaigns";
 pub const LEGACY_CAMPAIGN_ID: &str = "legacy-default";
 const INDEX_PROBE_TOKEN: &str = "__congratis_index_probe__";
 
+fn campaign_ornament_key(campaign_id: &str, ornament_number: i16) -> String {
+    format!("{campaign_id}:{ornament_number}")
+}
+
 fn token_index_options() -> reql::cmd::get_all::Options {
     let mut options = reql::cmd::get_all::Options::default();
     options.index = Some(TOKEN_INDEX.into());
@@ -69,7 +73,7 @@ pub struct GreetingEvent {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Ornament {
-    pub id: i16,
+    pub id: Value,
     pub ornament_number: i16,
     #[serde(default)]
     pub campaign_id: Option<String>,
@@ -83,6 +87,14 @@ pub struct Ornament {
     pub message: Option<String>,
     pub created_at: i64,
     pub used_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Campaign {
+    pub id: String,
+    pub name: String,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -265,7 +277,7 @@ impl Store {
                 .first::<WriteResult>(
                     r.db(self.database.as_str())
                         .table(TABLE)
-                        .get(ornament.id)
+                        .get(ornament.id.clone())
                         .update(json!({"campaign_id": LEGACY_CAMPAIGN_ID})),
                 )
                 .await?
@@ -403,6 +415,229 @@ impl Store {
         }
         ornaments.sort_by_key(|ornament| ornament.ornament_number);
         Ok(ornaments)
+    }
+
+    pub async fn list_campaigns(&self) -> Result<Vec<Campaign>> {
+        let mut stream = r
+            .db(self.database.as_str())
+            .table(CAMPAIGNS_TABLE)
+            .run::<_, Campaign>(&self.session);
+        let mut campaigns = Vec::new();
+        while let Some(campaign) = stream.try_next().await? {
+            campaigns.push(campaign);
+        }
+        campaigns.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.name.cmp(&b.name)));
+        Ok(campaigns)
+    }
+
+    pub async fn get_campaign(&self, campaign_id: &str) -> Result<Option<Campaign>> {
+        self.first(r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(campaign_id)).await
+    }
+
+    pub async fn create_campaign(&self, campaign_id: &str, name: &str) -> Result<Campaign> {
+        let name = name.trim();
+        if campaign_id.trim().is_empty() || name.is_empty() || name.chars().count() > 100 {
+            bail!("campaign ID and a campaign name of 1–100 characters are required");
+        }
+        if self.get_campaign(campaign_id).await?.is_some() {
+            bail!("campaign already exists");
+        }
+        let now = Utc::now().timestamp();
+        let campaign = Campaign {
+            id: campaign_id.to_owned(),
+            name: name.to_owned(),
+            created_at: now,
+            updated_at: now,
+        };
+        let result = self
+            .first::<WriteResult>(
+                r.db(self.database.as_str())
+                    .table(CAMPAIGNS_TABLE)
+                    .insert(&campaign),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("missing campaign insert result"))?;
+        if result.errors != 0 || result.inserted != 1 {
+            bail!("campaign insert failed: {}", result.first_error.unwrap_or_default());
+        }
+        Ok(campaign)
+    }
+
+    pub async fn list_campaign_ornaments(&self, campaign_id: &str) -> Result<Vec<Ornament>> {
+        let mut stream = r
+            .db(self.database.as_str())
+            .table(TABLE)
+            .filter(reql::func!(|document| document.get_field("campaign_id").eq(campaign_id)))
+            .run::<_, Ornament>(&self.session);
+        let mut ornaments = Vec::new();
+        while let Some(ornament) = stream.try_next().await? {
+            ornaments.push(ornament);
+        }
+        ornaments.sort_by_key(|item| item.ornament_number);
+        Ok(ornaments)
+    }
+
+    /// Inserts invitations under deterministic campaign-scoped primary keys.
+    /// A slot collision or a globally duplicated token hash is rejected.
+    pub async fn insert_campaign_invitations(
+        &self,
+        campaign_id: &str,
+        invitations: &[(i16, String)],
+    ) -> Result<()> {
+        if self.get_campaign(campaign_id).await?.is_none() {
+            bail!("campaign does not exist");
+        }
+        if invitations.is_empty() {
+            bail!("at least one invitation is required");
+        }
+
+        let existing = self.list_campaign_ornaments(campaign_id).await?;
+        let occupied: std::collections::HashSet<i16> =
+            existing.iter().map(|item| item.ornament_number).collect();
+        let all_ornaments = self.list_ornaments().await?;
+        let existing_hashes: std::collections::HashSet<String> =
+            all_ornaments.into_iter().map(|item| item.token_hash).collect();
+        let mut numbers = std::collections::HashSet::new();
+        let mut hashes = std::collections::HashSet::new();
+
+        for (number, token_hash) in invitations {
+            if !(1..=35).contains(number)
+                || occupied.contains(number)
+                || !numbers.insert(*number)
+            {
+                bail!("invitation slots must be unique unused values between 1 and 35");
+            }
+            if existing_hashes.contains(token_hash) || !hashes.insert(token_hash) {
+                bail!("duplicate invitation token hash");
+            }
+        }
+
+        let created_at = Utc::now().timestamp();
+        let documents: Vec<Value> = invitations
+            .iter()
+            .map(|(number, token_hash)| {
+                json!({
+                    "id": campaign_ornament_key(campaign_id, *number),
+                    "ornament_number": number,
+                    "campaign_id": campaign_id,
+                    "token_hash": token_hash,
+                    "used": false,
+                    "activated": false,
+                    "revoked": false,
+                    "display_name": null,
+                    "message": null,
+                    "created_at": created_at,
+                    "used_at": null
+                })
+            })
+            .collect();
+
+        let result = self
+            .first::<WriteResult>(
+                r.db(self.database.as_str())
+                    .table(TABLE)
+                    .insert(documents),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("missing campaign invitation insert result"))?;
+        if result.errors != 0 || result.inserted != invitations.len() as u64 {
+            bail!(
+                "campaign invitation insert incomplete: inserted={}, errors={}, first_error={:?}",
+                result.inserted,
+                result.errors,
+                result.first_error
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn list_campaign_participants(
+        &self,
+        campaign_id: &str,
+    ) -> Result<Vec<ParticipantSummary>> {
+        Ok(self
+            .list_campaign_ornaments(campaign_id)
+            .await?
+            .into_iter()
+            .map(|item| ParticipantSummary {
+                ornament_number: item.ornament_number,
+                activated: item.activated,
+                submitted: item.used,
+                revoked: item.revoked,
+                display_name: item.display_name,
+                created_at: item.created_at,
+                used_at: item.used_at,
+            })
+            .collect())
+    }
+
+    pub async fn reissue_campaign_invitation(
+        &self,
+        campaign_id: &str,
+        ornament_number: i16,
+        token_hash: &str,
+    ) -> Result<bool> {
+        let id = campaign_ornament_key(campaign_id, ornament_number);
+        let update = reql::func!(|document| {
+            r.branch(
+                r.args((
+                    document.clone().get_field("campaign_id").eq(campaign_id)
+                        .and(document.clone().get_field("activated").default(r.expr(false)).eq(false))
+                        .and(document.clone().get_field("used").eq(false)),
+                    document.clone().merge(r.expr(json!({
+                        "token_hash": token_hash,
+                        "revoked": false,
+                        "created_at": Utc::now().timestamp()
+                    }))),
+                    document
+                ))
+            )
+        });
+        let result = self
+            .first::<WriteResult>(
+                r.db(self.database.as_str())
+                    .table(TABLE)
+                    .get(id)
+                    .update(update),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("missing campaign invitation reissue result"))?;
+        if result.errors != 0 {
+            bail!("campaign invitation reissue failed: {}", result.first_error.unwrap_or_default());
+        }
+        Ok(result.replaced == 1)
+    }
+
+    pub async fn revoke_campaign_invitation(
+        &self,
+        campaign_id: &str,
+        ornament_number: i16,
+    ) -> Result<bool> {
+        let id = campaign_ornament_key(campaign_id, ornament_number);
+        let update = reql::func!(|document| {
+            r.branch(
+                r.args((
+                    document.clone().get_field("campaign_id").eq(campaign_id)
+                        .and(document.clone().get_field("activated").default(r.expr(false)).eq(false))
+                        .and(document.clone().get_field("used").eq(false)),
+                    document.clone().merge(r.expr(json!({"revoked": true}))),
+                    document
+                ))
+            )
+        });
+        let result = self
+            .first::<WriteResult>(
+                r.db(self.database.as_str())
+                    .table(TABLE)
+                    .get(id)
+                    .update(update),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("missing campaign invitation revoke result"))?;
+        if result.errors != 0 {
+            bail!("campaign invitation revoke failed: {}", result.first_error.unwrap_or_default());
+        }
+        Ok(result.replaced == 1)
     }
 
     pub async fn list_greetings(&self) -> Result<Vec<Ornament>> {
@@ -788,6 +1023,49 @@ impl Store {
     }
 }
 
+
+#[cfg(test)]
+mod campaign_storage_model_tests {
+    use super::{campaign_ornament_key, Ornament};
+
+    fn ornament_json(id: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "ornament_number": 1,
+            "campaign_id": "campaign-a",
+            "token_hash": "hash",
+            "used": false,
+            "activated": false,
+            "revoked": false,
+            "display_name": null,
+            "message": null,
+            "created_at": 1,
+            "used_at": null
+        })
+    }
+
+    #[test]
+    fn legacy_numeric_primary_key_remains_compatible() {
+        let ornament: Ornament = serde_json::from_value(ornament_json(serde_json::json!(1)))
+            .expect("legacy numeric ID should deserialize");
+        assert_eq!(ornament.id, serde_json::json!(1));
+    }
+
+    #[test]
+    fn campaign_scoped_string_primary_key_deserializes() {
+        let ornament: Ornament =
+            serde_json::from_value(ornament_json(serde_json::json!("campaign-a:1")))
+                .expect("campaign-scoped string ID should deserialize");
+        assert_eq!(ornament.id, serde_json::json!("campaign-a:1"));
+    }
+
+    #[test]
+    fn identical_ornament_numbers_have_distinct_campaign_keys() {
+        assert_eq!(campaign_ornament_key("campaign-a", 1), "campaign-a:1");
+        assert_eq!(campaign_ornament_key("campaign-b", 1), "campaign-b:1");
+        assert_ne!(campaign_ornament_key("campaign-a", 1), campaign_ornament_key("campaign-b", 1));
+    }
+}
 
 #[cfg(test)]
 mod campaign_migration_compat_tests {
