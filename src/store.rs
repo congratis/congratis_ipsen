@@ -1208,3 +1208,21 @@ mod campaign_migration_compat_tests {
         assert_eq!(ornament.campaign_id.as_deref(), Some("legacy-default"));
     }
 }
+
+
+#[cfg(test)]
+mod campaign_deletion_validation_tests {
+    use super::{validate_campaign_deletion, LEGACY_CAMPAIGN_ID};
+
+    #[test]
+    fn deletion_requires_exact_campaign_name() {
+        assert!(validate_campaign_deletion("campaign-a", "Winter 2026", "Winter 2026").is_ok());
+        assert!(validate_campaign_deletion("campaign-a", "Winter 2026", "winter 2026").is_err());
+        assert!(validate_campaign_deletion("campaign-a", "Winter 2026", "Winter 2026 ").is_err());
+    }
+
+    #[test]
+    fn legacy_campaign_is_never_deletable() {
+        assert!(validate_campaign_deletion(LEGACY_CAMPAIGN_ID, "Существующая кампания", "Существующая кампания").is_err());
+    }
+}
