@@ -165,21 +165,37 @@ test("participant draft is restored from local storage and updated while typing"
 });
 
 
-test("Escape closes the greeting form without discarding its saved draft", async ({ page }) => {
+test("submission dialog traps keyboard focus and restores it without discarding the draft", async ({ page }) => {
   await mockParticipantSession(page);
   await page.goto("/#invite=valid-invite-token");
   await expect(page.locator(".tree-frame")).toBeVisible();
-  await page.getByRole("button", { name: "Шар номер 1", exact: true }).click();
-  await page.getByRole("textbox", { name: "Как тебя зовут?", exact: true }).fill("Иван");
 
-  const dialog = page.getByRole("dialog", { name: "Добавь своё пожелание" });
+  const ornament = page.getByRole("button", { name: "Шар номер 1", exact: true });
+  await ornament.click();
+  let dialog = page.getByRole("dialog", { name: "Добавь своё пожелание" });
   await expect(dialog).toBeVisible();
-  await dialog.focus();
-  await page.keyboard.press("Escape");
 
+  const close = dialog.getByRole("button", { name: "Закрыть форму поздравления" });
+  const submit = dialog.getByRole("button", { name: "Опубликовать поздравление" });
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(submit).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(close).toBeFocused();
+
+  await dialog.getByRole("textbox", { name: "Как тебя зовут?", exact: true }).fill("Иван");
+  await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
+  await expect(ornament).toBeFocused();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("congratis:draft:1")))
     .toContain("Иван");
+
+  await ornament.click();
+  dialog = page.getByRole("dialog", { name: "Добавь своё пожелание" });
+  await expect(dialog.getByRole("textbox", { name: "Как тебя зовут?", exact: true })).toHaveValue("Иван");
+  await dialog.getByRole("button", { name: "Закрыть форму поздравления" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(ornament).toBeFocused();
 });
 
 test("participant can submit a greeting only once even after a rapid double click", async ({ page }) => {

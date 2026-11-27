@@ -26,7 +26,7 @@ Congratis is an interactive New Year greeting experience. An organizer creates a
 | Presentation and Jingle Bells | Implemented | Controls, silent fallback, reduced-motion handling and attribution |
 | Administration UI | Implemented | Login, named campaign creation, campaign list, participant management, invitation add/reissue/revoke and exact-name deletion |
 | Multi-campaign isolation | Implemented | Campaign-scoped invitations, greetings, participant sessions and SSE; RethinkDB integration test verifies cross-campaign isolation and deletion |
-| Dialog keyboard accessibility | In progress | Escape exists; Tab/Shift+Tab trapping and focus restoration are under CI |
+| Dialog keyboard accessibility | Implemented | Native modal focus trap, initial focus, Escape/close, focus restoration and draft preservation covered by Playwright |
 | Production CI validation | Passed on current main baseline | Full Docker stack, Nginx bootstrap/TLS checks and real backend HTTP smoke test |
 | Live VPS deployment | Not yet verified | Deliberately not executed during repository development; requires separate authorization for production operations |
 
