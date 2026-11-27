@@ -3,7 +3,7 @@ use axum::{
     extract::State,
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{sse::{Event, KeepAlive, Sse}, IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use christmas_greetings::store::{AuthSession, GreetingEvent, Store};
@@ -49,6 +49,8 @@ struct CreateCampaign { participant_count: i16 }
 struct CreateNamedCampaign { name: String, participant_count: i16 }
 #[derive(Deserialize)]
 struct AddCampaignInvitations { count: i16 }
+#[derive(Deserialize)]
+struct DeleteCampaign { confirm_name: String }
 #[derive(Serialize)]
 struct CampaignAdminItem {
     id: String,
@@ -440,6 +442,35 @@ async fn admin_create_named_campaign(
     })))
 }
 
+async fn admin_delete_campaign(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(campaign_id): axum::extract::Path<String>,
+    Json(payload): Json<DeleteCampaign>,
+) -> Result<StatusCode, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "admin" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав"));
+    }
+    verify_csrf(&headers, &session)?;
+
+    let deleted = state.store.delete_campaign(&campaign_id, &payload.confirm_name).await.map_err(|error| {
+        let message = error.to_string();
+        if message.contains("legacy campaign") {
+            ApiError(StatusCode::FORBIDDEN, "Существующую кампанию удалить нельзя")
+        } else if message.contains("confirmation") {
+            ApiError(StatusCode::BAD_REQUEST, "Название кампании не совпадает")
+        } else {
+            tracing::error!(?error, campaign_id = %campaign_id, "campaign deletion failed");
+            ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось удалить кампанию")
+        }
+    })?;
+    if !deleted {
+        return Err(ApiError(StatusCode::NOT_FOUND, "Кампания не найдена"));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn admin_campaign_participants(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -604,6 +635,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/campaign", get(campaign_summary))
         .route("/api/admin/campaign", post(admin_create_campaign))
         .route("/api/admin/campaigns", get(admin_list_campaigns).post(admin_create_named_campaign))
+        .route("/api/admin/campaigns/{campaign_id}", delete(admin_delete_campaign))
         .route("/api/admin/campaigns/{campaign_id}/participants", get(admin_campaign_participants))
         .route("/api/admin/campaigns/{campaign_id}/invitations", post(admin_add_campaign_invitations))
         .route("/api/admin/campaigns/{campaign_id}/invitations/{number}/reissue", post(admin_reissue_campaign_invitation))
