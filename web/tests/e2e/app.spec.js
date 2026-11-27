@@ -654,3 +654,85 @@ test("admin campaign creation rejects participant counts outside 1 through 35", 
   await expect(page.locator(".note")).toContainText("от 1 до 35");
   expect(creationRequests).toBe(0);
 });
+
+
+test("admin can create and delete a named campaign with exact-name confirmation", async ({ page }) => {
+  let campaigns = [{
+    id: "legacy-default", name: "Существующая кампания", created_at: 1,
+    participant_count: 0, submitted_count: 0
+  }];
+  let deleteRequest = null;
+
+  await page.route("**/api/me", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(admin) })
+  );
+  await page.route("**/api/campaign", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ participant_count: 0, submitted_count: 0 }) })
+  );
+  await page.route("**/api/greetings", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
+  );
+  await page.route("**/api/admin/participants", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
+  );
+  await page.route("**/api/events", route =>
+    route.fulfill({ status: 200, contentType: "text/event-stream", body: ": connected\\n\\n" })
+  );
+  await page.route("**/api/admin/campaigns", async route => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(campaigns) });
+    }
+    if (request.method() === "POST") {
+      expect(request.headers()["x-csrf-token"]).toBe("csrf-admin");
+      expect(request.postDataJSON()).toEqual({ name: "Зимний вечер", participant_count: 2 });
+      const created = {
+        id: "new-campaign", name: "Зимний вечер", created_at: 2,
+        participant_count: 2, submitted_count: 0
+      };
+      campaigns = [...campaigns, created];
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          campaign: created,
+          invitations: [
+            { ornament_number: 1, token: "winter-one" },
+            { ornament_number: 2, token: "winter-two" }
+          ]
+        })
+      });
+    }
+    return route.continue();
+  });
+  await page.route("**/api/admin/campaigns/new-campaign", async route => {
+    const request = route.request();
+    expect(request.method()).toBe("DELETE");
+    expect(request.headers()["x-csrf-token"]).toBe("csrf-admin");
+    expect(request.postDataJSON()).toEqual({ confirm_name: "Зимний вечер" });
+    deleteRequest = request;
+    campaigns = campaigns.filter(item => item.id !== "new-campaign");
+    return route.fulfill({ status: 204 });
+  });
+
+  await page.goto("/#/admin");
+  await expect(page.getByRole("heading", { name: "Кампании" })).toBeVisible();
+  await page.getByRole("textbox", { name: "Название кампании" }).fill("Зимний вечер");
+  await page.getByRole("spinbutton", { name: "Размер новой кампании" }).fill("2");
+  await page.getByRole("button", { name: "Создать именованную кампанию" }).click();
+
+  await expect(page.getByText("Зимний вечер", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Ссылка для шара №1")).toHaveValue(/#invite=winter-one$/);
+  const legacyCard = page.locator(".admin-item").filter({ hasText: "Системная кампания — удаление запрещено" });
+  await expect(legacyCard.getByRole("button", { name: "Удалить кампанию" })).toHaveCount(0);
+
+  page.once("dialog", dialog => {
+    expect(dialog.type()).toBe("prompt");
+    dialog.accept("Зимний вечер");
+  });
+  const campaignCard = page.locator(".admin-item").filter({ hasText: "Зимний вечер" });
+  await campaignCard.getByRole("button", { name: "Удалить кампанию" }).click();
+  await expect.poll(() => deleteRequest !== null).toBe(true);
+  await expect(campaignCard).toHaveCount(0);
+  await expect(page.getByText("Кампания «Зимний вечер» удалена.")).toBeVisible();
+});
