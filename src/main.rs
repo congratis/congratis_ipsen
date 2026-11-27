@@ -154,13 +154,14 @@ fn verify_csrf(headers: &HeaderMap, session: &AuthSession) -> Result<(), ApiErro
     }
     Ok(())
 }
-async fn new_session(state: &AppState, subject_id: String, role: &str, ttl: i64) -> Result<(String, String), ApiError> {
+async fn new_session(state: &AppState, subject_id: String, role: &str, campaign_id: Option<String>, ttl: i64) -> Result<(String, String), ApiError> {
     let raw_session = random_secret();
     let raw_csrf = random_secret();
     let now = chrono::Utc::now().timestamp();
     let session = AuthSession {
         id: digest(&raw_session), subject_id, role: role.to_owned(),
         csrf_hash: digest(&raw_csrf), created_at: now, expires_at: now + ttl, revoked: false,
+        campaign_id,
     };
     state.store.create_auth_session(&session).await.map_err(|e| {
         tracing::error!(?e, "session creation failed");
@@ -183,11 +184,11 @@ async fn participant_exchange(
     if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректное приглашение"));
     }
-    let ornament = state.store.activate_invitation(&digest(token)).await.map_err(|e| {
+    let (ornament, campaign_id) = state.store.activate_invitation(&digest(token)).await.map_err(|e| {
         tracing::error!(?e, "invitation activation failed");
         ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Ошибка активации приглашения")
     })?.ok_or(ApiError(StatusCode::CONFLICT, "Приглашение недействительно или уже использовано"))?;
-    let (session, csrf) = match new_session(&state, ornament.to_string(), "participant", PARTICIPANT_TTL).await {
+    let (session, csrf) = match new_session(&state, ornament.to_string(), "participant", Some(campaign_id.clone()), PARTICIPANT_TTL).await {
         Ok(value) => value,
         Err(error) => {
             if let Err(rollback_error) = state.store.rollback_invitation_activation(&digest(token)).await {
@@ -215,7 +216,7 @@ async fn admin_login(
     if Argon2::default().verify_password(payload.password.as_bytes(), &parsed).is_err() {
         return Err(ApiError(StatusCode::UNAUTHORIZED, "Неверный логин или пароль"));
     }
-    let (session, csrf) = new_session(&state, username, "admin", ADMIN_TTL).await?;
+    let (session, csrf) = new_session(&state, username, "admin", None, ADMIN_TTL).await?;
     let mut response = (StatusCode::OK, Json(MeResponse {
         subject_id: "admin".into(), role: "admin".into(), csrf_token: csrf.clone()
     })).into_response();
@@ -241,8 +242,9 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Res
 async fn campaign_summary(
     State(state): State<AppState>, headers: HeaderMap
 ) -> Result<Json<CampaignSummary>, ApiError> {
-    authenticated(&state, &headers).await?;
-    let participants = state.store.list_participants().await.map_err(|e| {
+    let session = authenticated(&state, &headers).await?;
+    let campaign_id = session.campaign_id.as_deref().unwrap_or(christmas_greetings::store::LEGACY_CAMPAIGN_ID);
+    let participants = state.store.list_campaign_participants(campaign_id).await.map_err(|e| {
         tracing::error!(?e, "campaign summary lookup failed");
         ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить состояние кампании")
     })?;
@@ -254,8 +256,9 @@ async fn campaign_summary(
 async fn list_greetings(
     State(state): State<AppState>, headers: HeaderMap
 ) -> Result<Json<Vec<Greeting>>, ApiError> {
-    authenticated(&state, &headers).await?;
-    let ornaments = state.store.list_greetings().await.map_err(|e| {
+    let session = authenticated(&state, &headers).await?;
+    let campaign_id = session.campaign_id.as_deref().unwrap_or(christmas_greetings::store::LEGACY_CAMPAIGN_ID);
+    let ornaments = state.store.list_campaign_greetings(campaign_id).await.map_err(|e| {
         tracing::error!(?e, "failed to load greetings");
         ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить поздравления")
     })?;
@@ -283,7 +286,8 @@ async fn submit(
     if message.is_empty() || message.chars().count() > 500 {
         return Err(ApiError(StatusCode::BAD_REQUEST, "Поздравление должно содержать от 1 до 500 символов"));
     }
-    let claimed = state.store.claim_greeting(ornament, name, message).await.map_err(|e| {
+    let campaign_id = session.campaign_id.as_deref().unwrap_or(christmas_greetings::store::LEGACY_CAMPAIGN_ID);
+    let claimed = state.store.claim_greeting(campaign_id, ornament, name, message).await.map_err(|e| {
         tracing::error!(?e, "greeting claim failed");
         ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Ошибка базы данных")
     })?;
@@ -540,16 +544,22 @@ async fn admin_revoke_campaign_invitation(
 async fn sse_events(
     State(state): State<AppState>, headers: HeaderMap
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    authenticated(&state, &headers).await?;
+    let session = authenticated(&state, &headers).await?;
+    let campaign_id = session.campaign_id.unwrap_or_else(|| christmas_greetings::store::LEGACY_CAMPAIGN_ID.to_owned());
     let receiver = state.events.subscribe();
-    let stream = stream::unfold(receiver, |mut receiver| async move {
-        let event = match receiver.recv().await {
-            Ok(greeting) => Event::default().event("greeting").json_data(greeting)
-                .unwrap_or_else(|_| Event::default().event("resync").data("snapshot")),
-            Err(broadcast::error::RecvError::Lagged(_)) => Event::default().event("resync").data("snapshot"),
-            Err(broadcast::error::RecvError::Closed) => return None,
-        };
-        Some((Ok::<Event, Infallible>(event), receiver))
+    let stream = stream::unfold((receiver, campaign_id), |(mut receiver, campaign_id)| async move {
+        loop {
+            let event = match receiver.recv().await {
+                Ok(greeting) if greeting.campaign_id == campaign_id => {
+                    Event::default().event("greeting").json_data(greeting)
+                        .unwrap_or_else(|_| Event::default().event("resync").data("snapshot"))
+                }
+                Ok(_) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => Event::default().event("resync").data("snapshot"),
+                Err(broadcast::error::RecvError::Closed) => return None,
+            };
+            return Some((Ok::<Event, Infallible>(event), (receiver, campaign_id)));
+        }
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new()
         .interval(Duration::from_secs(15)).text("keep-alive")))
