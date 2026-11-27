@@ -1176,7 +1176,7 @@ fn create_named_campaign_panel(state: AppState) -> Dom {
         }))
         .child(html!("button", {
             .class("primary")
-            .text_signal(state.campaign_creating.signal().map(|creating| if creating { "Создаём кампанию…" } else { "Создать кампанию и ссылки" }))
+            .text_signal(state.campaign_creating.signal().map(|creating| if creating { "Создаём кампанию…" } else { "Создать именованную кампанию" }))
             .event(clone!(state => move |_: events::Click| {
                 if state.campaign_creating.get() { return; }
                 let name = state.campaign_name.get_cloned();
