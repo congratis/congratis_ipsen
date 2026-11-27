@@ -502,7 +502,7 @@ impl Store {
         // Remove only invitation documents that still carry this campaign ID.
         for ornament in self.list_campaign_ornaments(campaign_id).await? {
             let result = self.first::<WriteResult>(
-                r.db(self.database.as_str()).table(TABLE).get(ornament.id).delete(r.expr(json!({})))
+                r.db(self.database.as_str()).table(TABLE).get(ornament.id).delete(())
             ).await?.ok_or_else(|| anyhow!("missing campaign invitation deletion result"))?;
             if result.errors != 0 {
                 bail!("campaign invitation deletion failed: {}", result.first_error.unwrap_or_default());
@@ -525,7 +525,7 @@ impl Store {
             drop(stream);
             for id in session_ids {
                 let result = self.first::<WriteResult>(
-                    r.db(self.database.as_str()).table(SESSIONS_TABLE).get(id.as_str()).delete(r.expr(json!({})))
+                    r.db(self.database.as_str()).table(SESSIONS_TABLE).get(id.as_str()).delete(())
                 ).await?.ok_or_else(|| anyhow!("missing participant session deletion result"))?;
                 if result.errors != 0 {
                     bail!("participant session deletion failed: {}", result.first_error.unwrap_or_default());
@@ -535,7 +535,7 @@ impl Store {
 
         // Delete the campaign record last so an interrupted cleanup can be retried.
         let result = self.first::<WriteResult>(
-            r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(campaign_id).delete(r.expr(json!({})))
+            r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(campaign_id).delete(())
         ).await?.ok_or_else(|| anyhow!("missing campaign record deletion result"))?;
         if result.errors != 0 {
             bail!("campaign record deletion failed: {}", result.first_error.unwrap_or_default());
