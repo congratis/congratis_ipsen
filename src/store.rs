@@ -240,7 +240,7 @@ impl Store {
 
         for session in sessions {
             if session.get("role").and_then(Value::as_str) != Some("participant")
-                || session.get("campaign_id").is_some()
+                || session.get("campaign_id").and_then(Value::as_str).is_some()
             {
                 continue;
             }
@@ -257,8 +257,23 @@ impl Store {
         }
 
         let migrated = self.list_ornaments().await?;
-        if migrated.iter().any(|item| item.campaign_id.is_none()) {
+        if migrated.iter().any(|item| item.campaign_id.as_deref().is_none_or(str::is_empty)) {
             bail!("legacy campaign migration verification failed: an invitation has no campaign assignment");
+        }
+
+        let mut verification_stream = r.db(self.database.as_str()).table(SESSIONS_TABLE)
+            .run::<_, Value>(&self.session);
+        let mut participant_sessions = Vec::new();
+        while let Some(session) = verification_stream.try_next().await? {
+            if session.get("role").and_then(Value::as_str) == Some("participant") {
+                participant_sessions.push(session);
+            }
+        }
+        drop(verification_stream);
+        if participant_sessions.iter().any(|session| {
+            session.get("campaign_id").and_then(Value::as_str).is_none_or(str::is_empty)
+        }) {
+            bail!("legacy campaign migration verification failed: a participant session has no campaign assignment");
         }
         Ok(())
     }
