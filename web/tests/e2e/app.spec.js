@@ -596,14 +596,13 @@ test("admin rejects invalid participant counts for named campaigns", async ({ pa
   await page.route("**/api/admin/participants", route =>
     route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
   );
-  await page.route("**/api/admin/campaigns", route =>
-    route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
-  );
-
   let creationRequests = 0;
   await page.route("**/api/admin/campaigns", route => {
-    if (route.request().method() === "POST") creationRequests += 1;
-    return route.continue();
+    if (route.request().method() === "POST") {
+      creationRequests += 1;
+      return route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ message: "unexpected creation request" }) });
+    }
+    return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
   });
 
   await page.goto("/#/admin");
