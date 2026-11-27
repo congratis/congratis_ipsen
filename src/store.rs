@@ -993,13 +993,6 @@ impl Store {
     pub async fn list_participants(&self) -> Result<Vec<ParticipantSummary>> {
         self.list_campaign_participants(LEGACY_CAMPAIGN_ID).await
     }
-    pub async fn list_campaign_participants(&self, campaign_id: &str) -> Result<Vec<ParticipantSummary>> {
-        Ok(self.list_campaign_ornaments(campaign_id).await?.into_iter().map(|o| ParticipantSummary {
-            ornament_number: o.ornament_number, activated: o.activated, submitted: o.used,
-            revoked: o.revoked, display_name: o.display_name, created_at: o.created_at,
-            used_at: o.used_at,
-        }).collect())
-    }
     pub async fn claim_greeting(&self, campaign_id: &str, number: i16, display_name: &str, message: &str) -> Result<bool> {
         let update = reql::func!(|document| {
             r.branch(r.args((
