@@ -10,6 +10,8 @@ use tokio::sync::{broadcast, watch};
 const TABLE: &str = "ornaments";
 const TOKEN_INDEX: &str = "token_hash";
 const SESSIONS_TABLE: &str = "auth_sessions";
+const CAMPAIGNS_TABLE: &str = "campaigns";
+pub const LEGACY_CAMPAIGN_ID: &str = "legacy-default";
 const INDEX_PROBE_TOKEN: &str = "__congratis_index_probe__";
 
 fn token_index_options() -> reql::cmd::get_all::Options {
@@ -69,6 +71,8 @@ pub struct GreetingEvent {
 pub struct Ornament {
     pub id: i16,
     pub ornament_number: i16,
+    #[serde(default)]
+    pub campaign_id: Option<String>,
     pub token_hash: String,
     pub used: bool,
     #[serde(default)]
@@ -170,6 +174,85 @@ impl Store {
                 r.db(self.database.as_str()).table_create(SESSIONS_TABLE)
             ).await.context("creating auth_sessions table")?;
         }
+
+        let tables = self.first::<Vec<String>>(
+            r.db(self.database.as_str()).table_list()
+        ).await?.ok_or_else(|| anyhow!("RethinkDB returned no table list"))?;
+        if !tables.iter().any(|name| name == CAMPAIGNS_TABLE) {
+            let _: Option<Value> = self.first(
+                r.db(self.database.as_str()).table_create(CAMPAIGNS_TABLE)
+            ).await.context("creating campaigns table")?;
+        }
+
+        self.migrate_legacy_campaign().await?;
+        Ok(())
+    }
+
+    /// Additively assigns all pre-multi-campaign records to one stable legacy campaign.
+    /// It never rewrites existing campaign IDs and is safe to run on every startup.
+    async fn migrate_legacy_campaign(&self) -> Result<()> {
+        let ornaments = self.list_ornaments().await?;
+        if ornaments.is_empty() {
+            return Ok(());
+        }
+
+        let existing_campaign: Option<Value> = self.first(
+            r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(LEGACY_CAMPAIGN_ID)
+        ).await?;
+        if existing_campaign.is_none() {
+            let now = Utc::now().timestamp();
+            let result = self.first::<WriteResult>(
+                r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).insert(json!({
+                    "id": LEGACY_CAMPAIGN_ID,
+                    "name": "Существующая кампания",
+                    "created_at": now,
+                    "updated_at": now
+                }))
+            ).await?.ok_or_else(|| anyhow!("missing legacy campaign insert result"))?;
+            if result.errors != 0 || result.inserted != 1 {
+                // Another app instance may have completed the same idempotent insert.
+                let found: Option<Value> = self.first(
+                    r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(LEGACY_CAMPAIGN_ID)
+                ).await?;
+                if found.is_none() {
+                    bail!("legacy campaign creation failed: {}", result.first_error.unwrap_or_default());
+                }
+            }
+        }
+
+        for ornament in ornaments.iter().filter(|item| item.campaign_id.is_none()) {
+            let result = self.first::<WriteResult>(
+                r.db(self.database.as_str()).table(TABLE).get(ornament.id)
+                    .update(json!({"campaign_id": LEGACY_CAMPAIGN_ID}))
+            ).await?.ok_or_else(|| anyhow!("missing legacy ornament migration result"))?;
+            if result.errors != 0 {
+                bail!("legacy ornament migration failed for {}: {}", ornament.id, result.first_error.unwrap_or_default());
+            }
+        }
+
+        let mut sessions = r.db(self.database.as_str()).table(SESSIONS_TABLE)
+            .run::<_, Value>(&self.session);
+        while let Some(session) = sessions.try_next().await? {
+            if session.get("role").and_then(Value::as_str) != Some("participant")
+                || session.get("campaign_id").is_some()
+            {
+                continue;
+            }
+            let id = session.get("id").and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("participant session without an ID during campaign migration"))?;
+            let result = self.first::<WriteResult>(
+                r.db(self.database.as_str()).table(SESSIONS_TABLE).get(id)
+                    .update(json!({"campaign_id": LEGACY_CAMPAIGN_ID}))
+            ).await?.ok_or_else(|| anyhow!("missing participant session migration result"))?;
+            if result.errors != 0 {
+                bail!("participant session migration failed: {}", result.first_error.unwrap_or_default());
+            }
+        }
+
+        let migrated = self.list_ornaments().await?;
+        if migrated.iter().any(|item| item.campaign_id.as_deref() != Some(LEGACY_CAMPAIGN_ID)) {
+            bail!("legacy campaign migration verification failed: an invitation has no campaign assignment");
+        }
         Ok(())
     }
 
@@ -247,6 +330,7 @@ impl Store {
                 json!({
                     "id": number,
                     "ornament_number": number,
+                    "campaign_id": LEGACY_CAMPAIGN_ID,
                     "token_hash": token_hash,
                     "used": false,
                     "activated": false,
