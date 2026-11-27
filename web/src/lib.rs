@@ -1165,7 +1165,7 @@ fn create_named_campaign_panel(state: AppState) -> Dom {
             .text("Количество участников (от 1 до 35)")
             .child(html!("input", {
                 .attr("type", "number").attr("min", "1").attr("max", "35").attr("step", "1")
-                .attr("aria-label", "Количество участников новой кампании")
+                .attr("aria-label", "Размер новой кампании")
                 .property("value", &state.campaign_size.get_cloned())
                 .event(clone!(state => move |event: events::Input| {
                     if let Some(target) = event.target() {
