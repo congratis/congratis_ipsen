@@ -45,6 +45,23 @@ struct ParticipantExchange { token: String }
 struct AdminLogin { username: String, password: String }
 #[derive(Deserialize)]
 struct CreateCampaign { participant_count: i16 }
+#[derive(Deserialize)]
+struct CreateNamedCampaign { name: String, participant_count: i16 }
+#[derive(Deserialize)]
+struct AddCampaignInvitations { count: i16 }
+#[derive(Serialize)]
+struct CampaignAdminItem {
+    id: String,
+    name: String,
+    created_at: i64,
+    participant_count: usize,
+    submitted_count: usize,
+}
+#[derive(Serialize)]
+struct CreateCampaignResponse {
+    campaign: CampaignAdminItem,
+    invitations: Vec<CreatedInvitation>,
+}
 #[derive(Serialize)]
 struct CreatedInvitation { ornament_number: i16, token: String }
 #[derive(Deserialize)]
@@ -72,6 +89,17 @@ fn random_secret() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
     hex::encode(bytes)
+}
+fn random_campaign_id() -> String {
+    let mut bytes = [0u8; 16];
+    OsRng.fill_bytes(&mut bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+    )
 }
 fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     headers.get(header::COOKIE)?.to_str().ok()?.split(';').find_map(|part| {
@@ -331,6 +359,184 @@ async fn admin_revoke_invitation(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn admin_list_campaigns(
+    State(state): State<AppState>, headers: HeaderMap
+) -> Result<Json<Vec<CampaignAdminItem>>, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "admin" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав"));
+    }
+    let campaigns = state.store.list_campaigns().await.map_err(|error| {
+        tracing::error!(?error, "campaign list failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить кампании")
+    })?;
+    let mut items = Vec::with_capacity(campaigns.len());
+    for campaign in campaigns {
+        let participants = state.store.list_campaign_participants(&campaign.id).await.map_err(|error| {
+            tracing::error!(?error, campaign_id = %campaign.id, "campaign participant count failed");
+            ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить данные кампании")
+        })?;
+        let participant_count = participants.len();
+        let submitted_count = participants.iter().filter(|item| item.submitted).count();
+        items.push(CampaignAdminItem {
+            id: campaign.id,
+            name: campaign.name,
+            created_at: campaign.created_at,
+            participant_count,
+            submitted_count,
+        });
+    }
+    Ok(Json(items))
+}
+
+async fn admin_create_named_campaign(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<CreateNamedCampaign>,
+) -> Result<(StatusCode, Json<CreateCampaignResponse>), ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "admin" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав"));
+    }
+    verify_csrf(&headers, &session)?;
+
+    let name = payload.name.trim();
+    if name.is_empty() || name.chars().count() > 100 {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Название кампании должно содержать от 1 до 100 символов"));
+    }
+    let numbers = campaign_numbers(payload.participant_count)?;
+    let campaign_id = random_campaign_id();
+    let campaign = state.store.create_campaign(&campaign_id, name).await.map_err(|error| {
+        tracing::error!(?error, "campaign creation failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось создать кампанию")
+    })?;
+
+    let mut hashes = Vec::with_capacity(numbers.len());
+    let mut invitations = Vec::with_capacity(numbers.len());
+    for number in numbers {
+        let token = random_secret();
+        hashes.push((number, digest(&token)));
+        invitations.push(CreatedInvitation { ornament_number: number, token });
+    }
+    if let Err(error) = state.store.insert_campaign_invitations(&campaign_id, &hashes).await {
+        tracing::error!(?error, campaign_id = %campaign_id, "campaign invitations creation failed after campaign record creation");
+        return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Кампания создана, но не удалось создать приглашения; повторите операцию после проверки кампании"));
+    }
+
+    let campaign_item = CampaignAdminItem {
+        id: campaign.id,
+        name: campaign.name,
+        created_at: campaign.created_at,
+        participant_count: invitations.len(),
+        submitted_count: 0,
+    };
+    Ok((StatusCode::CREATED, Json(CreateCampaignResponse {
+        campaign: campaign_item,
+        invitations,
+    })))
+}
+
+async fn admin_campaign_participants(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(campaign_id): axum::extract::Path<String>,
+) -> Result<Json<Vec<christmas_greetings::store::ParticipantSummary>>, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "admin" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав"));
+    }
+    let participants = state.store.list_campaign_participants(&campaign_id).await.map_err(|error| {
+        tracing::error!(?error, campaign_id = %campaign_id, "campaign participants lookup failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить участников кампании")
+    })?;
+    Ok(Json(participants))
+}
+
+async fn admin_add_campaign_invitations(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(campaign_id): axum::extract::Path<String>,
+    Json(payload): Json<AddCampaignInvitations>,
+) -> Result<(StatusCode, Json<Vec<CreatedInvitation>>), ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "admin" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав"));
+    }
+    verify_csrf(&headers, &session)?;
+    let count = payload.count;
+    if !(1..=35).contains(&count) {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Количество приглашений должно быть от 1 до 35"));
+    }
+    let existing = state.store.list_campaign_ornaments(&campaign_id).await.map_err(|error| {
+        tracing::error!(?error, campaign_id = %campaign_id, "campaign invitation lookup failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить приглашения кампании")
+    })?;
+    let occupied: std::collections::HashSet<i16> = existing.iter().map(|item| item.ornament_number).collect();
+    let available: Vec<i16> = (1..=35).filter(|number| !occupied.contains(number)).take(count as usize).collect();
+    if available.len() != count as usize {
+        return Err(ApiError(StatusCode::CONFLICT, "В кампании недостаточно свободных номеров шаров"));
+    }
+    let mut hashes = Vec::with_capacity(available.len());
+    let mut invitations = Vec::with_capacity(available.len());
+    for number in available {
+        let token = random_secret();
+        hashes.push((number, digest(&token)));
+        invitations.push(CreatedInvitation { ornament_number: number, token });
+    }
+    state.store.insert_campaign_invitations(&campaign_id, &hashes).await.map_err(|error| {
+        tracing::error!(?error, campaign_id = %campaign_id, "adding campaign invitations failed");
+        ApiError(StatusCode::CONFLICT, "Не удалось добавить приглашения; проверьте занятые номера и повторите попытку")
+    })?;
+    Ok((StatusCode::CREATED, Json(invitations)))
+}
+
+async fn admin_reissue_campaign_invitation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path((campaign_id, number)): axum::extract::Path<(String, i16)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "admin" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав"));
+    }
+    verify_csrf(&headers, &session)?;
+    if !(1..=35).contains(&number) {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректный номер шара"));
+    }
+    let token = random_secret();
+    let changed = state.store.reissue_campaign_invitation(&campaign_id, number, &digest(&token)).await.map_err(|error| {
+        tracing::error!(?error, campaign_id = %campaign_id, number, "campaign invitation reissue failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось перевыпустить приглашение")
+    })?;
+    if !changed {
+        return Err(ApiError(StatusCode::CONFLICT, "Приглашение уже активировано, использовано или не существует"));
+    }
+    Ok(Json(serde_json::json!({"ornament_number":number,"token":token})))
+}
+
+async fn admin_revoke_campaign_invitation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path((campaign_id, number)): axum::extract::Path<(String, i16)>,
+) -> Result<StatusCode, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "admin" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав"));
+    }
+    verify_csrf(&headers, &session)?;
+    if !(1..=35).contains(&number) {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректный номер шара"));
+    }
+    let changed = state.store.revoke_campaign_invitation(&campaign_id, number).await.map_err(|error| {
+        tracing::error!(?error, campaign_id = %campaign_id, number, "campaign invitation revoke failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось отозвать приглашение")
+    })?;
+    if !changed {
+        return Err(ApiError(StatusCode::CONFLICT, "Приглашение уже активировано, использовано или не существует"));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn sse_events(
     State(state): State<AppState>, headers: HeaderMap
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
@@ -387,6 +593,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/greetings", get(list_greetings).post(submit))
         .route("/api/campaign", get(campaign_summary))
         .route("/api/admin/campaign", post(admin_create_campaign))
+        .route("/api/admin/campaigns", get(admin_list_campaigns).post(admin_create_named_campaign))
+        .route("/api/admin/campaigns/{campaign_id}/participants", get(admin_campaign_participants))
+        .route("/api/admin/campaigns/{campaign_id}/invitations", post(admin_add_campaign_invitations))
+        .route("/api/admin/campaigns/{campaign_id}/invitations/{number}/reissue", post(admin_reissue_campaign_invitation))
+        .route("/api/admin/campaigns/{campaign_id}/invitations/{number}/revoke", post(admin_revoke_campaign_invitation))
         .route("/api/admin/participants", get(admin_participants))
         .route("/api/admin/invitations/{number}/reissue", post(admin_reissue_invitation))
         .route("/api/admin/invitations/{number}/revoke", post(admin_revoke_invitation))
