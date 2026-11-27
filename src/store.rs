@@ -14,6 +14,18 @@ const CAMPAIGNS_TABLE: &str = "campaigns";
 pub const LEGACY_CAMPAIGN_ID: &str = "legacy-default";
 const INDEX_PROBE_TOKEN: &str = "__congratis_index_probe__";
 
+fn active_campaign_status() -> String { "active".to_owned() }
+
+fn validate_campaign_deletion(campaign_id: &str, campaign_name: &str, confirmation: &str) -> Result<()> {
+    if campaign_id == LEGACY_CAMPAIGN_ID {
+        bail!("the legacy campaign cannot be deleted");
+    }
+    if campaign_name != confirmation {
+        bail!("campaign name confirmation does not match exactly");
+    }
+    Ok(())
+}
+
 fn campaign_ornament_key(campaign_id: &str, ornament_number: i16) -> String {
     format!("{campaign_id}:{ornament_number}")
 }
@@ -94,6 +106,8 @@ pub struct Ornament {
 pub struct Campaign {
     pub id: String,
     pub name: String,
+    #[serde(default = "active_campaign_status")]
+    pub status: String,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -104,6 +118,8 @@ struct WriteResult {
     inserted: u64,
     #[serde(default)]
     replaced: u64,
+    #[serde(default)]
+    deleted: u64,
     #[serde(default)]
     errors: u64,
     first_error: Option<String>,
@@ -254,6 +270,7 @@ impl Store {
                         r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).insert(json!({
                             "id": LEGACY_CAMPAIGN_ID,
                             "name": "Существующая кампания",
+                            "status": "active",
                             "created_at": now,
                             "updated_at": now
                         })),
@@ -432,7 +449,13 @@ impl Store {
     }
 
     pub async fn get_campaign(&self, campaign_id: &str) -> Result<Option<Campaign>> {
-        self.first(r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(campaign_id)).await
+        let value: Option<Value> = self
+            .first(r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(campaign_id))
+            .await?;
+        match value {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => Ok(Some(serde_json::from_value(value)?)),
+        }
     }
 
     pub async fn create_campaign(&self, campaign_id: &str, name: &str) -> Result<Campaign> {
@@ -447,6 +470,7 @@ impl Store {
         let campaign = Campaign {
             id: campaign_id.to_owned(),
             name: name.to_owned(),
+            status: active_campaign_status(),
             created_at: now,
             updated_at: now,
         };
@@ -462,6 +486,67 @@ impl Store {
             bail!("campaign insert failed: {}", result.first_error.unwrap_or_default());
         }
         Ok(campaign)
+    }
+
+    /// Deletes a non-legacy campaign. The campaign is marked as deleting first;
+    /// all cleanup steps are scoped and safe to retry after a partial failure.
+    pub async fn delete_campaign(&self, campaign_id: &str, confirmation: &str) -> Result<bool> {
+        let Some(campaign) = self.get_campaign(campaign_id).await? else {
+            return Ok(false);
+        };
+        validate_campaign_deletion(campaign_id, &campaign.name, confirmation)?;
+
+        let now = Utc::now().timestamp();
+        let marked = self.first::<WriteResult>(
+            r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(campaign_id)
+                .update(json!({"status": "deleting", "updated_at": now}))
+        ).await?.ok_or_else(|| anyhow!("missing campaign deletion marker result"))?;
+        if marked.errors != 0 {
+            bail!("campaign deletion marker failed: {}", marked.first_error.unwrap_or_default());
+        }
+
+        // Remove only invitation documents that still carry this campaign ID.
+        for ornament in self.list_campaign_ornaments(campaign_id).await? {
+            let result = self.first::<WriteResult>(
+                r.db(self.database.as_str()).table(TABLE).get(ornament.id).delete(())
+            ).await?.ok_or_else(|| anyhow!("missing campaign invitation deletion result"))?;
+            if result.errors != 0 {
+                bail!("campaign invitation deletion failed: {}", result.first_error.unwrap_or_default());
+            }
+        }
+
+        // Delete participant sessions only; administrator sessions have no campaign ID.
+        for _ in 0..2 {
+            let mut stream = r.db(self.database.as_str()).table(SESSIONS_TABLE).run::<_, Value>(&self.session);
+            let mut session_ids = Vec::new();
+            while let Some(session) = stream.try_next().await? {
+                if session.get("role").and_then(Value::as_str) == Some("participant")
+                    && session.get("campaign_id").and_then(Value::as_str) == Some(campaign_id)
+                {
+                    if let Some(id) = session.get("id").and_then(Value::as_str) {
+                        session_ids.push(id.to_owned());
+                    }
+                }
+            }
+            drop(stream);
+            for id in session_ids {
+                let result = self.first::<WriteResult>(
+                    r.db(self.database.as_str()).table(SESSIONS_TABLE).get(id.as_str()).delete(())
+                ).await?.ok_or_else(|| anyhow!("missing participant session deletion result"))?;
+                if result.errors != 0 {
+                    bail!("participant session deletion failed: {}", result.first_error.unwrap_or_default());
+                }
+            }
+        }
+
+        // Delete the campaign record last so an interrupted cleanup can be retried.
+        let result = self.first::<WriteResult>(
+            r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(campaign_id).delete(())
+        ).await?.ok_or_else(|| anyhow!("missing campaign record deletion result"))?;
+        if result.errors != 0 {
+            bail!("campaign record deletion failed: {}", result.first_error.unwrap_or_default());
+        }
+        Ok(result.deleted == 1)
     }
 
     pub async fn list_campaign_ornaments(&self, campaign_id: &str) -> Result<Vec<Ornament>> {
@@ -485,8 +570,8 @@ impl Store {
         campaign_id: &str,
         invitations: &[(i16, String)],
     ) -> Result<()> {
-        if self.get_campaign(campaign_id).await?.is_none() {
-            bail!("campaign does not exist");
+        if self.get_campaign(campaign_id).await?.is_none_or(|campaign| campaign.status != "active") {
+            bail!("campaign does not exist or is not active");
         }
         if invitations.is_empty() {
             bail!("at least one invitation is required");
@@ -651,6 +736,11 @@ impl Store {
     }
 
     pub async fn insert_invitations(&self, invitations: &[(i16, String)]) -> Result<()> {
+        // The legacy campaign is a stable system scope even on a fresh database
+        // where no pre-existing ornaments were present during startup migration.
+        if self.get_campaign(LEGACY_CAMPAIGN_ID).await?.is_none() {
+            self.create_campaign(LEGACY_CAMPAIGN_ID, "Существующая кампания").await?;
+        }
         let existing = self.list_ornaments().await?;
         if !existing.is_empty() {
             bail!("ornaments table is not empty; refusing to overwrite invitations");
@@ -946,6 +1036,18 @@ pub struct ParticipantSummary {
 }
 impl Store {
     pub async fn activate_invitation(&self, token_hash: &str) -> Result<Option<(i16, String)>> {
+        let mut existing = r.db(self.database.as_str()).table(TABLE)
+            .get_all(r.args((token_hash, token_index_options())))
+            .limit(1).run::<_, Ornament>(&self.session);
+        let Some(invitation) = existing.try_next().await? else {
+            return Ok(None);
+        };
+        drop(existing);
+        let campaign_id = invitation.campaign_id.as_deref().unwrap_or(LEGACY_CAMPAIGN_ID);
+        if self.get_campaign(campaign_id).await?.is_none_or(|campaign| campaign.status != "active") {
+            return Ok(None);
+        }
+
         let update = reql::func!(|document| {
             r.branch(r.args((
                 document.clone().get_field("activated").default(r.expr(false)).eq(false)
@@ -994,6 +1096,9 @@ impl Store {
         self.list_campaign_participants(LEGACY_CAMPAIGN_ID).await
     }
     pub async fn claim_greeting(&self, campaign_id: &str, number: i16, display_name: &str, message: &str) -> Result<bool> {
+        if self.get_campaign(campaign_id).await?.is_none_or(|campaign| campaign.status != "active") {
+            return Ok(false);
+        }
         let update = reql::func!(|document| {
             r.branch(r.args((
                 document.clone().get_field("activated").default(r.expr(false))
@@ -1112,5 +1217,23 @@ mod campaign_migration_compat_tests {
             "used_at": null
         })).expect("campaign-scoped ornament should deserialize");
         assert_eq!(ornament.campaign_id.as_deref(), Some("legacy-default"));
+    }
+}
+
+
+#[cfg(test)]
+mod campaign_deletion_validation_tests {
+    use super::{validate_campaign_deletion, LEGACY_CAMPAIGN_ID};
+
+    #[test]
+    fn deletion_requires_exact_campaign_name() {
+        assert!(validate_campaign_deletion("campaign-a", "Winter 2026", "Winter 2026").is_ok());
+        assert!(validate_campaign_deletion("campaign-a", "Winter 2026", "winter 2026").is_err());
+        assert!(validate_campaign_deletion("campaign-a", "Winter 2026", "Winter 2026 ").is_err());
+    }
+
+    #[test]
+    fn legacy_campaign_is_never_deletable() {
+        assert!(validate_campaign_deletion(LEGACY_CAMPAIGN_ID, "Существующая кампания", "Существующая кампания").is_err());
     }
 }
