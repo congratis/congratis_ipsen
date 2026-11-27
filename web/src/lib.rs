@@ -311,6 +311,21 @@ fn install_dialog_keyboard_handler(state: AppState) {
                 }
                 _ => {}
             }
+        } else if web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.get_element_by_id("submission-dialog"))
+            .is_some()
+        {
+            match event.key().as_str() {
+                "Escape" => {
+                    event.prevent_default();
+                    close_submission_dialog(&state);
+                }
+                "Tab" => {
+                    trap_dialog_focus(&event, "submission-dialog");
+                }
+                _ => {}
+            }
         } else if state.presentation.get() && event.key() == "Escape" {
             event.prevent_default();
             exit_presentation(state.clone());
