@@ -19,7 +19,7 @@ async fn invitation_activates_once_and_session_can_be_revoked() {
     let token_hash = hash(&token);
     store.insert_invitations(&[(1, token_hash.clone())]).await.expect("seed invitation");
 
-    assert_eq!(store.activate_invitation(&token_hash).await.unwrap(), Some(1));
+    assert_eq!(store.activate_invitation(&token_hash).await.unwrap(), Some((1, "legacy-default".to_owned())));
     assert_eq!(store.activate_invitation(&token_hash).await.unwrap(), None);
 
     let session = AuthSession {
@@ -30,6 +30,7 @@ async fn invitation_activates_once_and_session_can_be_revoked() {
         created_at: 1_800_000_000,
         expires_at: 1_900_000_000,
         revoked: false,
+        campaign_id: Some("legacy-default".into()),
     };
     store.create_auth_session(&session).await.expect("create session");
     let loaded = store.get_auth_session(&session.id).await.unwrap().expect("load session");
@@ -38,6 +39,6 @@ async fn invitation_activates_once_and_session_can_be_revoked() {
     store.revoke_auth_session(&session.id).await.expect("revoke session");
     assert!(store.get_auth_session(&session.id).await.unwrap().unwrap().revoked);
 
-    assert!(store.claim_greeting(1, "Tester", "One greeting only").await.unwrap());
-    assert!(!store.claim_greeting(1, "Tester", "Replay").await.unwrap());
+    assert!(store.claim_greeting("legacy-default", 1, "Tester", "One greeting only").await.unwrap());
+    assert!(!store.claim_greeting("legacy-default", 1, "Tester", "Replay").await.unwrap());
 }

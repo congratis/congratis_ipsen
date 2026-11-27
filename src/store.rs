@@ -66,6 +66,7 @@ pub struct Store {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GreetingEvent {
+    pub campaign_id: String,
     pub ornament_number: i16,
     pub display_name: String,
     pub message: String,
@@ -641,12 +642,12 @@ impl Store {
     }
 
     pub async fn list_greetings(&self) -> Result<Vec<Ornament>> {
-        Ok(self
-            .list_ornaments()
-            .await?
-            .into_iter()
-            .filter(|ornament| ornament.used)
-            .collect())
+        Ok(self.list_campaign_greetings(LEGACY_CAMPAIGN_ID).await?)
+    }
+
+    pub async fn list_campaign_greetings(&self, campaign_id: &str) -> Result<Vec<Ornament>> {
+        Ok(self.list_campaign_ornaments(campaign_id).await?
+            .into_iter().filter(|ornament| ornament.used).collect())
     }
 
     pub async fn insert_invitations(&self, invitations: &[(i16, String)]) -> Result<()> {
@@ -849,7 +850,10 @@ impl Store {
                 continue;
             };
 
+            let campaign_id = ornament.campaign_id.clone()
+                .unwrap_or_else(|| LEGACY_CAMPAIGN_ID.to_owned());
             let _ = sender.send(GreetingEvent {
+                campaign_id,
                 ornament_number: ornament.ornament_number,
                 display_name,
                 message,
@@ -927,6 +931,8 @@ pub struct AuthSession {
     pub expires_at: i64,
     #[serde(default)]
     pub revoked: bool,
+    #[serde(default)]
+    pub campaign_id: Option<String>,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct ParticipantSummary {
@@ -939,7 +945,7 @@ pub struct ParticipantSummary {
     pub used_at: Option<i64>,
 }
 impl Store {
-    pub async fn activate_invitation(&self, token_hash: &str) -> Result<Option<i16>> {
+    pub async fn activate_invitation(&self, token_hash: &str) -> Result<Option<(i16, String)>> {
         let update = reql::func!(|document| {
             r.branch(r.args((
                 document.clone().get_field("activated").default(r.expr(false)).eq(false)
@@ -962,7 +968,8 @@ impl Store {
             .get_all(r.args((token_hash, token_index_options())))
             .limit(1).run::<_, Ornament>(&self.session);
         let item = stream.try_next().await?.ok_or_else(|| anyhow!("activated invitation disappeared"))?;
-        Ok(Some(item.ornament_number))
+        let campaign_id = item.campaign_id.unwrap_or_else(|| LEGACY_CAMPAIGN_ID.to_owned());
+        Ok(Some((item.ornament_number, campaign_id)))
     }
     pub async fn create_auth_session(&self, session: &AuthSession) -> Result<()> {
         let result = self.first::<WriteResult>(
@@ -984,13 +991,9 @@ impl Store {
         Ok(())
     }
     pub async fn list_participants(&self) -> Result<Vec<ParticipantSummary>> {
-        Ok(self.list_ornaments().await?.into_iter().map(|o| ParticipantSummary {
-            ornament_number: o.ornament_number, activated: o.activated, submitted: o.used,
-            revoked: o.revoked, display_name: o.display_name, created_at: o.created_at,
-            used_at: o.used_at,
-        }).collect())
+        self.list_campaign_participants(LEGACY_CAMPAIGN_ID).await
     }
-    pub async fn claim_greeting(&self, number: i16, display_name: &str, message: &str) -> Result<bool> {
+    pub async fn claim_greeting(&self, campaign_id: &str, number: i16, display_name: &str, message: &str) -> Result<bool> {
         let update = reql::func!(|document| {
             r.branch(r.args((
                 document.clone().get_field("activated").default(r.expr(false))
@@ -1003,8 +1006,13 @@ impl Store {
                 document
             )))
         });
+        let id = if campaign_id == LEGACY_CAMPAIGN_ID {
+            json!(number)
+        } else {
+            json!(campaign_ornament_key(campaign_id, number))
+        };
         let result = self.first::<WriteResult>(
-            r.db(self.database.as_str()).table(TABLE).get(number).update(update)
+            r.db(self.database.as_str()).table(TABLE).get(id).update(update)
         ).await?.ok_or_else(|| anyhow!("missing greeting claim result"))?;
         if result.errors != 0 { bail!("greeting claim failed: {}", result.first_error.unwrap_or_default()); }
         Ok(result.replaced == 1)
