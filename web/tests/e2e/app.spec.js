@@ -809,12 +809,14 @@ test("admin manages invitations within the selected campaign scope", async ({ pa
   await expect.poll(() => calls.add).toBe(1);
   await expect(page.getByLabel("Ссылка для шара №3")).toHaveValue(/#invite=winter-three$/);
 
-  await page.getByRole("button", { name: "Перевыпустить ссылку" }).click();
+  const participantOneCard = page.locator(".admin-item").filter({ hasText: "Шар №1" });
+  await participantOneCard.getByRole("button", { name: "Перевыпустить ссылку" }).click();
   await expect.poll(() => calls.reissue).toBe(1);
   await expect(page.getByLabel("Одноразовая ссылка-приглашение")).toHaveValue(/#invite=winter-one-reissued$/);
 
   page.once("dialog", dialog => dialog.accept());
-  await page.getByRole("button", { name: "Отозвать" }).click();
+  const participantTwoCard = page.locator(".admin-item").filter({ hasText: "Шар №2" });
+  await participantTwoCard.getByRole("button", { name: "Отозвать" }).click();
   await expect.poll(() => calls.revoke).toBe(1);
   await expect.poll(() => calls.list).toBeGreaterThan(1);
 });
