@@ -1083,7 +1083,13 @@ impl Store {
         Ok(())
     }
     pub async fn get_auth_session(&self, id: &str) -> Result<Option<AuthSession>> {
-        self.first(r.db(self.database.as_str()).table(SESSIONS_TABLE).get(id)).await
+        let value: Option<Value> = self
+            .first(r.db(self.database.as_str()).table(SESSIONS_TABLE).get(id))
+            .await?;
+        match value {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => Ok(Some(serde_json::from_value(value)?)),
+        }
     }
     pub async fn revoke_auth_session(&self, id: &str) -> Result<()> {
         let _: Option<Value> = self.first(
