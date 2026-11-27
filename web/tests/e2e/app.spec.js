@@ -718,7 +718,7 @@ test("admin can create and delete a named campaign with exact-name confirmation"
   await page.goto("/#/admin");
   await expect(page.getByRole("heading", { name: "Кампании" })).toBeVisible();
   await page.getByRole("textbox", { name: "Название кампании" }).fill("Зимний вечер");
-  await page.getByRole("spinbutton", { name: "Количество участников новой кампании" }).fill("2");
+  await page.getByRole("spinbutton", { name: "Размер новой кампании" }).fill("2");
   await page.getByRole("button", { name: "Создать именованную кампанию" }).click();
 
   await expect(page.getByText("Зимний вечер", { exact: true })).toBeVisible();
