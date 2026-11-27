@@ -1235,10 +1235,11 @@ fn campaign_card(state: AppState, campaign: CampaignAdminItem) -> Dom {
                     let csrf = state.csrf();
                     let current = state.clone();
                     let path = format!("/api/admin/campaigns/{id}");
+                    let deleted_name = name.clone();
                     spawn_local(async move {
                         let body = serde_json::json!({ "confirm_name": confirmation });
                         match delete_json(&path, &body, &csrf).await {
-                            Ok(()) => { set_note(&current, format!("Кампания «{name}» удалена.")); load_campaigns(current.clone()).await; }
+                            Ok(()) => { set_note(&current, format!("Кампания «{deleted_name}» удалена.")); load_campaigns(current.clone()).await; }
                             Err(error) => set_note(&current, error),
                         }
                     });
