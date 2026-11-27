@@ -1258,7 +1258,7 @@ fn campaigns_panel(state: AppState) -> Dom {
                 Some(items) if items.is_empty() => html!("p", {.class("muted").text("Кампании не найдены.")}),
                 Some(items) => html!("div", {
                     .class("admin-grid")
-                    .children(items.into_iter().map(clone!(state => move |campaign| campaign_card(state.clone(), campaign)))
+                    .children(items.into_iter().map(clone!(state => move |campaign| campaign_card(state.clone(), campaign))))
                 })
             })
         })))
