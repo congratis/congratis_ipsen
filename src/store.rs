@@ -10,6 +10,8 @@ use tokio::sync::{broadcast, watch};
 const TABLE: &str = "ornaments";
 const TOKEN_INDEX: &str = "token_hash";
 const SESSIONS_TABLE: &str = "auth_sessions";
+const CAMPAIGNS_TABLE: &str = "campaigns";
+pub const LEGACY_CAMPAIGN_ID: &str = "legacy-default";
 const INDEX_PROBE_TOKEN: &str = "__congratis_index_probe__";
 
 fn token_index_options() -> reql::cmd::get_all::Options {
@@ -69,6 +71,8 @@ pub struct GreetingEvent {
 pub struct Ornament {
     pub id: i16,
     pub ornament_number: i16,
+    #[serde(default)]
+    pub campaign_id: Option<String>,
     pub token_hash: String,
     pub used: bool,
     #[serde(default)]
@@ -170,6 +174,193 @@ impl Store {
                 r.db(self.database.as_str()).table_create(SESSIONS_TABLE)
             ).await.context("creating auth_sessions table")?;
         }
+
+        let tables = self.first::<Vec<String>>(
+            r.db(self.database.as_str()).table_list()
+        ).await?.ok_or_else(|| anyhow!("RethinkDB returned no table list"))?;
+        if !tables.iter().any(|name| name == CAMPAIGNS_TABLE) {
+            let _: Option<Value> = self.first(
+                r.db(self.database.as_str()).table_create(CAMPAIGNS_TABLE)
+            ).await.context("creating campaigns table")?;
+        }
+
+        self.migrate_legacy_campaign().await?;
+        Ok(())
+    }
+
+    /// Additively assigns all pre-multi-campaign records to one stable legacy campaign.
+    /// It never rewrites existing campaign IDs and is safe to run on every startup.
+    async fn migrate_legacy_campaign(&self) -> Result<()> {
+        let ornaments = self.list_ornaments().await?;
+
+        // Read sessions before writing so a failed earlier run can be resumed even
+        // when all ornaments were already migrated.
+        let mut sessions_stream = r
+            .db(self.database.as_str())
+            .table(SESSIONS_TABLE)
+            .run::<_, Value>(&self.session);
+        let mut sessions = Vec::new();
+        while let Some(session) = sessions_stream.try_next().await? {
+            sessions.push(session);
+        }
+        drop(sessions_stream);
+
+        let mut needs_legacy_campaign = ornaments.iter().any(|item| {
+            item.campaign_id.as_deref().is_none_or(str::is_empty)
+        });
+
+        for session in &sessions {
+            if session.get("role").and_then(Value::as_str) != Some("participant")
+                || session.get("revoked").and_then(Value::as_bool) == Some(true)
+                || session.get("campaign_id").and_then(Value::as_str).is_some_and(|id| !id.is_empty())
+            {
+                continue;
+            }
+
+            let subject = session.get("subject_id").and_then(Value::as_str)
+                .and_then(|value| value.parse::<i16>().ok());
+            if let Some(ornament) = subject.and_then(|number| {
+                ornaments.iter().find(|item| item.ornament_number == number)
+            }) {
+                if ornament.campaign_id.as_deref().is_none_or(str::is_empty)
+                    || ornament.campaign_id.as_deref() == Some(LEGACY_CAMPAIGN_ID)
+                {
+                    needs_legacy_campaign = true;
+                }
+            }
+        }
+
+        if needs_legacy_campaign {
+            let existing: Option<Value> = self
+                .first(r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(LEGACY_CAMPAIGN_ID))
+                .await?;
+            if existing.is_none() {
+                let now = Utc::now().timestamp();
+                let result = self
+                    .first::<WriteResult>(
+                        r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).insert(json!({
+                            "id": LEGACY_CAMPAIGN_ID,
+                            "name": "Существующая кампания",
+                            "created_at": now,
+                            "updated_at": now
+                        })),
+                    )
+                    .await?
+                    .ok_or_else(|| anyhow!("missing legacy campaign insert result"))?;
+                if result.errors != 0 || result.inserted != 1 {
+                    let found: Option<Value> = self
+                        .first(r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(LEGACY_CAMPAIGN_ID))
+                        .await?;
+                    if found.is_none() {
+                        bail!("legacy campaign creation failed: {}", result.first_error.unwrap_or_default());
+                    }
+                }
+            }
+        }
+
+        for ornament in ornaments.iter().filter(|item| {
+            item.campaign_id.as_deref().is_none_or(str::is_empty)
+        }) {
+            let result = self
+                .first::<WriteResult>(
+                    r.db(self.database.as_str())
+                        .table(TABLE)
+                        .get(ornament.id)
+                        .update(json!({"campaign_id": LEGACY_CAMPAIGN_ID})),
+                )
+                .await?
+                .ok_or_else(|| anyhow!("missing legacy ornament migration result"))?;
+            if result.errors != 0 {
+                bail!(
+                    "legacy ornament migration failed for {}: {}",
+                    ornament.id,
+                    result.first_error.unwrap_or_default()
+                );
+            }
+        }
+
+        for session in sessions {
+            if session.get("role").and_then(Value::as_str) != Some("participant")
+                || session.get("revoked").and_then(Value::as_bool) == Some(true)
+                || session.get("campaign_id").and_then(Value::as_str).is_some_and(|id| !id.is_empty())
+            {
+                continue;
+            }
+
+            let id = session.get("id").and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("participant session without an ID during campaign migration"))?
+                .to_owned();
+            let subject = session.get("subject_id").and_then(Value::as_str)
+                .and_then(|value| value.parse::<i16>().ok());
+            let matching_ornament = subject.and_then(|number| {
+                ornaments.iter().find(|item| item.ornament_number == number)
+            });
+
+            let update = if let Some(ornament) = matching_ornament {
+                let campaign_id = ornament.campaign_id.as_deref()
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(LEGACY_CAMPAIGN_ID);
+                json!({"campaign_id": campaign_id})
+            } else {
+                // A session that cannot be tied to an existing invitation must
+                // never be assigned to an arbitrary campaign.
+                json!({"revoked": true})
+            };
+
+            let result = self
+                .first::<WriteResult>(
+                    r.db(self.database.as_str())
+                        .table(SESSIONS_TABLE)
+                        .get(id.as_str())
+                        .update(update),
+                )
+                .await?
+                .ok_or_else(|| anyhow!("missing participant session migration result"))?;
+            if result.errors != 0 {
+                bail!("participant session migration failed: {}", result.first_error.unwrap_or_default());
+            }
+        }
+
+        let migrated = self.list_ornaments().await?;
+        if migrated.iter().any(|item| {
+            item.campaign_id.as_deref().is_none_or(str::is_empty)
+        }) {
+            bail!("campaign migration verification failed: an invitation has no campaign assignment");
+        }
+
+        let mut campaign_stream = r
+            .db(self.database.as_str())
+            .table(CAMPAIGNS_TABLE)
+            .run::<_, Value>(&self.session);
+        let mut campaign_ids = std::collections::HashSet::new();
+        while let Some(campaign) = campaign_stream.try_next().await? {
+            if let Some(id) = campaign.get("id").and_then(Value::as_str) {
+                campaign_ids.insert(id.to_owned());
+            }
+        }
+        drop(campaign_stream);
+
+        if migrated.iter().any(|item| {
+            item.campaign_id.as_ref().is_some_and(|id| !campaign_ids.contains(id))
+        }) {
+            bail!("campaign migration verification failed: an invitation references a missing campaign");
+        }
+
+        let mut verification_stream = r
+            .db(self.database.as_str())
+            .table(SESSIONS_TABLE)
+            .run::<_, Value>(&self.session);
+        while let Some(session) = verification_stream.try_next().await? {
+            if session.get("role").and_then(Value::as_str) != Some("participant")
+                || session.get("revoked").and_then(Value::as_bool) == Some(true)
+            {
+                continue;
+            }
+            let campaign_id = session.get("campaign_id").and_then(Value::as_str);
+            if campaign_id.is_none_or(|id| !campaign_ids.contains(id)) {
+                bail!("campaign migration verification failed: an active participant session has no valid campaign");
+            }
+        }
         Ok(())
     }
 
@@ -247,6 +438,7 @@ impl Store {
                 json!({
                     "id": number,
                     "ornament_number": number,
+                    "campaign_id": LEGACY_CAMPAIGN_ID,
                     "token_hash": token_hash,
                     "used": false,
                     "activated": false,
@@ -593,5 +785,46 @@ impl Store {
                 .update(json!({"activated": false}))
         ).await?;
         Ok(())
+    }
+}
+
+
+#[cfg(test)]
+mod campaign_migration_compat_tests {
+    use super::Ornament;
+
+    #[test]
+    fn legacy_ornament_without_campaign_id_remains_deserializable() {
+        let ornament: Ornament = serde_json::from_value(serde_json::json!({
+            "id": 1,
+            "ornament_number": 1,
+            "token_hash": "hash",
+            "used": false,
+            "activated": false,
+            "revoked": false,
+            "display_name": null,
+            "message": null,
+            "created_at": 1,
+            "used_at": null
+        })).expect("legacy ornament should deserialize");
+        assert_eq!(ornament.campaign_id, None);
+    }
+
+    #[test]
+    fn campaign_scoped_ornament_preserves_campaign_id() {
+        let ornament: Ornament = serde_json::from_value(serde_json::json!({
+            "id": 1,
+            "ornament_number": 1,
+            "campaign_id": "legacy-default",
+            "token_hash": "hash",
+            "used": false,
+            "activated": false,
+            "revoked": false,
+            "display_name": null,
+            "message": null,
+            "created_at": 1,
+            "used_at": null
+        })).expect("campaign-scoped ornament should deserialize");
+        assert_eq!(ornament.campaign_id.as_deref(), Some("legacy-default"));
     }
 }
