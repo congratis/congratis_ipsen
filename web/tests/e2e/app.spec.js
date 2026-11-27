@@ -736,3 +736,87 @@ test("admin can create and delete a named campaign with exact-name confirmation"
   await expect(campaignCard).toHaveCount(0);
   await expect(page.getByText("Кампания «Зимний вечер» удалена.")).toBeVisible();
 });
+
+
+test("admin manages invitations within the selected campaign scope", async ({ page }) => {
+  const campaign = {
+    id: "winter-2026", name: "Зимняя кампания", created_at: 1,
+    participant_count: 2, submitted_count: 0
+  };
+  const participants = [
+    { ornament_number: 1, activated: false, submitted: false, revoked: false, display_name: null, created_at: 1, used_at: null },
+    { ornament_number: 2, activated: false, submitted: false, revoked: false, display_name: null, created_at: 1, used_at: null }
+  ];
+  const calls = { list: 0, add: 0, reissue: 0, revoke: 0 };
+
+  await page.route("**/api/me", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(admin) })
+  );
+  await page.route("**/api/campaign", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ participant_count: 0, submitted_count: 0 }) })
+  );
+  await page.route("**/api/greetings", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
+  );
+  await page.route("**/api/admin/participants", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
+  );
+  await page.route("**/api/events", route =>
+    route.fulfill({ status: 200, contentType: "text/event-stream", body: ": connected\\n\\n" })
+  );
+  await page.route("**/api/admin/campaigns", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([campaign]) })
+  );
+  await page.route("**/api/admin/campaigns/winter-2026/participants", route => {
+    calls.list += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(participants) });
+  });
+  await page.route("**/api/admin/campaigns/winter-2026/invitations", async route => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers()["x-csrf-token"]).toBe("csrf-admin");
+    expect(route.request().postDataJSON()).toEqual({ count: 2 });
+    calls.add += 1;
+    return route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { ornament_number: 3, token: "winter-three" },
+        { ornament_number: 4, token: "winter-four" }
+      ])
+    });
+  });
+  await page.route("**/api/admin/campaigns/winter-2026/invitations/1/reissue", async route => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers()["x-csrf-token"]).toBe("csrf-admin");
+    calls.reissue += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ token: "winter-one-reissued" }) });
+  });
+  await page.route("**/api/admin/campaigns/winter-2026/invitations/2/revoke", async route => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers()["x-csrf-token"]).toBe("csrf-admin");
+    calls.revoke += 1;
+    return route.fulfill({ status: 204 });
+  });
+
+  await page.goto("/#/admin");
+  const campaignCard = page.locator(".admin-item").filter({ hasText: "Зимняя кампания" });
+  await campaignCard.getByRole("button", { name: "Участники и приглашения" }).click();
+  await expect(page.getByRole("heading", { name: "Участники: Зимняя кампания" })).toBeVisible();
+  await expect(page.getByText("Шар №1")).toBeVisible();
+
+  await page.getByRole("spinbutton", { name: "Количество новых приглашений" }).fill("2");
+  await page.getByRole("button", { name: "Добавить приглашения" }).click();
+  await expect.poll(() => calls.add).toBe(1);
+  await expect(page.getByLabel("Ссылка для шара №3")).toHaveValue(/#invite=winter-three$/);
+
+  const participantOneCard = page.locator(".admin-item").filter({ hasText: "Шар №1" });
+  await participantOneCard.getByRole("button", { name: "Перевыпустить ссылку" }).click();
+  await expect.poll(() => calls.reissue).toBe(1);
+  await expect(page.getByLabel("Одноразовая ссылка-приглашение")).toHaveValue(/#invite=winter-one-reissued$/);
+
+  page.once("dialog", dialog => dialog.accept());
+  const participantTwoCard = page.locator(".admin-item").filter({ hasText: "Шар №2" });
+  await participantTwoCard.getByRole("button", { name: "Отозвать" }).click();
+  await expect.poll(() => calls.revoke).toBe(1);
+  await expect.poll(() => calls.list).toBeGreaterThan(1);
+});

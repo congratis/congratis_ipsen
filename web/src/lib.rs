@@ -80,6 +80,9 @@ struct AppState {
     greetings: Mutable<Vec<Greeting>>,
     participants: Mutable<Option<Vec<Participant>>>,
     campaigns: Mutable<Option<Vec<CampaignAdminItem>>>,
+    selected_campaign: Mutable<Option<CampaignAdminItem>>,
+    campaign_participants: Mutable<Option<Vec<Participant>>>,
+    campaign_invite_count: Mutable<String>,
     campaign_name: Mutable<String>,
     campaign_count: Mutable<usize>,
     submitted_count: Mutable<usize>,
@@ -107,7 +110,7 @@ struct AppState {
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), campaign_name: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
+        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -426,6 +429,15 @@ async fn load_campaigns(state: AppState) {
             state.campaigns.set(Some(Vec::new()));
             set_note(&state, format!("Не удалось загрузить кампании: {error}"));
         }
+    }
+}
+
+async fn load_campaign_participants(state: AppState, campaign_id: &str) {
+    state.campaign_participants.set(None);
+    let path = format!("/api/admin/campaigns/{campaign_id}/participants");
+    match get_json::<Vec<Participant>>(&path).await {
+        Ok(items) => state.campaign_participants.set(Some(items)),
+        Err(error) => set_note(&state, format!("Не удалось загрузить участников кампании: {error}")),
     }
 }
 async fn load_campaign(state: AppState) {
@@ -1217,29 +1229,53 @@ fn campaign_card(state: AppState, campaign: CampaignAdminItem) -> Dom {
     let id = campaign.id.clone();
     let name = campaign.name.clone();
     let protected = id == "legacy-default";
+    let campaign_for_manage = campaign.clone();
     html!("article", {
         .class("admin-item")
         .child(html!("strong", {.text(&campaign.name)}))
         .child(html!("small", {.text(&format!("Участников: {} · Поздравлений: {}", campaign.participant_count, campaign.submitted_count))}))
         .child(html!("small", {.text(if protected { "Системная кампания — удаление запрещено" } else { "Кампания доступна для управления" })}))
         .child(if protected {
-            html!("span", {.class("muted").text("Защищена")})
+            html!("span", {.class("muted").text("Системная кампания — защищена")})
+        } else {
+            html!("button", {
+                .class("secondary")
+                .text("Участники и приглашения")
+                .event(clone!(state => move |_: events::Click| {
+                    state.selected_campaign.set(Some(campaign_for_manage.clone()));
+                    state.campaign_invite_count.set("5".into());
+                    let current = state.clone();
+                    let campaign_id = campaign_for_manage.id.clone();
+                    spawn_local(async move { load_campaign_participants(current, &campaign_id).await; });
+                }))
+            })
+        })
+        .child(if protected {
+            html!("span", {.class("muted").text("Удаление запрещено")})
         } else {
             html!("button", {
                 .class("secondary")
                 .text("Удалить кампанию")
                 .event(clone!(state => move |_: events::Click| {
-                    let prompt = format!("Удаление кампании «{name}» необратимо удалит её приглашения, участников, сессии и поздравления.\n\nВведите точное название кампании для подтверждения:");
+                    let prompt = format!("Удаление кампании «{name}» необратимо удалит её приглашения, участников, сессии и поздравления.\\n\\nВведите точное название кампании для подтверждения:");
                     let confirmation = web_sys::window().and_then(|window| window.prompt_with_message(&prompt).ok()).flatten();
                     let Some(confirmation) = confirmation else { return; };
                     let csrf = state.csrf();
                     let current = state.clone();
                     let path = format!("/api/admin/campaigns/{id}");
                     let deleted_name = name.clone();
+                    let deleted_id = id.clone();
                     spawn_local(async move {
                         let body = serde_json::json!({ "confirm_name": confirmation });
                         match delete_json(&path, &body, &csrf).await {
-                            Ok(()) => { set_note(&current, format!("Кампания «{deleted_name}» удалена.")); load_campaigns(current.clone()).await; }
+                            Ok(()) => {
+                                if current.selected_campaign.lock_ref().as_ref().is_some_and(|item| item.id == deleted_id) {
+                                    current.selected_campaign.set(None);
+                                    current.campaign_participants.set(None);
+                                }
+                                set_note(&current, format!("Кампания «{deleted_name}» удалена."));
+                                load_campaigns(current.clone()).await;
+                            }
                             Err(error) => set_note(&current, error),
                         }
                     });
@@ -1260,6 +1296,156 @@ fn campaigns_panel(state: AppState) -> Dom {
                 Some(items) => html!("div", {
                     .class("admin-grid")
                     .children(items.into_iter().map(clone!(state => move |campaign| campaign_card(state.clone(), campaign))))
+                })
+            })
+        })))
+    })
+}
+
+fn campaign_participants_grid(state: AppState, campaign_id: String, participants: Vec<Participant>) -> Dom {
+    html!("div", {
+        .class("admin-grid")
+        .children(participants.into_iter().map(clone!(state, campaign_id => move |participant| {
+            let number = participant.ornament_number;
+            let display_name = participant.display_name.clone().unwrap_or_default();
+            let status = if participant.submitted {
+                "Поздравление опубликовано"
+            } else if participant.activated {
+                "Приглашение активировано"
+            } else if participant.revoked {
+                "Приглашение отозвано"
+            } else {
+                "Ожидает участника"
+            };
+            html!("article", {
+                .class("admin-item")
+                .child(html!("strong", {.text(&format!("Шар №{number}"))}))
+                .child(html!("small", {.text(status)}))
+                .child(html!("small", {.text(&display_name)}))
+                .children(if !participant.activated && !participant.submitted && !participant.revoked {
+                    vec![
+                        html!("button", {
+                            .class("secondary")
+                            .text("Перевыпустить ссылку")
+                            .event(clone!(state, campaign_id => move |_: events::Click| {
+                                let csrf = state.csrf();
+                                let current = state.clone();
+                                let path = format!("/api/admin/campaigns/{campaign_id}/invitations/{number}/reissue");
+                                let refresh_campaign_id = campaign_id.clone();
+                                spawn_local(async move {
+                                    match post_json::<serde_json::Value>(&path, &serde_json::json!({}), Some(&csrf)).await {
+                                        Ok(data) => {
+                                            let token = data["token"].as_str().unwrap_or_default();
+                                            let origin = web_sys::window().map(|window| window.location().origin().unwrap_or_default()).unwrap_or_default();
+                                            let url = format!("{origin}/#invite={token}");
+                                            current.invite_url.set(url.clone());
+                                            set_note(&current, format!("Одноразовая ссылка для шара №{number}: {url}"));
+                                            load_campaign_participants(current.clone(), &refresh_campaign_id).await;
+                                        }
+                                        Err(error) => set_note(&current, error),
+                                    }
+                                });
+                            }))
+                        }),
+                        html!("button", {
+                            .class("secondary")
+                            .text("Отозвать")
+                            .event(clone!(state, campaign_id => move |_: events::Click| {
+                                let confirmed = web_sys::window().and_then(|window| window.confirm_with_message(
+                                    &format!("Отозвать приглашение для шара №{number}? Ссылка перестанет работать.")
+                                ).ok()).unwrap_or(false);
+                                if !confirmed { return; }
+                                let csrf = state.csrf();
+                                let current = state.clone();
+                                let path = format!("/api/admin/campaigns/{campaign_id}/invitations/{number}/revoke");
+                                let refresh_campaign_id = campaign_id.clone();
+                                spawn_local(async move {
+                                    match post_empty(&path, &csrf).await {
+                                        Ok(()) => {
+                                            load_campaign_participants(current.clone(), &refresh_campaign_id).await;
+                                            load_campaigns(current.clone()).await;
+                                        }
+                                        Err(error) => set_note(&current, error),
+                                    }
+                                });
+                            }))
+                        }),
+                    ]
+                } else { vec![] })
+            })
+        })))
+    })
+}
+
+fn campaign_participants_panel(state: AppState) -> Dom {
+    html!("section", {
+        .class("admin-invite-list")
+        .child_signal(state.selected_campaign.signal_cloned().map(clone!(state => move |selected| {
+            selected.map(|campaign| {
+                let campaign_id = campaign.id.clone();
+                html!("div", {
+                    .child(html!("h2", {.text(&format!("Участники: {}", campaign.name))}))
+                    .child(html!("button", {
+                        .class("secondary")
+                        .text("К списку кампаний")
+                        .event(clone!(state => move |_: events::Click| {
+                            state.selected_campaign.set(None);
+                            state.campaign_participants.set(None);
+                        }))
+                    }))
+                    .child(html!("div", {
+                        .class("campaign-add-invitations")
+                        .child(html!("label", {
+                            .text("Количество новых приглашений (1–35)")
+                            .child(html!("input", {
+                                .attr("type", "number").attr("min", "1").attr("max", "35").attr("step", "1")
+                                .attr("aria-label", "Количество новых приглашений")
+                                .property("value", &state.campaign_invite_count.get_cloned())
+                                .event(clone!(state => move |event: events::Input| {
+                                    if let Some(target) = event.target() {
+                                        if let Ok(input) = target.dyn_into::<HtmlInputElement>() { state.campaign_invite_count.set(input.value()); }
+                                    }
+                                }))
+                            }))
+                        }))
+                        .child(html!("button", {
+                            .class("primary")
+                            .text("Добавить приглашения")
+                            .event(clone!(state, campaign_id => move |_: events::Click| {
+                                let count = match state.campaign_invite_count.get_cloned().parse::<i16>() {
+                                    Ok(value) if (1..=35).contains(&value) => value,
+                                    _ => { set_note(&state, "Количество новых приглашений должно быть от 1 до 35"); return; }
+                                };
+                                let csrf = state.csrf();
+                                let current = state.clone();
+                                let path = format!("/api/admin/campaigns/{campaign_id}/invitations");
+                                let refresh_campaign_id = campaign_id.clone();
+                                spawn_local(async move {
+                                    let body = serde_json::json!({ "count": count });
+                                    match post_json::<Vec<CreatedInvitation>>(&path, &body, Some(&csrf)).await {
+                                        Ok(created) => {
+                                            let origin = web_sys::window().map(|window| window.location().origin().unwrap_or_default()).unwrap_or_default();
+                                            let links = created.into_iter().map(|invitation| InvitationLink {
+                                                ornament_number: invitation.ornament_number,
+                                                url: format!("{origin}/#invite={}", invitation.token),
+                                            }).collect();
+                                            current.invite_urls.set(links);
+                                            set_note(&current, "Новые приглашения созданы. Сохраните одноразовые ссылки.");
+                                            load_campaign_participants(current.clone(), &refresh_campaign_id).await;
+                                            load_campaigns(current.clone()).await;
+                                        }
+                                        Err(error) => set_note(&current, error),
+                                    }
+                                });
+                            }))
+                        }))
+                    }))
+                    .child_signal(state.campaign_participants.signal_cloned().map(clone!(state, campaign_id => move |participants| {
+                        Some(match participants {
+                            None => html!("p", {.class("muted").text("Загружаем участников…")}),
+                            Some(items) => campaign_participants_grid(state.clone(), campaign_id.clone(), items),
+                        })
+                    })))
                 })
             })
         })))
@@ -1378,6 +1564,7 @@ fn admin_screen(state: AppState) -> Dom {
         }))
         .child(create_named_campaign_panel(state.clone()))
         .child(campaigns_panel(state.clone()))
+        .child(campaign_participants_panel(state.clone()))
         .child_signal(state.participants.signal_cloned().map(clone!(state => move |participants| {
             Some(match participants {
                 None => html!("section", {
@@ -1579,6 +1766,9 @@ fn reset_session_state(state: &AppState) {
     state.greetings.set(Vec::new());
     state.participants.set(None);
     state.campaigns.set(None);
+    state.selected_campaign.set(None);
+    state.campaign_participants.set(None);
+    state.campaign_invite_count.set("5".into());
     state.campaign_name.set(String::new());
     state.campaign_count.set(0);
     state.submitted_count.set(0);
