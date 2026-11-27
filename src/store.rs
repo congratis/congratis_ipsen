@@ -730,6 +730,11 @@ impl Store {
     }
 
     pub async fn insert_invitations(&self, invitations: &[(i16, String)]) -> Result<()> {
+        // The legacy campaign is a stable system scope even on a fresh database
+        // where no pre-existing ornaments were present during startup migration.
+        if self.get_campaign(LEGACY_CAMPAIGN_ID).await?.is_none() {
+            self.create_campaign(LEGACY_CAMPAIGN_ID, "Существующая кампания").await?;
+        }
         let existing = self.list_ornaments().await?;
         if !existing.is_empty() {
             bail!("ornaments table is not empty; refusing to overwrite invitations");
