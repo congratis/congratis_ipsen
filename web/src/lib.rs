@@ -195,6 +195,19 @@ fn restore_dialog_focus(state: &AppState) {
     });
     let _ = window.request_animation_frame(callback.unchecked_ref());
 }
+fn close_submission_dialog(state: &AppState) {
+    if let Some(dialog) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id("submission-dialog"))
+    {
+        if let Ok(dialog) = dialog.dyn_into::<web_sys::HtmlDialogElement>() {
+            if dialog.open() { dialog.close(); }
+            dialog.remove();
+        }
+    }
+    restore_dialog_focus(state);
+}
+
 fn focus_first_dialog_control(dialog_id: &'static str) {
     let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
     let Some(dialog) = document.get_element_by_id(dialog_id) else { return; };
@@ -694,7 +707,10 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                                 state.selected.set(Some(g));
                                 schedule_dialog_focus("greeting-dialog");
                             }
-                            else if mine { show_form(state.clone()); }
+                            else if mine {
+                                remember_dialog_trigger(&state, &event);
+                                show_form(state.clone());
+                            }
                             else { set_note(&state, "Этот шар пока свободен"); }
                         }))
                     })
@@ -993,7 +1009,7 @@ fn show_form(state: AppState) {
         .event(clone!(form_state => move |event: events::KeyDown| {
             if event.key() == "Escape" {
                 event.prevent_default();
-                if let Some(window) = web_sys::window() { let _ = window.location().reload(); }
+                close_submission_dialog(&form_state);
             }
         }))
         .child(html!("section", {
@@ -1005,11 +1021,9 @@ fn show_form(state: AppState) {
                 .attr("aria-label", "Закрыть форму поздравления")
                 .attr("autofocus", "")
                 .text("×")
-                                .event(|_: events::Click| {
-                    if let Some(window) = web_sys::window() {
-                        let _ = window.location().reload();
-                    }
-                })
+                .event(clone!(form_state => move |_: events::Click| {
+                    close_submission_dialog(&form_state);
+                }))
             }))
             .child(html!("div", {
                 .class("kicker")
