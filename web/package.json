@@ -16,6 +16,7 @@
     "rimraf": "^5.0.0",
     "rollup": "^3.21.0",
     "rollup-plugin-livereload": "^2.0.0",
-    "rollup-plugin-serve": "^2.0.0"
+    "rollup-plugin-serve": "^2.0.0",
+    "binaryen": "132.0.0"
   }
 }
