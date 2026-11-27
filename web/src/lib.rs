@@ -1084,6 +1084,77 @@ fn show_form(state: AppState) {
     }
 }
 
+fn create_named_campaign_panel(state: AppState) -> Dom {
+    html!("section", {
+        .class("panel")
+        .class("admin-create-campaign")
+        .child(html!("div", {.class("kicker").text("NEW CAMPAIGN")}))
+        .child(html!("h2", {.text("Создать кампанию")}))
+        .child(html!("label", {
+            .text("Название кампании")
+            .child(html!("input", {
+                .attr("type", "text").attr("maxlength", "100")
+                .attr("aria-label", "Название кампании")
+                .property("value", &state.campaign_name.get_cloned())
+                .event(clone!(state => move |event: events::Input| {
+                    if let Some(target) = event.target() {
+                        if let Ok(input) = target.dyn_into::<HtmlInputElement>() { state.campaign_name.set(input.value()); }
+                    }
+                }))
+            }))
+        }))
+        .child(html!("label", {
+            .text("Количество участников (от 1 до 35)")
+            .child(html!("input", {
+                .attr("type", "number").attr("min", "1").attr("max", "35").attr("step", "1")
+                .attr("aria-label", "Размер новой кампании")
+                .property("value", &state.campaign_size.get_cloned())
+                .event(clone!(state => move |event: events::Input| {
+                    if let Some(target) = event.target() {
+                        if let Ok(input) = target.dyn_into::<HtmlInputElement>() { state.campaign_size.set(input.value()); }
+                    }
+                }))
+            }))
+        }))
+        .child(html!("button", {
+            .class("primary")
+            .text_signal(state.campaign_creating.signal().map(|creating| if creating { "Создаём кампанию…" } else { "Создать именованную кампанию" }))
+            .event(clone!(state => move |_: events::Click| {
+                if state.campaign_creating.get() { return; }
+                let name = state.campaign_name.get_cloned();
+                if name.trim().is_empty() || name.chars().count() > 100 {
+                    set_note(&state, "Название должно содержать от 1 до 100 символов"); return;
+                }
+                let count = match state.campaign_size.get_cloned().parse::<i16>() {
+                    Ok(count) if (1..=35).contains(&count) => count,
+                    _ => { set_note(&state, "Количество участников должно быть от 1 до 35"); return; }
+                };
+                state.campaign_creating.set(true);
+                let csrf = state.csrf();
+                let current = state.clone();
+                spawn_local(async move {
+                    let body = serde_json::json!({ "name": name, "participant_count": count });
+                    match post_json::<CreateCampaignResponse>("/api/admin/campaigns", &body, Some(&csrf)).await {
+                        Ok(created) => {
+                            let origin = web_sys::window().map(|window| window.location().origin().unwrap_or_default()).unwrap_or_default();
+                            let links = created.invitations.into_iter().map(|invitation| InvitationLink {
+                                ornament_number: invitation.ornament_number,
+                                url: format!("{origin}/#invite={}", invitation.token),
+                            }).collect();
+                            current.invite_urls.set(links);
+                            current.campaign_name.set(String::new());
+                            set_note(&current, format!("Кампания «{}» создана. Сохраните одноразовые ссылки.", created.campaign.name));
+                            load_campaigns(current.clone()).await;
+                        }
+                        Err(error) => set_note(&current, error),
+                    }
+                    current.campaign_creating.set(false);
+                });
+            }))
+        }))
+    })
+}
+
 fn campaign_card(state: AppState, campaign: CampaignAdminItem) -> Dom {
     let id = campaign.id.clone();
     let name = campaign.name.clone();
