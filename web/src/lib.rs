@@ -1084,76 +1084,6 @@ fn show_form(state: AppState) {
     }
 }
 
-fn create_campaign_panel(state: AppState) -> Dom {
-    html!("section", {
-        .class("panel")
-        .class("admin-create-campaign")
-        .child(html!("div", {.class("kicker").text("NEW CAMPAIGN")}))
-        .child(html!("h2", {.text("Создать новогоднюю кампанию")}))
-        .child(html!("p", {
-            .class("muted")
-            .text("Выбери количество участников. Для каждого будет создана отдельная одноразовая ссылка.")
-        }))
-        .child(html!("label", {
-            .text("Количество участников (от 1 до 35)")
-            .child(html!("input", {
-                .attr("type", "number")
-                .attr("min", "1")
-                .attr("max", "35")
-                .attr("step", "1")
-                .attr("aria-label", "Количество участников")
-                .property("value", &state.campaign_size.get_cloned())
-                .event(clone!(state => move |event: events::Input| {
-                    if let Some(target) = event.target() {
-                        if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
-                            state.campaign_size.set(input.value());
-                        }
-                    }
-                }))
-            }))
-        }))
-        .child(html!("button", {
-            .class("primary")
-            .text_signal(state.campaign_creating.signal().map(|creating| {
-                if creating { "Создаём кампанию…" } else { "Создать кампанию и ссылки" }
-            }))
-            .event(clone!(state => move |_: events::Click| {
-                if state.campaign_creating.get() { return; }
-                let count = match state.campaign_size.get_cloned().parse::<i16>() {
-                    Ok(count) if (1..=35).contains(&count) => count,
-                    _ => {
-                        set_note(&state, "Количество участников должно быть от 1 до 35");
-                        return;
-                    }
-                };
-                state.campaign_creating.set(true);
-                let csrf = state.csrf();
-                let current = state.clone();
-                spawn_local(async move {
-                    let body = serde_json::json!({ "participant_count": count });
-                    match post_json::<Vec<CreatedInvitation>>("/api/admin/campaign", &body, Some(&csrf)).await {
-                        Ok(created) => {
-                            let origin = web_sys::window()
-                                .map(|window| window.location().origin().unwrap_or_default())
-                                .unwrap_or_default();
-                            let links = created.into_iter().map(|invitation| InvitationLink {
-                                ornament_number: invitation.ornament_number,
-                                url: format!("{origin}/#invite={}", invitation.token),
-                            }).collect();
-                            current.invite_urls.set(links);
-                            set_note(&current, "Кампания создана. Сохраните одноразовые ссылки — повторно получить их будет нельзя.");
-                            load_participants(current.clone()).await;
-                            load_campaign(current.clone()).await;
-                        }
-                        Err(error) => set_note(&current, error),
-                    }
-                    current.campaign_creating.set(false);
-                });
-            }))
-        }))
-    })
-}
-
 fn create_named_campaign_panel(state: AppState) -> Dom {
     html!("section", {
         .class("panel")
@@ -1572,7 +1502,13 @@ fn admin_screen(state: AppState) -> Dom {
                     .attr("aria-busy", "true")
                     .child(html!("p", {.class("muted").text("Загружаем участников…")}))
                 }),
-                Some(list) if list.is_empty() => create_campaign_panel(state.clone()),
+                Some(list) if list.is_empty() => html!("section", {
+                    .class("panel")
+                    .child(html!("p", {
+                        .class("muted")
+                        .text("В системной кампании пока нет участников. Создайте отдельную кампанию в форме выше.")
+                    }))
+                }),
                 Some(list) => participants_grid(state.clone(), list),
             })
         })))

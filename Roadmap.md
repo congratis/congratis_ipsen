@@ -24,10 +24,11 @@ Congratis is an interactive New Year greeting experience. An organizer creates a
 | Greeting viewer | Implemented | Dialog semantics, long-message layout and deterministic navigation |
 | Candy-cane progress and SSE | Implemented | API snapshot, reconnect reconciliation and live updates |
 | Presentation and Jingle Bells | Implemented | Controls, silent fallback, reduced-motion handling and attribution |
-| Administration UI | Implemented | Login, campaign creation, participant list, reissue and confirmed revoke |
+| Administration UI | Implemented | Login, named campaign creation, campaign list, participant management, invitation add/reissue/revoke and exact-name deletion |
+| Multi-campaign isolation | Implemented | Campaign-scoped invitations, greetings, participant sessions and SSE; RethinkDB integration test verifies cross-campaign isolation and deletion |
 | Dialog keyboard accessibility | In progress | Escape exists; Tab/Shift+Tab trapping and focus restoration are under CI |
 | Production CI validation | Passed on current main baseline | Full Docker stack, Nginx bootstrap/TLS checks and real backend HTTP smoke test |
-| Live VPS deployment | Not yet verified | Requires safe update of `/opt/congratis`, production configuration, HTTPS and live smoke tests |
+| Live VPS deployment | Not yet verified | Deliberately not executed during repository development; requires separate authorization for production operations |
 
 ## 1. Frontend audit and stabilization
 
@@ -95,12 +96,14 @@ Congratis is an interactive New Year greeting experience. An organizer creates a
 ## 8. Administration UI
 
 - Admin authentication and session handling.
-- Create campaign and one-time invitations.
-- View participant/invitation statuses.
+- Create named campaigns and one-time invitations.
+- View campaigns and campaign-scoped participant/invitation statuses.
+- Add invitations to an existing campaign.
 - Reissue or revoke eligible invitations; confirm destructive actions.
+- Permanently delete a campaign only after exact-name confirmation; never delete legacy-default.
 - Copy one-time links and receive live updates.
 
-**Acceptance:** administration requires no direct database access; admin actions are authorized and tested.
+**Acceptance:** administration requires no direct database access; admin actions are authorized, CSRF-protected and tested.
 
 ## 9. Visual polish, accessibility and performance
 
@@ -125,13 +128,11 @@ Congratis is an interactive New Year greeting experience. An organizer creates a
 
 ## Next execution sequence
 
-1. Merge and verify the dialog focus-management change after all required checks pass.
-2. Align and verify production documentation.
-3. Inspect current VPS state without changing persistent data.
-4. Add swap if still absent, install/verify Docker, and configure private GitHub access.
-5. Deploy `main` using the documented non-destructive procedure.
-6. Verify HTTPS, health, administrator login, campaign creation, invitation flow, greeting submission, SSE and persistence.
-7. Mark live deployment and Roadmap complete only after those checks succeed.
+1. Review the multi-campaign implementation and its integration coverage on main.
+2. Keep deployment documentation aligned with the current Compose, Nginx and TLS configuration.
+3. Treat live VPS inspection, deployment and production smoke tests as a separate operational task requiring explicit authorization.
+4. Do not modify production services, secrets, volumes or persistent RethinkDB data as part of repository-only development.
+5. Mark live deployment complete only after separately authorized HTTPS, health, administrator login, campaign creation, invitation flow, greeting submission, SSE and persistence checks succeed.
 
 ## Separate technical-debt task
 
