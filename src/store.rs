@@ -449,7 +449,13 @@ impl Store {
     }
 
     pub async fn get_campaign(&self, campaign_id: &str) -> Result<Option<Campaign>> {
-        self.first(r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(campaign_id)).await
+        let value: Option<Value> = self
+            .first(r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(campaign_id))
+            .await?;
+        match value {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => Ok(Some(serde_json::from_value(value)?)),
+        }
     }
 
     pub async fn create_campaign(&self, campaign_id: &str, name: &str) -> Result<Campaign> {
