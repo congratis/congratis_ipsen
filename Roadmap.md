@@ -136,7 +136,7 @@ Congratis is an interactive New Year greeting experience. An organizer creates a
 
 ## Separate technical-debt task
 
-- [ ] Investigate and fix the `wasm-opt: Fatal: error parsing wasm` warning emitted during the WASM/Rollup build. The build currently continues without WASM optimization; track this independently from browser-test failures and do not treat it as their root cause.
+- [x] Fixed the `wasm-opt: Fatal: error parsing wasm` warning by pinning Binaryen 132.0.0 as a direct frontend dev dependency while retaining the existing Rollup plugin major version. The frontend CI build and Playwright suite pass, and the build log no longer contains the parsing warning.
 
 ## Architecture principles
 
