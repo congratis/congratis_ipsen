@@ -564,8 +564,8 @@ impl Store {
         campaign_id: &str,
         invitations: &[(i16, String)],
     ) -> Result<()> {
-        if self.get_campaign(campaign_id).await?.is_none() {
-            bail!("campaign does not exist");
+        if self.get_campaign(campaign_id).await?.is_none_or(|campaign| campaign.status != "active") {
+            bail!("campaign does not exist or is not active");
         }
         if invitations.is_empty() {
             bail!("at least one invitation is required");
@@ -1025,6 +1025,18 @@ pub struct ParticipantSummary {
 }
 impl Store {
     pub async fn activate_invitation(&self, token_hash: &str) -> Result<Option<(i16, String)>> {
+        let mut existing = r.db(self.database.as_str()).table(TABLE)
+            .get_all(r.args((token_hash, token_index_options())))
+            .limit(1).run::<_, Ornament>(&self.session);
+        let Some(invitation) = existing.try_next().await? else {
+            return Ok(None);
+        };
+        drop(existing);
+        let campaign_id = invitation.campaign_id.as_deref().unwrap_or(LEGACY_CAMPAIGN_ID);
+        if self.get_campaign(campaign_id).await?.is_none_or(|campaign| campaign.status != "active") {
+            return Ok(None);
+        }
+
         let update = reql::func!(|document| {
             r.branch(r.args((
                 document.clone().get_field("activated").default(r.expr(false)).eq(false)
@@ -1073,6 +1085,9 @@ impl Store {
         self.list_campaign_participants(LEGACY_CAMPAIGN_ID).await
     }
     pub async fn claim_greeting(&self, campaign_id: &str, number: i16, display_name: &str, message: &str) -> Result<bool> {
+        if self.get_campaign(campaign_id).await?.is_none_or(|campaign| campaign.status != "active") {
+            return Ok(false);
+        }
         let update = reql::func!(|document| {
             r.branch(r.args((
                 document.clone().get_field("activated").default(r.expr(false))
