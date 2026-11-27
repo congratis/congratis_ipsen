@@ -467,7 +467,7 @@ impl Store {
         let mut stream = r
             .db(self.database.as_str())
             .table(TABLE)
-            .filter(json!({"campaign_id": campaign_id}))
+            .filter(reql::func!(|document| document.get_field("campaign_id").eq(campaign_id)))
             .run::<_, Ornament>(&self.session);
         let mut ornaments = Vec::new();
         while let Some(ornament) = stream.try_next().await? {
@@ -613,7 +613,7 @@ impl Store {
         campaign_id: &str,
         ornament_number: i16,
     ) -> Result<bool> {
-        let id = format!("{campaign_id}:{ornament_number}");
+        let id = campaign_ornament_key(campaign_id, ornament_number);
         let update = reql::func!(|document| {
             r.branch(
                 r.args((
