@@ -17,7 +17,7 @@
 ## Стек
 
 - Backend: Rust, Axum, Tokio.
-- Frontend: Rust, Dominator, WebAssembly, **Rollup**.
+- Frontend: Rust, Dominator, WebAssembly, **Rollup**; Binaryen 132.0.0 is pinned for reproducible `wasm-opt` optimization.
 - Database: RethinkDB 2.4.4.
 - Deployment: Docker Compose, Nginx 1.30.8, GlobalSign TLS in production.
 - Browser tests: Playwright.
