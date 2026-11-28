@@ -527,7 +527,7 @@ test("preloads greeting avatars before opening a greeting and reuses the cached 
   await expect.poll(() => avatarRequests).toBe(1);
 
   await page.getByRole("button", { name: "Шар номер 2", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "С теплом, Борис Петров" });
+  const dialog = page.getByRole("dialog", { name: "С теплом, Борис" });
   await expect(dialog.locator("img.participant-avatar")).toBeVisible();
   expect(avatarRequests).toBe(1);
 });
