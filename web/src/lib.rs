@@ -507,7 +507,6 @@ async fn load_campaign_participants(state: AppState, campaign_id: &str) {
                 }
             }
             state.campaign_participants.set(Some(items));
-            connect_presence_events(state.clone());
         },
         Err(error) => set_note(&state, format!("Не удалось загрузить участников кампании: {error}")),
     }
