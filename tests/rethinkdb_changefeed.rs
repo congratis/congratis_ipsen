@@ -64,12 +64,20 @@ async fn changefeed_only_publishes_submitted_greetings_across_campaigns() {
         "unused invitations must be filtered out by the database changefeed"
     );
 
-    let ornament = store
-        .claim_campaign_invitation(&campaign_id, &hash, "Realtime tester", "Changefeed delivery works")
-        .await
-        .expect("claim invitation")
-        .expect("invitation should be available");
-    assert_eq!(ornament, 1);
+    assert!(
+        store
+            .claim_greeting(
+                &campaign_id,
+                1,
+                "Realtime",
+                "Tester",
+                None,
+                "Changefeed delivery works",
+            )
+            .await
+            .expect("claim greeting"),
+        "the campaign invitation should be claimed"
+    );
 
     let event = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -83,7 +91,7 @@ async fn changefeed_only_publishes_submitted_greetings_across_campaigns() {
     .expect("Changefeed should publish the committed greeting for the target campaign");
 
     assert_eq!(event.ornament_number, 1);
-    assert_eq!(event.display_name, "Realtime tester");
+    assert_eq!(event.display_name, "Realtime Tester");
     assert_eq!(event.message, "Changefeed delivery works");
 
     feed_task.abort();
