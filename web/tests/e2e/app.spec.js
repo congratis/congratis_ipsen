@@ -500,6 +500,39 @@ test("SSE reconnect reconciles greetings and campaign progress after a dropped c
   await expect(page.locator(".progress-count")).toHaveText("1 / 20");
 });
 
+test("preloads greeting avatars before opening a greeting", async ({ page }) => {
+  await mockParticipantSession(page);
+  let avatarRequests = 0;
+  await page.route("**/avatars/*.png", async route => {
+    avatarRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "image/png",
+      headers: { "cache-control": "public, max-age=31536000, immutable" },
+      body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "base64")
+    });
+  });
+  await page.route("**/api/greetings", route =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { ornament_number: 2, display_name: "Борис", surname: "Петров", first_name: "Борис", avatar_url: "/avatars/0123456789abcdef0123456789abcdef.png", message: "Счастья!" }
+      ])
+    })
+  );
+
+  await page.goto("/#invite=valid-invite-token");
+  await expect(page.locator(".tree-frame")).toBeVisible();
+  await expect.poll(() => avatarRequests).toBe(1);
+
+  await page.getByRole("button", { name: "Шар номер 2", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "С теплом, Борис" });
+  const avatar = dialog.locator("img.participant-avatar");
+  await expect(avatar).toBeVisible();
+  await expect.poll(() => avatar.evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
+});
+
 test("greeting viewer navigates in deterministic ornament order and exposes dialog semantics", async ({ page }) => {
   await mockParticipantSession(page);
   await page.route("**/api/greetings", route =>
@@ -599,6 +632,9 @@ test("presentation mode navigates greetings and supports audio controls and sile
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Поздравление 2 из 2")).toBeVisible();
   await expect(page.locator(".ornament.presenting")).toHaveAttribute("aria-label", "Шар номер 2");
+  const likeButton = dialog.locator(".presentation-like");
+  await expect(likeButton).toBeVisible();
+  await expect(likeButton.locator(".presentation-like-heart")).toHaveCSS("font-size", "36px");
 
   // The last forward action must lead to a distinct finale, not a blank/overflow state.
   await page.getByRole("button", { name: "Следующее поздравление" }).click();
