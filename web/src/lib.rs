@@ -1613,7 +1613,7 @@ fn campaign_card(state: AppState, campaign: CampaignAdminItem) -> Dom {
                 .class("secondary")
                 .text("Удалить кампанию")
                 .event(clone!(state => move |_: events::Click| {
-                    let prompt = format!("Удаление кампании «{name}» необратимо удалит её приглашения, участников, сессии и поздравления.\\n\\nВведите точное название кампании для подтверждения:");
+                    let prompt = format!("Удаление кампании «{name}» необратимо удалит её приглашения, участников, сессии и поздравления.\n\nВведите точное название кампании для подтверждения:");
                     let confirmation = web_sys::window().and_then(|window| window.prompt_with_message(&prompt).ok()).flatten();
                     let Some(confirmation) = confirmation else { return; };
                     let csrf = state.csrf();
