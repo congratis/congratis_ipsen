@@ -70,14 +70,14 @@ async fn main() -> Result<()> {
 
     let tables: Vec<String> =
         first(r.db(database.as_str()).table_list(), &session).await?;
-    for table in ["ornaments", "auth_sessions"] {
+    for table in ["ornaments", "auth_sessions", "campaigns"] {
         if !tables.iter().any(|name| name == table) {
             bail!("required table {database}.{table} does not exist; nothing was cleared");
         }
     }
 
     println!("Connected to database: {database}");
-    for table in ["ornaments", "auth_sessions"] {
+    for table in ["ornaments", "auth_sessions", "campaigns"] {
         let mut rows = r
             .db(database.as_str())
             .table(table)
@@ -120,6 +120,6 @@ async fn main() -> Result<()> {
         println!("{table}: {before} records found, {} deleted, verified empty", result.deleted);
     }
 
-    println!("Database reset completed. Tables and indexes were preserved.");
+    println!("Database reset completed. Application records were deleted; tables, indexes and database were preserved.");
     Ok(())
 }

@@ -181,7 +181,30 @@ docker compose exec nginx nginx -t
 
 For local development without TLS, use `TLS_MODE=http` and `COOKIE_SECURE=false`. Production must use `TLS_MODE=globalsign` and `COOKIE_SECURE=true`.
 
-## 7. Create the campaign and distribute invitations
+## 7. Fresh production deployment (destructive)
+
+Use this only when intentionally replacing the current campaign data with a clean start. It deploys `main`, then permanently deletes every record from:
+
+- `congratis.ornaments` — invitations, participant records and greetings.
+- `congratis.auth_sessions` — all participant and administrator sessions.
+- `congratis.campaigns` — all campaign records.
+
+The database, tables, indexes and Docker named volume are retained. The app recreates its protected `legacy-default` system campaign when it starts again. The script does not create a database backup. One-time invitation tokens and submitted greetings are irrecoverable after this operation.
+
+Before running it, verify that `.env`, the GlobalSign certificate and private key are correct and that the Git checkout is the expected production checkout. The script refuses a dirty working tree and requires two separate typed confirmations.
+
+From the VPS:
+
+```bash
+cd /opt/congratis
+bash deploy/scripts/deploy-fresh-production.sh
+```
+
+The first confirmation must be `DEPLOY FRESH congratis.online`; the reset helper then separately requires `CLEAR congratis`. If either confirmation is not exact, the corresponding operation is cancelled. The helper stops the app while deleting records, then starts it again. It does not run `docker compose down -v`, remove the RethinkDB volume, or delete TLS files.
+
+After deployment, verify the admin login and create a new campaign in the admin panel. Save each one-time invitation link when it is displayed.
+
+## 8. Create the campaign and distribute invitations
 
 Open `https://congratis.online`, choose administrator login and authenticate using `ADMIN_USERNAME` and the password whose Argon2id hash is in `.env`.
 
@@ -197,7 +220,7 @@ It accepts a count from 1 to 35 and prints raw tokens once. Do not run it after 
 
 The CI-only script `deploy/scripts/smoke-test-api.sh` creates invitations and submits test data. It requires a fresh disposable database and must not be run against production data.
 
-## 8. Updates and operations
+## 9. Updates and operations
 
 Review Git status first. Preserve local configuration and never overwrite `.env`.
 
@@ -221,7 +244,7 @@ RethinkDB data is stored in the named `rethinkdb_data` volume. Back up the datab
 
 **Never run `docker compose down -v` on production.** It deletes persistent volumes. A Docker restart is not a backup, and a single VPS is not highly available.
 
-## 9. Remove legacy Certbot units (one-time migration)
+## 10. Remove legacy Certbot units (one-time migration)
 
 This project no longer deploys or uses Certbot. If the old systemd timer was installed on the VPS, disable it and remove its unit files:
 
