@@ -316,6 +316,10 @@ async fn submit(
         let format = image::guess_format(&bytes).map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Файл не является корректным изображением"))?;
         let expected = match declared_type { "data:image/jpeg;base64" => image::ImageFormat::Jpeg, "data:image/png;base64" => image::ImageFormat::Png, _ => image::ImageFormat::WebP };
         if format != expected { return Err(ApiError(StatusCode::BAD_REQUEST, "Тип файла не совпадает с содержимым")); }
+        let (width, height) = image::ImageReader::with_format(std::io::Cursor::new(&bytes), format).into_dimensions().map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Не удалось прочитать изображение"))?;
+        if width == 0 || height == 0 || width > 10_000 || height > 10_000 || (width as u64) * (height as u64) > 40_000_000 {
+            return Err(ApiError(StatusCode::BAD_REQUEST, "Слишком большое разрешение фотографии"));
+        }
         let decoded = image::load_from_memory_with_format(&bytes, format).map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Не удалось прочитать изображение"))?;
         let normalized = decoded.thumbnail(512, 512);
         let mut output = std::io::Cursor::new(Vec::new());
