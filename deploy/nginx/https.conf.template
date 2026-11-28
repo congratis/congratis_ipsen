@@ -31,7 +31,7 @@ server {
     http2 on;
     server_name ${DOMAIN} www.${DOMAIN};
 
-    client_max_body_size 1m;
+    client_max_body_size 2m;
 
     ssl_certificate ${CERT_ROOT}/live/${DOMAIN}/fullchain.pem;
     ssl_certificate_key ${CERT_ROOT}/live/${DOMAIN}/privkey.pem;
