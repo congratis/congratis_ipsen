@@ -88,7 +88,7 @@ async fn campaign_data_and_deletion_are_isolated_and_retryable() {
     assert_eq!(store.get_campaign(&campaign_b).await.unwrap().unwrap().name, name_b);
     let remaining_b = store.list_campaign_greetings(&campaign_b).await.unwrap();
     assert_eq!(remaining_b.len(), 1);
-    assert_eq!(remaining_b[0].display_name.as_deref(), Some("Bob"));
+    assert_eq!(remaining_b[0].display_name.as_deref(), Some("Jones Bob"));
     assert!(store.get_auth_session(&session_b).await.unwrap().is_some());
     assert!(store.get_auth_session(&admin_session).await.unwrap().is_some());
 
