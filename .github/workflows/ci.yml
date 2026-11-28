@@ -81,12 +81,12 @@ jobs:
         with:
           workspaces: |
             web -> web/target
+      - name: Compile Dominator frontend
+        run: cargo check --manifest-path web/Cargo.toml --locked --target wasm32-unknown-unknown
+      - name: Lint Dominator frontend
+        run: cargo clippy --manifest-path web/Cargo.toml --locked --target wasm32-unknown-unknown -- -D warnings
       - name: Check WASM formatting
         run: cargo fmt --manifest-path web/Cargo.toml -- --check
-      - name: Compile Dominator frontend
-        run: cargo check --manifest-path web/Cargo.toml --target wasm32-unknown-unknown
-      - name: Lint Dominator frontend
-        run: cargo clippy --manifest-path web/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -148,24 +148,24 @@ jobs:
       - name: Install protobuf compiler
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: Swatinem/rust-cache@v2
-      - name: Check backend formatting
-        run: cargo fmt --all -- --check
       - name: Compile all backend targets
-        run: cargo check --all-targets
+        run: cargo check --all-targets --locked
       - name: Lint backend
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Run backend tests
         env:
           RETHINKDB_HOST: 127.0.0.1
           RETHINKDB_PORT: "28015"
           RETHINKDB_DB: congratis_ci
           RETHINKDB_TESTS: "1"
-        run: cargo test --all-targets
+        run: cargo test --all-targets --locked
+      - name: Check backend formatting
+        run: cargo fmt --all -- --check
       - name: Verify RethinkDB Rust driver connection
         env:
           RETHINKDB_HOST: 127.0.0.1
           RETHINKDB_PORT: "28015"
-        run: cargo run --bin rethinkdb-probe
+        run: cargo run --locked --bin rethinkdb-probe
 
   security:
     name: Security · Cargo Audit
