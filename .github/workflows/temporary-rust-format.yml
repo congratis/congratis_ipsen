@@ -1,0 +1,35 @@
+name: Temporary Rust formatting fix
+
+on:
+  push:
+    branches:
+      - ci/strict-rust-checks
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ci/strict-rust-checks
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply canonical Rust formatting
+        run: |
+          cargo fmt --all
+          cargo fmt --manifest-path web/Cargo.toml
+      - name: Commit formatting-only changes
+        run: |
+          if git diff --quiet; then
+            echo "All Rust sources are already formatted."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src web/src tests
+          git commit -m "style: apply rustfmt to Rust sources"
+          git push origin HEAD:ci/strict-rust-checks
