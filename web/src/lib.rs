@@ -1252,7 +1252,6 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                                                     .child(html!("span", {.class("leaderboard-likes").text(&format!("♥ {}", entry.like_count))}))
                                                 })
                                             }))
-                                            .child_signal(futures_signals::signal::always(None::<Dom>))
                                         }))
                                     } else { None }
                                 }))
@@ -1678,6 +1677,7 @@ fn campaign_participants_grid(state: AppState, campaign_id: String, participants
                 .child(html!("strong", {.text(&format!("Шар №{number}"))}))
                 .child(html!("small", {.text(status)}))
                 .child(html!("small", {.text(&display_name)}))
+                .child_signal(futures_signals::signal::always(if participant.submitted { Some(html!("small", {.class("admin-like-count").text(&format!("♥ {} лайков", participant.like_count))})) } else { None }))
                 .children(if !participant.activated && !participant.submitted && !participant.revoked {
                     vec![
                         html!("button", {
