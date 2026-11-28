@@ -579,6 +579,7 @@ async fn admin_revoke_campaign_invitation(
 struct PresenceRecord {
     connections: usize,
     last_activity: i64,
+    filling: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -603,7 +604,7 @@ async fn publish_presence(state: &AppState, campaign_id: &str, ornament_number: 
         .count();
     let record = presence.get(&(campaign_id.to_owned(), ornament_number));
     let online = record.is_some_and(|item| item.connections > 0);
-    let filling = record.is_some_and(|item| online && now - item.last_activity <= 30);
+    let filling = record.is_some_and(|item| online && item.filling && now - item.last_activity <= 30);
     drop(presence);
     let _ = state.presence_events.send(PresenceUpdate {
         kind: "presence".into(),
@@ -626,7 +627,7 @@ async fn presence_connection(mut socket: WebSocket, state: AppState, session: Au
         {
             let mut presence = state.presence.lock().await;
             let record = presence.entry((campaign_id.clone(), number))
-                .or_insert(PresenceRecord { connections: 0, last_activity: 0 });
+                 .or_insert(PresenceRecord { connections: 0, last_activity: 0, filling: false });
             record.connections += 1;
         }
         publish_presence(&state, &campaign_id, number).await;
@@ -641,7 +642,7 @@ async fn presence_connection(mut socket: WebSocket, state: AppState, session: Au
                 campaign_id: campaign,
                 ornament_number: number,
                 online: record.connections > 0,
-                filling: record.connections > 0 && now - record.last_activity <= 30,
+                filling: record.connections > 0 && record.filling && now - record.last_activity <= 30,
                 online_count,
             };
             if let Ok(message) = presence_message(&update) {
@@ -665,6 +666,7 @@ async fn presence_connection(mut socket: WebSocket, state: AppState, session: Au
                                 if let Some(number) = ornament_number {
                                     if let Some(record) = state.presence.lock().await.get_mut(&(campaign_id.clone(), number)) {
                                         record.last_activity = chrono::Utc::now().timestamp();
+                                        record.filling = true;
                                     }
                                     publish_presence(&state, &campaign_id, number).await;
                                 }
@@ -701,8 +703,15 @@ async fn presence_connection(mut socket: WebSocket, state: AppState, session: Au
                 if socket.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
                 if let Some(number) = ornament_number {
                     let now = chrono::Utc::now().timestamp();
-                    let expired = state.presence.lock().await.get(&(campaign_id.clone(), number))
-                        .is_some_and(|record| record.connections > 0 && now - record.last_activity > 30);
+                    let expired = {
+                        let mut presence = state.presence.lock().await;
+                        if let Some(record) = presence.get_mut(&(campaign_id.clone(), number)) {
+                            if record.filling && now - record.last_activity > 30 {
+                                record.filling = false;
+                                true
+                            } else { false }
+                        } else { false }
+                    };
                     if expired { publish_presence(&state, &campaign_id, number).await; }
                 }
             }
