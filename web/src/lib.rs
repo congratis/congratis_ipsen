@@ -459,7 +459,16 @@ async fn load_greetings(state: AppState) {
 }
 async fn load_participants(state: AppState) {
     match get_json::<Vec<Participant>>("/api/admin/participants").await {
-        Ok(items) => state.participants.set(Some(items)),
+        Ok(mut items) => {
+            let previous = state.participants.get_cloned().unwrap_or_default();
+            for item in &mut items {
+                if let Some(old) = previous.iter().find(|old| old.ornament_number == item.ornament_number) {
+                    item.online = old.online;
+                    item.filling = old.filling;
+                }
+            }
+            state.participants.set(Some(items));
+        }
         Err(error) => set_note(&state, format!("Не удалось загрузить участников: {error}")),
     }
 }
@@ -490,7 +499,14 @@ async fn load_campaign_participants(state: AppState, campaign_id: &str) {
     state.campaign_participants.set(None);
     let path = format!("/api/admin/campaigns/{campaign_id}/participants");
     match get_json::<Vec<Participant>>(&path).await {
-        Ok(items) => {
+        Ok(mut items) => {
+            let previous = state.campaign_participants.get_cloned().unwrap_or_default();
+            for item in &mut items {
+                if let Some(old) = previous.iter().find(|old| old.ornament_number == item.ornament_number) {
+                    item.online = old.online;
+                    item.filling = old.filling;
+                }
+            }
             state.campaign_participants.set(Some(items));
             connect_presence_events(state.clone());
         },
