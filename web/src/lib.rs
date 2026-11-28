@@ -46,6 +46,8 @@ impl Route {
 #[derive(Clone, Deserialize, Serialize)]
 struct Greeting { ornament_number: i16, display_name: String, message: String }
 #[derive(Clone, Deserialize)]
+struct RealtimeGreeting { campaign_id: String, ornament_number: i16, display_name: String, message: String }
+#[derive(Clone, Deserialize)]
 #[allow(dead_code)]
 struct Participant {
     ornament_number: i16,
@@ -547,7 +549,12 @@ fn connect_events(state: AppState) {
     let greeting_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
         if let Ok(message) = event.dyn_into::<MessageEvent>() {
             if let Some(raw) = message.data().as_string() {
-                if let Ok(greeting) = serde_json::from_str::<Greeting>(&raw) {
+                if let Ok(event) = serde_json::from_str::<RealtimeGreeting>(&raw) {
+                    let greeting = Greeting {
+                        ornament_number: event.ornament_number,
+                        display_name: event.display_name,
+                        message: event.message,
+                    };
                     let mut all = greeting_state.greetings.lock_mut();
                     if let Some(old) = all.iter_mut().find(|g| g.ornament_number == greeting.ornament_number) { *old = greeting; }
                     else { all.push(greeting); }
@@ -555,6 +562,18 @@ fn connect_events(state: AppState) {
                     let submitted_count = all.len();
                     drop(all);
                     greeting_state.submitted_count.set(submitted_count);
+
+                    if greeting_state.user.lock_ref().as_ref().is_some_and(|user| user.role == "admin") {
+                        let state = greeting_state.clone();
+                        let campaign_id = event.campaign_id;
+                        spawn_local(async move {
+                            load_participants(state.clone()).await;
+                            load_campaigns(state.clone()).await;
+                            if state.selected_campaign.lock_ref().as_ref().is_some_and(|campaign| campaign.id == campaign_id) {
+                                load_campaign_participants(state.clone(), &campaign_id).await;
+                            }
+                        });
+                    }
                 }
             }
         }
@@ -1466,7 +1485,7 @@ fn campaign_participants_panel(state: AppState) -> Dom {
             selected.map(|campaign| {
                 let campaign_id = campaign.id.clone();
                 html!("div", {
-                    .child(html!("h2", {.text(&format!("Участники: {}", campaign.name))}))
+                    .child(html!("h2", {.text(&format!("Участники: {} · Онлайн: {}", campaign.name, campaign.online_count))}))
                     .child(html!("button", {
                         .class("secondary")
                         .text("К списку кампаний")
