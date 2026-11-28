@@ -2055,90 +2055,6 @@ fn campaigns_panel(state: AppState) -> Dom {
     })
 }
 
-fn campaign_participants_grid(
-    state: AppState,
-    campaign_id: String,
-    participants: Vec<Participant>,
-) -> Dom {
-    html!("div", {
-        .class("admin-grid")
-        .children(participants.into_iter().map(clone!(state, campaign_id => move |participant| {
-            let number = participant.ornament_number;
-            let display_name = participant.display_name.clone().unwrap_or_default();
-            let status = if participant.submitted {
-                "Поздравление опубликовано"
-            } else if participant.filling {
-                "Заполняет приглашение сейчас"
-            } else if participant.online {
-                "Сейчас онлайн"
-            } else if participant.activated {
-                "Приглашение активировано"
-            } else if participant.revoked {
-                "Приглашение отозвано"
-            } else {
-                "Ожидает участника"
-            };
-            html!("article", {
-                .class("admin-item")
-                .child(html!("strong", {.text(&format!("Шар №{number}"))}))
-                .child(html!("small", {.text(status)}))
-                .child(html!("small", {.text(&display_name)}))
-                .child_signal(futures_signals::signal::always(if participant.submitted { Some(html!("small", {.class("admin-like-count").text(&format!("♥ {} лайков", participant.like_count))})) } else { None }))
-                .children(if !participant.activated && !participant.submitted && !participant.revoked {
-                    vec![
-                        html!("button", {
-                            .class("secondary")
-                            .text("Перевыпустить ссылку")
-                            .event(clone!(state, campaign_id => move |_: events::Click| {
-                                let csrf = state.csrf();
-                                let current = state.clone();
-                                let path = format!("/api/admin/campaigns/{campaign_id}/invitations/{number}/reissue");
-                                let refresh_campaign_id = campaign_id.clone();
-                                spawn_local(async move {
-                                    match post_json::<serde_json::Value>(&path, &serde_json::json!({}), Some(&csrf)).await {
-                                        Ok(data) => {
-                                            let token = data["token"].as_str().unwrap_or_default();
-                                            let origin = web_sys::window().map(|window| window.location().origin().unwrap_or_default()).unwrap_or_default();
-                                            let url = format!("{origin}/#invite={token}");
-                                            current.invite_url.set(url.clone());
-                                            set_note(&current, format!("Одноразовая ссылка для шара №{number}: {url}"));
-                                            load_campaign_participants(current.clone(), &refresh_campaign_id).await;
-                                        }
-                                        Err(error) => set_note(&current, error),
-                                    }
-                                });
-                            }))
-                        }),
-                        html!("button", {
-                            .class("secondary")
-                            .text("Отозвать")
-                            .event(clone!(state, campaign_id => move |_: events::Click| {
-                                let confirmed = web_sys::window().and_then(|window| window.confirm_with_message(
-                                    &format!("Отозвать приглашение для шара №{number}? Ссылка перестанет работать.")
-                                ).ok()).unwrap_or(false);
-                                if !confirmed { return; }
-                                let csrf = state.csrf();
-                                let current = state.clone();
-                                let path = format!("/api/admin/campaigns/{campaign_id}/invitations/{number}/revoke");
-                                let refresh_campaign_id = campaign_id.clone();
-                                spawn_local(async move {
-                                    match post_empty(&path, &csrf).await {
-                                        Ok(()) => {
-                                            load_campaign_participants(current.clone(), &refresh_campaign_id).await;
-                                            load_campaigns(current.clone()).await;
-                                        }
-                                        Err(error) => set_note(&current, error),
-                                    }
-                                });
-                            }))
-                        }),
-                    ]
-                } else { vec![] })
-            })
-        })))
-    })
-}
-
 fn campaign_participants_panel(state: AppState) -> Dom {
     html!("section", {
         .class("admin-invite-list")
@@ -2205,7 +2121,23 @@ fn campaign_participants_panel(state: AppState) -> Dom {
                     .child_signal(state.campaign_participants.signal_cloned().map(clone!(state, campaign_id => move |participants| {
                         Some(match participants {
                             None => html!("p", {.class("muted").text("Загружаем участников…")}),
-                            Some(items) => campaign_participants_grid(state.clone(), campaign_id.clone(), items),
+                            Some(items) => {
+                                let refresh_campaign_id = campaign_id.clone();
+                                let refresh: Rc<dyn Fn(AppState)> = Rc::new(move |current| {
+                                    let campaign_id = refresh_campaign_id.clone();
+                                    spawn_local(async move {
+                                        load_campaign_participants(current.clone(), &campaign_id).await;
+                                        load_campaigns(current).await;
+                                    });
+                                });
+                                participants_grid(
+                                    state.clone(),
+                                    items,
+                                    format!("/api/admin/campaigns/{campaign_id}/invitations"),
+                                    refresh,
+                                    true,
+                                )
+                            },
                         })
                     })))
                 })
@@ -2214,10 +2146,16 @@ fn campaign_participants_panel(state: AppState) -> Dom {
     })
 }
 
-fn participants_grid(state: AppState, participants: Vec<Participant>) -> Dom {
+fn participants_grid(
+    state: AppState,
+    participants: Vec<Participant>,
+    invitation_base: String,
+    refresh: Rc<dyn Fn(AppState)>,
+    show_like_count: bool,
+) -> Dom {
     html!("div", {
         .class("admin-grid")
-        .children(participants.into_iter().map(clone!(state => move |participant| {
+        .children(participants.into_iter().map(clone!(state, invitation_base, refresh => move |participant| {
             let number = participant.ornament_number;
             let display_name = participant.display_name.unwrap_or_default();
             let status = if participant.submitted {
@@ -2233,21 +2171,29 @@ fn participants_grid(state: AppState, participants: Vec<Participant>) -> Dom {
             } else {
                 "Ожидает участника"
             };
+            let like_count = participant.like_count;
             html!("div", {
                 .class("admin-item")
                 .child(html!("strong", {.text(&format!("Шар №{number}"))}))
                 .child(html!("small", {.text(status)}))
                 .child(html!("small", {.text(&display_name)}))
+                .child_signal(futures_signals::signal::always(
+                    if show_like_count && participant.submitted {
+                        Some(html!("small", {.class("admin-like-count").text(&format!("♥ {like_count} лайков"))}))
+                    } else {
+                        None
+                    }
+                ))
                 .children(if !participant.activated && !participant.submitted && !participant.revoked {
                     vec![
                         html!("button", {
                             .class("secondary")
                             .text("Перевыпустить ссылку")
-                            .event(clone!(state => move |_: events::Click| {
+                            .event(clone!(state, invitation_base, refresh => move |_: events::Click| {
                                 let csrf = state.csrf();
                                 let current = state.clone();
+                                let path = format!("{invitation_base}/{number}/reissue");
                                 spawn_local(async move {
-                                    let path = format!("/api/admin/invitations/{number}/reissue");
                                     match post_json::<serde_json::Value>(&path, &serde_json::json!({}), Some(&csrf)).await {
                                         Ok(data) => {
                                             let token = data["token"].as_str().unwrap_or_default();
@@ -2257,7 +2203,7 @@ fn participants_grid(state: AppState, participants: Vec<Participant>) -> Dom {
                                             let url = format!("{origin}/#invite={token}");
                                             current.invite_url.set(url.clone());
                                             set_note(&current, format!("Одноразовая ссылка для шара №{number}: {url}"));
-                                            load_participants(current.clone()).await;
+                                            refresh(current);
                                         }
                                         Err(error) => set_note(&current, error),
                                     }
@@ -2267,7 +2213,7 @@ fn participants_grid(state: AppState, participants: Vec<Participant>) -> Dom {
                         html!("button", {
                             .class("secondary")
                             .text("Отозвать")
-                            .event(clone!(state => move |_: events::Click| {
+                            .event(clone!(state, invitation_base, refresh => move |_: events::Click| {
                                 let confirmed = web_sys::window()
                                     .and_then(|window| window.confirm_with_message(
                                         &format!("Отозвать приглашение для шара №{number}? Ссылка перестанет работать.")
@@ -2276,10 +2222,10 @@ fn participants_grid(state: AppState, participants: Vec<Participant>) -> Dom {
                                 if !confirmed { return; }
                                 let csrf = state.csrf();
                                 let current = state.clone();
+                                let path = format!("{invitation_base}/{number}/revoke");
                                 spawn_local(async move {
-                                    let path = format!("/api/admin/invitations/{number}/revoke");
                                     match post_empty(&path, &csrf).await {
-                                        Ok(()) => load_participants(current).await,
+                                        Ok(()) => refresh(current),
                                         Err(error) => set_note(&current, error),
                                     }
                                 });
@@ -2345,7 +2291,18 @@ fn admin_screen(state: AppState) -> Dom {
                         .text("В системной кампании пока нет участников. Создайте отдельную кампанию в форме выше.")
                     }))
                 }),
-                Some(list) => participants_grid(state.clone(), list),
+                Some(list) => {
+                    let refresh: Rc<dyn Fn(AppState)> = Rc::new(|current| {
+                        spawn_local(async move { load_participants(current).await; });
+                    });
+                    participants_grid(
+                        state.clone(),
+                        list,
+                        "/api/admin/invitations".to_owned(),
+                        refresh,
+                        false,
+                    )
+                },
             })
         })))
         .child_signal(state.invite_urls.signal_cloned().map(|links| {
