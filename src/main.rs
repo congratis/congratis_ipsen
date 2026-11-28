@@ -152,6 +152,21 @@ fn campaign_numbers(count: i16) -> Result<Vec<i16>, ApiError> {
     }
     Ok((1..=count).collect())
 }
+
+fn add_campaign_count(
+    counts: &mut HashMap<String, (usize, usize)>,
+    campaign_id: Option<&str>,
+    submitted: bool,
+) {
+    let campaign_id = campaign_id
+        .unwrap_or(christmas_greetings::store::LEGACY_CAMPAIGN_ID)
+        .to_owned();
+    let entry = counts.entry(campaign_id).or_default();
+    entry.0 += 1;
+    if submitted {
+        entry.1 += 1;
+    }
+}
 fn random_secret() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
@@ -910,14 +925,7 @@ async fn admin_list_campaigns(
     })?;
     let mut counts = HashMap::<String, (usize, usize)>::new();
     for ornament in ornaments {
-        let campaign_id = ornament
-            .campaign_id
-            .unwrap_or_else(|| christmas_greetings::store::LEGACY_CAMPAIGN_ID.to_owned());
-        let entry = counts.entry(campaign_id).or_default();
-        entry.0 += 1;
-        if ornament.used {
-            entry.1 += 1;
-        }
+        add_campaign_count(&mut counts, ornament.campaign_id.as_deref(), ornament.used);
     }
 
     let items = campaigns
@@ -1496,5 +1504,21 @@ mod campaign_validation_tests {
         assert_eq!(campaign_numbers(35).unwrap().len(), 35);
         assert!(campaign_numbers(0).is_err());
         assert!(campaign_numbers(36).is_err());
+    }
+
+    #[test]
+    fn campaign_counts_include_all_invitations_and_track_submissions() {
+        let mut counts = HashMap::new();
+        add_campaign_count(&mut counts, Some("campaign-a"), false);
+        add_campaign_count(&mut counts, Some("campaign-a"), true);
+        add_campaign_count(&mut counts, Some("campaign-b"), true);
+        add_campaign_count(&mut counts, None, false);
+
+        assert_eq!(counts.get("campaign-a"), Some(&(2, 1)));
+        assert_eq!(counts.get("campaign-b"), Some(&(1, 1)));
+        assert_eq!(
+            counts.get(christmas_greetings::store::LEGACY_CAMPAIGN_ID),
+            Some(&(1, 0))
+        );
     }
 }
