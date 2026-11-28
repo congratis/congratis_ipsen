@@ -44,9 +44,9 @@ impl Route {
     }
 }
 #[derive(Clone, Deserialize, Serialize)]
-struct Greeting { ornament_number: i16, display_name: String, message: String }
+struct Greeting { ornament_number: i16, display_name: String, #[serde(default)] surname: String, #[serde(default)] first_name: String, #[serde(default)] avatar_url: Option<String>, message: String }
 #[derive(Clone, Deserialize)]
-struct RealtimeGreeting { campaign_id: String, ornament_number: i16, display_name: String, message: String }
+struct RealtimeGreeting { campaign_id: String, ornament_number: i16, display_name: String, #[serde(default)] surname: String, #[serde(default)] first_name: String, #[serde(default)] avatar_url: Option<String>, message: String }
 #[derive(Clone, Deserialize)]
 #[allow(dead_code)]
 struct Participant {
@@ -59,11 +59,14 @@ struct Participant {
     #[serde(default)]
     filling: bool,
     display_name: Option<String>,
+    #[serde(default)] surname: Option<String>,
+    #[serde(default)] first_name: Option<String>,
+    #[serde(default)] avatar_filename: Option<String>,
     created_at: i64,
     used_at: Option<i64>,
 }
 #[derive(Clone, Deserialize)]
-struct CampaignSummary { participant_count: usize, submitted_count: usize }
+struct CampaignSummary { participant_count: usize, submitted_count: usize, #[serde(default)] campaign_name: String }
 #[derive(Clone, Deserialize)]
 struct CampaignAdminItem { id: String, name: String, created_at: i64, participant_count: usize, submitted_count: usize, #[serde(default)] online_count: usize }
 #[derive(Clone, Deserialize)]
@@ -96,6 +99,7 @@ struct AppState {
     campaign_participants: Mutable<Option<Vec<Participant>>>,
     campaign_invite_count: Mutable<String>,
     campaign_name: Mutable<String>,
+    campaign_title: Mutable<String>,
     campaign_count: Mutable<usize>,
     submitted_count: Mutable<usize>,
     selected: Mutable<Option<Greeting>>,
@@ -111,6 +115,8 @@ struct AppState {
     online_count: Mutable<usize>,
     presence_activity_at: Rc<RefCell<f64>>,
     name: Mutable<String>,
+    first_name: Mutable<String>,
+    avatar_data_url: Mutable<Option<String>>,
     message: Mutable<String>,
     admin_name: Mutable<String>,
     admin_password: Mutable<String>,
@@ -125,7 +131,7 @@ struct AppState {
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), presence_connection: Rc::new(RefCell::new(None)), online_count: Mutable::new(0), presence_activity_at: Rc::new(RefCell::new(0.0)), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
+        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_title: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), presence_connection: Rc::new(RefCell::new(None)), online_count: Mutable::new(0), presence_activity_at: Rc::new(RefCell::new(0.0)), name: Mutable::new(String::new()), first_name: Mutable::new(String::new()), avatar_data_url: Mutable::new(None), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -525,6 +531,7 @@ async fn load_campaign(state: AppState) {
         Ok(summary) => {
             state.campaign_count.set(summary.participant_count);
             state.submitted_count.set(summary.submitted_count);
+            state.campaign_title.set(summary.campaign_name);
         },
         Err(error) => set_note(&state, format!("Не удалось загрузить параметры кампании: {error}")),
     }
@@ -843,7 +850,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
         .child_signal(futures_signals::signal::always(is_mine).map(|visible| visible.then(ipsen_brand)))
         .child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")}))
         .child(html!("h1", {.text("Ёлка добрых ").child(html!("span", {.text("пожеланий")}))}))
-        .child(html!("p", {.class("team-subtitle").text("команда редких заболеваний")}))
+        .child(html!("p", {.class("team-subtitle").text_signal(state.campaign_title.signal_cloned())}))
         .child(html!("p", {.class("lead").text("Выбери шар — внутри тебя ждёт новогоднее поздравление. Все пожелания команды собраны на одной ёлке.")}))
         .child(html!("div", {
             .class("toolbar")
