@@ -310,8 +310,8 @@ async fn submit(
             return Err(ApiError(StatusCode::BAD_REQUEST, "Поддерживаются только JPEG, PNG и WebP"));
         }
         let bytes = BASE64.decode(encoded).map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Некорректные данные фотографии"))?;
-        if bytes.is_empty() || bytes.len() > 5 * 1024 * 1024 {
-            return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "Фотография должна быть не больше 5 МБ"));
+        if bytes.is_empty() || bytes.len() > 1024 * 1024 {
+            return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "Фотография должна быть не больше 1 МБ"));
         }
         let format = image::guess_format(&bytes).map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Файл не является корректным изображением"))?;
         let expected = match declared_type { "data:image/jpeg;base64" => image::ImageFormat::Jpeg, "data:image/png;base64" => image::ImageFormat::Png, _ => image::ImageFormat::WebP };
