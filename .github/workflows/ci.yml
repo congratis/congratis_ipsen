@@ -26,7 +26,9 @@ concurrency:
 jobs:
   lockfiles:
     name: Generate dependency lockfiles
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'build/generate-lockfiles'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +53,20 @@ jobs:
             web/package-lock.json
           if-no-files-found: error
           retention-days: 1
+      - name: Commit lockfiles to bootstrap branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH_NAME: ${{ github.head_ref }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock web/Cargo.lock web/package-lock.json
+          if git diff --cached --quiet; then
+            echo "Lockfiles are already committed."
+            exit 0
+          fi
+          git commit -m "build: add generated dependency lockfiles"
+          git push origin "HEAD:${BRANCH_NAME}"
 
   changes:
     name: Detect changed components
