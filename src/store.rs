@@ -1126,7 +1126,12 @@ impl Store {
                     .and(document.clone().get_field("revoked").default(r.expr(false)).eq(false))
                     .and(document.clone().get_field("used").eq(false)),
                 document.clone().merge(r.expr(json!({
-                    "used": true, "display_name": display_name, "message": message,
+                    "used": true,
+                    "surname": surname,
+                    "first_name": first_name,
+                    "display_name": format!("{} {}", surname, first_name),
+                    "avatar_filename": avatar_filename,
+                    "message": message,
                     "used_at": Utc::now().timestamp()
                 }))),
                 document
