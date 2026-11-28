@@ -44,7 +44,11 @@ impl Route {
     }
 }
 #[derive(Clone, Deserialize, Serialize)]
-struct Greeting { ornament_number: i16, display_name: String, #[serde(default)] surname: String, #[serde(default)] first_name: String, #[serde(default)] avatar_url: Option<String>, message: String }
+struct Greeting { ornament_number: i16, display_name: String, #[serde(default)] surname: String, #[serde(default)] first_name: String, #[serde(default)] avatar_url: Option<String>, message: String, #[serde(default)] like_count: usize, #[serde(default)] liked_by_me: bool }
+#[derive(Clone, Deserialize)]
+struct LeaderboardEntry { display_name: String, #[serde(default)] avatar_url: Option<String>, like_count: usize }
+#[derive(Deserialize)]
+struct LikeResponse { liked: bool, like_count: usize }
 #[derive(Clone, Deserialize)]
 struct RealtimeGreeting { campaign_id: String, ornament_number: i16, display_name: String, #[serde(default)] surname: Option<String>, #[serde(default)] first_name: Option<String>, #[serde(default)] avatar_filename: Option<String>, message: String }
 #[derive(Clone, Deserialize)]
@@ -64,6 +68,7 @@ struct Participant {
     #[serde(default)] avatar_filename: Option<String>,
     created_at: i64,
     used_at: Option<i64>,
+    #[serde(default)] like_count: usize,
 }
 #[derive(Clone, Deserialize)]
 struct CampaignSummary { participant_count: usize, submitted_count: usize, #[serde(default)] campaign_name: String }
@@ -93,6 +98,7 @@ struct AppState {
     auth_ready: Mutable<bool>,
     exchanging: Mutable<bool>,
     greetings: Mutable<Vec<Greeting>>,
+    leaderboard: Mutable<Vec<LeaderboardEntry>>,
     participants: Mutable<Option<Vec<Participant>>>,
     campaigns: Mutable<Option<Vec<CampaignAdminItem>>>,
     selected_campaign: Mutable<Option<CampaignAdminItem>>,
@@ -107,7 +113,9 @@ struct AppState {
     presentation_index: Mutable<usize>,
     presentation_ornament: Mutable<Option<i16>>,
     presentation_paused: Mutable<bool>,
+    presentation_timeout: Rc<RefCell<Option<i32>>>,
     music_muted: Mutable<bool>,
+    music_playing: Mutable<bool>,
     music_volume: Mutable<f64>,
     audio: Mutable<Option<HtmlAudioElement>>,
     sse_connection: Rc<RefCell<Option<EventSourceConnection>>>,
@@ -131,7 +139,7 @@ struct AppState {
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_title: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), presence_connection: Rc::new(RefCell::new(None)), online_count: Mutable::new(0), presence_activity_at: Rc::new(RefCell::new(0.0)), name: Mutable::new(String::new()), first_name: Mutable::new(String::new()), avatar_data_url: Mutable::new(None), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
+        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), leaderboard: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_title: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), presentation_timeout: Rc::new(RefCell::new(None)), music_muted: Mutable::new(false), music_playing: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), presence_connection: Rc::new(RefCell::new(None)), online_count: Mutable::new(0), presence_activity_at: Rc::new(RefCell::new(0.0)), name: Mutable::new(String::new()), first_name: Mutable::new(String::new()), avatar_data_url: Mutable::new(None), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -358,10 +366,34 @@ fn install_dialog_keyboard_handler(state: AppState) {
 }
 const PRESENTATION_AUDIO_URL: &str = "/music.mp3";
 
+fn clear_presentation_timeout(state: &AppState) {
+    if let Some(id) = state.presentation_timeout.borrow_mut().take() {
+        if let Some(window) = web_sys::window() { window.clear_timeout_with_handle(id); }
+    }
+}
+fn schedule_presentation_timeout(state: &AppState) {
+    clear_presentation_timeout(state);
+    if !state.presentation.get() || state.presentation_paused.get() { return; }
+    let index = state.presentation_index.get();
+    if index >= state.greetings.lock_ref().len() { return; }
+    let current = state.clone();
+    let callback = Closure::once_into_js(move || {
+        if !current.presentation.get() || current.presentation_paused.get() { return; }
+        let next = current.presentation_index.get().saturating_add(1);
+        set_presentation_index(&current, next);
+    });
+    if let Some(window) = web_sys::window() {
+        if let Ok(id) = window.set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), 4000) {
+            *state.presentation_timeout.borrow_mut() = Some(id);
+        }
+    }
+}
 fn set_presentation_index(state: &AppState, index: usize) {
     let greetings = state.greetings.get_cloned();
+    let index = index.min(greetings.len());
     state.presentation_index.set(index);
     state.presentation_ornament.set(greetings.get(index).map(|greeting| greeting.ornament_number));
+    schedule_presentation_timeout(state);
 }
 
 fn play_presentation_audio(state: AppState) {
@@ -376,7 +408,7 @@ fn play_presentation_audio(state: AppState) {
                 audio
             }
             Err(_) => {
-                state.presentation_paused.set(true);
+                state.music_playing.set(false);
                 set_note(&state, "Музыка недоступна — презентация продолжится без звука");
                 return;
             }
@@ -392,14 +424,16 @@ fn play_presentation_audio(state: AppState) {
                         audio.pause();
                     }
                     current.audio.set(None);
-                    current.presentation_paused.set(true);
-                    set_note(&current, "Браузер не разрешил музыку — презентация продолжится без звука");
+                    current.music_playing.set(false);
+                    set_note(&current, "Браузер заблокировал автозапуск музыки. Нажми ▶ в панели музыки — презентация продолжится.");
+                } else {
+                    current.music_playing.set(true);
                 }
             });
         }
         Err(_) => {
             state.audio.set(None);
-            state.presentation_paused.set(true);
+            state.music_playing.set(false);
             set_note(&state, "Музыка недоступна — презентация продолжится без звука");
         }
     }
@@ -408,7 +442,14 @@ fn play_presentation_audio(state: AppState) {
 fn start_presentation(state: AppState) {
     state.presentation.set(true);
     state.presentation_paused.set(false);
+    state.leaderboard.set(Vec::new());
     set_presentation_index(&state, 0);
+    let leaderboard_state = state.clone();
+    spawn_local(async move {
+        if let Ok(entries) = get_json::<Vec<LeaderboardEntry>>("/api/leaderboard").await {
+            leaderboard_state.leaderboard.set(entries);
+        }
+    });
     if state.greetings.get_cloned().is_empty() {
         set_note(&state, "Пока нет опубликованных поздравлений");
     } else {
@@ -420,12 +461,23 @@ fn toggle_presentation_pause(state: AppState) {
     let paused = !state.presentation_paused.get();
     state.presentation_paused.set(paused);
     if paused {
+        clear_presentation_timeout(&state);
         if let Some(audio) = state.audio.get_cloned() { audio.pause(); }
+        state.music_playing.set(false);
+    } else {
+        play_presentation_audio(state.clone());
+        schedule_presentation_timeout(&state);
+    }
+}
+
+fn toggle_music_playback(state: AppState) {
+    if state.music_playing.get() {
+        if let Some(audio) = state.audio.get_cloned() { audio.pause(); }
+        state.music_playing.set(false);
     } else {
         play_presentation_audio(state);
     }
 }
-
 fn toggle_music_mute(state: AppState) {
     let muted = !state.music_muted.get();
     state.music_muted.set(muted);
@@ -439,12 +491,36 @@ fn set_music_volume(state: &AppState, volume: f64) {
 }
 
 fn exit_presentation(state: AppState) {
+    clear_presentation_timeout(&state);
     if let Some(audio) = state.audio.get_cloned() { audio.pause(); }
     state.audio.set(None);
+    state.music_playing.set(false);
     state.presentation.set(false);
     state.presentation_paused.set(false);
     state.presentation_ornament.set(None);
     restore_dialog_focus(&state);
+}
+
+async fn toggle_greeting_like(state: AppState, ornament_number: i16) {
+    let csrf = state.csrf();
+    match post_json::<LikeResponse>(
+        &format!("/api/greetings/{ornament_number}/like"),
+        &serde_json::json!({}),
+        Some(&csrf),
+    ).await {
+        Ok(result) => {
+            let mut greetings = state.greetings.get_cloned();
+            if let Some(greeting) = greetings.iter_mut().find(|item| item.ornament_number == ornament_number) {
+                greeting.like_count = result.like_count;
+                greeting.liked_by_me = result.liked;
+            }
+            state.greetings.set(greetings);
+            if let Ok(entries) = get_json::<Vec<LeaderboardEntry>>("/api/leaderboard").await {
+                state.leaderboard.set(entries);
+            }
+        }
+        Err(error) => set_note(&state, format!("Не удалось сохранить лайк: {error}")),
+    }
 }
 
 async fn load_greetings(state: AppState) {
@@ -602,6 +678,8 @@ fn connect_events(state: AppState) {
                             first_name: event.first_name.unwrap_or_default(),
                             avatar_url: event.avatar_filename.map(|filename| format!("/avatars/{filename}")),
                             message: event.message,
+                            like_count: 0,
+                            liked_by_me: false,
                         };
                         let mut all = greeting_state.greetings.lock_mut();
                         if let Some(old) = all.iter_mut().find(|g| g.ornament_number == greeting.ornament_number) { *old = greeting; }
@@ -1078,7 +1156,27 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                     .attr("aria-labelledby", "presentation-title")
                     .child(html!("section", {
                         .class("presentation-card")
-                        
+                        .child(html!("button", {
+                            .class("presentation-tap-zone")
+                            .class("presentation-tap-prev")
+                            .attr("type", "button")
+                            .attr("aria-label", "Предыдущее поздравление")
+                            .event(clone!(state => move |_: events::Click| {
+                                let current = state.presentation_index.get();
+                                if current > 0 { set_presentation_index(&state, current - 1); }
+                            }))
+                        }))
+                        .child(html!("button", {
+                            .class("presentation-tap-zone")
+                            .class("presentation-tap-next")
+                            .attr("type", "button")
+                            .attr("aria-label", "Следующее поздравление")
+                            .event(clone!(state => move |_: events::Click| {
+                                let current = state.presentation_index.get();
+                                let total = state.greetings.lock_ref().len();
+                                if current < total { set_presentation_index(&state, current + 1); }
+                            }))
+                        }))
                         .child_signal(state.presentation_index.signal().map(clone!(state => move |index| {
                             let greetings = state.greetings.get_cloned();
                             let count = greetings.len();
@@ -1106,6 +1204,21 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                             Some(html!("div", {
                                 .class("presentation-content")
                                 .class_signal("presentation-finale", finale.signal())
+                                .child(html!("div", {
+                                    .class("presentation-progress")
+                                    .attr("aria-label", "Прогресс презентации")
+                                    .children((0..count).map(|segment| {
+                                        html!("div", {
+                                            .class("presentation-progress-segment")
+                                            .child(html!("span", {
+                                                .class("presentation-progress-fill")
+                                                .class_signal("running", futures_signals::signal::always(segment == index && index < count))
+                                                .class_signal("is-paused", state.presentation_paused.signal())
+                                                .style("width", if segment < index { "100%" } else { "0%" })
+                                            }))
+                                        })
+                                    }))
+                                }))
                                 .child(html!("div", {.class("kicker").text("CONGRATIS · NEW YEAR PRESENTATION")}))
                                 .child(html!("h2", {
                                     .attr("id", "presentation-title")
@@ -1118,6 +1231,42 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                                 .child(html!("div", {
                                     .class("presentation-counter")
                                     .text(&counter)
+                                }))
+                                .child_signal(state.greetings.signal_cloned().map(clone!(state => move |items| {
+                                    if let Some(greeting) = items.get(index).cloned() {
+                                        let number = greeting.ornament_number;
+                                        let own = state.user.lock_ref().as_ref().is_some_and(|user| user.role == "participant" && user.subject_id.parse::<i16>().ok() == Some(number));
+                                        if own { return Some(html!("p", {.class("muted").text("Это твоё поздравление")})); }
+                                        Some(html!("button", {
+                                            .class("presentation-like")
+                                            .class_signal("liked", state.greetings.signal_cloned().map(move |list| list.iter().find(|item| item.ornament_number == number).is_some_and(|item| item.liked_by_me)))
+                                            .attr("type", "button")
+                                            .attr("aria-label", "Нравится")
+                                            .attr("title", "Поставить или убрать лайк")
+                                            .text(&format!("{} {}", if greeting.liked_by_me { "♥" } else { "♡" }, greeting.like_count))
+                                            .event(clone!(state => move |_: events::Click| {
+                                                let current = state.clone();
+                                                spawn_local(async move { toggle_greeting_like(current, number).await; });
+                                            }))
+                                        }))
+                                    } else { None }
+                                })))
+                                .child_signal(state.leaderboard.signal_cloned().map(move |entries| {
+                                    if index == count && count > 0 {
+                                        Some(html!("section", {
+                                            .class("presentation-leaderboard")
+                                            .child(html!("h3", {.text("Пятёрка самых любимых поздравлений")}))
+                                            .children(entries.iter().enumerate().map(|(rank, entry)| {
+                                                html!("div", {
+                                                    .class("leaderboard-row")
+                                                    .child(html!("span", {.class("leaderboard-rank").text(&(rank + 1).to_string())}))
+                                                    .child(avatar_dom(&entry.display_name, "", entry.avatar_url.clone()))
+                                                    .child(html!("strong", {.text(&entry.display_name)}))
+                                                    .child(html!("span", {.class("leaderboard-likes").text(&format!("♥ {}", entry.like_count))}))
+                                                })
+                                            }))
+                                        }))
+                                    } else { None }
                                 }))
                             }))
                         })))
@@ -1147,14 +1296,51 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                             }))
                         }))
                         .child(html!("div", {
+                            .class("presentation-controls")
+                            .child(html!("button", {
+                                .class("secondary")
+                                .attr("type", "button")
+                                .text_signal(state.presentation_paused.signal().map(|paused| if paused { "Продолжить" } else { "Пауза" }))
+                                .event(clone!(state => move |_: events::Click| toggle_presentation_pause(state.clone())))
+                            }))
+                            .child(html!("button", {
+                                .class("secondary")
+                                .attr("type", "button")
+                                .text("← Назад")
+                                .event(clone!(state => move |_: events::Click| {
+                                    let current = state.presentation_index.get();
+                                    if current > 0 { set_presentation_index(&state, current - 1); }
+                                }))
+                            }))
+                            .child(html!("button", {
+                                .class("secondary")
+                                .attr("type", "button")
+                                .text("Далее →")
+                                .event(clone!(state => move |_: events::Click| {
+                                    let current = state.presentation_index.get();
+                                    let total = state.greetings.lock_ref().len();
+                                    if current < total { set_presentation_index(&state, current + 1); }
+                                }))
+                            }))
+                        }))
+                        .child(html!("div", {
                             .class("presentation-audio-controls")
+                            .class("presentation-audio-floating")
+                            .child(html!("button", {
+                                .class("secondary")
+                                .class("icon-control")
+                                .attr("type", "button")
+                                .attr("aria-label", "Пауза или продолжение презентации")
+                                .text_signal(state.presentation_paused.signal().map(|paused| if paused { "▶" } else { "Ⅱ" }))
+                                .event(clone!(state => move |_: events::Click| toggle_presentation_pause(state.clone())))
+                            }))
                             .child(html!("button", {
                                 .class("secondary")
                                 .class("icon-control")
                                 .attr("type", "button")
                                 .attr("aria-label", "Пауза или продолжение музыки")
-                                 .text_signal(state.presentation_paused.signal().map(|paused| if paused { "▶" } else { "Ⅱ" }))
-                                .event(clone!(state => move |_: events::Click| toggle_presentation_pause(state.clone())))
+                                 .text_signal(state.music_playing.signal().map(|playing| if playing { "Ⅱ" } else { "▶" }))
+                                .event(clone!(state => move |_: events::Click| toggle_music_playback(state.clone())))
                             }))
                             .child(html!("button", {
                                 .class("secondary")
@@ -1512,6 +1698,7 @@ fn campaign_participants_grid(state: AppState, campaign_id: String, participants
                 .child(html!("strong", {.text(&format!("Шар №{number}"))}))
                 .child(html!("small", {.text(status)}))
                 .child(html!("small", {.text(&display_name)}))
+                .child_signal(futures_signals::signal::always(if participant.submitted { Some(html!("small", {.class("admin-like-count").text(&format!("♥ {} лайков", participant.like_count))})) } else { None }))
                 .children(if !participant.activated && !participant.submitted && !participant.revoked {
                     vec![
                         html!("button", {
@@ -1964,7 +2151,9 @@ fn reset_session_state(state: &AppState) {
     }
 
     state.user.set(None);
+    clear_presentation_timeout(state);
     state.greetings.set(Vec::new());
+    state.leaderboard.set(Vec::new());
     state.participants.set(None);
     state.campaigns.set(None);
     state.selected_campaign.set(None);
@@ -1978,6 +2167,7 @@ fn reset_session_state(state: &AppState) {
     state.selected.set(None);
     state.presentation.set(false);
     state.presentation_paused.set(false);
+    state.music_playing.set(false);
     state.presentation_index.set(0);
     state.presentation_ornament.set(None);
     state.invite_url.set(String::new());
