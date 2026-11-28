@@ -278,6 +278,9 @@ async fn list_greetings(
     Ok(Json(ornaments.into_iter().filter_map(|o| Some(Greeting {
         ornament_number: o.ornament_number,
         display_name: o.display_name?,
+        surname: o.surname.unwrap_or_default(),
+        first_name: o.first_name.unwrap_or_default(),
+        avatar_url: o.avatar_filename.map(|name| format!("/avatars/{name}")),
         message: o.message?,
     })).collect()))
 }
