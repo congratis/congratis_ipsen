@@ -81,6 +81,9 @@ pub struct GreetingEvent {
     pub campaign_id: String,
     pub ornament_number: i16,
     pub display_name: String,
+    pub surname: Option<String>,
+    pub first_name: Option<String>,
+    pub avatar_filename: Option<String>,
     pub message: String,
 }
 
@@ -955,6 +958,9 @@ impl Store {
                 campaign_id,
                 ornament_number: ornament.ornament_number,
                 display_name,
+                surname: ornament.surname,
+                first_name: ornament.first_name,
+                avatar_filename: ornament.avatar_filename,
                 message,
             });
         }
