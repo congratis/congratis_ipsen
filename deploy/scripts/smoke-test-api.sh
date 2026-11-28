@@ -77,6 +77,10 @@ echo "Revoking the participant session..."
 request 204 --request POST "$BASE_URL/api/auth/logout" \
   --header "X-CSRF-Token: $csrf" --cookie "$COOKIE_JAR"
 request 401 "$BASE_URL/api/me" --cookie "$COOKIE_JAR"
+request 401 "$BASE_URL/api/presence" \
+  --header 'Connection: Upgrade' --header 'Upgrade: websocket' \
+  --header 'Sec-WebSocket-Version: 13' \
+  --header 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ=='
 
 admin_password='CI-Only-Admin-Password-2026'
 echo "Authenticating administrator and checking management endpoints..."
