@@ -842,6 +842,8 @@ async fn main() -> anyhow::Result<()> {
         presence: Arc::new(Mutex::new(HashMap::new())),
         cookie_secure: env::var("COOKIE_SECURE").map(|v| v != "false").unwrap_or(true),
     };
+    let avatar_dir = env::var("AVATAR_DIR").unwrap_or_else(|_| "/data/avatars".to_owned());
+    tokio::fs::create_dir_all(&avatar_dir).await?;
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/auth/participant/exchange", post(participant_exchange))
@@ -862,8 +864,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/admin/participants", get(admin_participants))
         .route("/api/admin/invitations/{number}/reissue", post(admin_reissue_invitation))
         .route("/api/admin/invitations/{number}/revoke", post(admin_revoke_invitation))
+        .nest_service("/avatars", ServeDir::new(&avatar_dir))
         .fallback_service(ServeDir::new("frontend").append_index_html_on_directories(true))
-        .with_state(state).layer(TraceLayer::new_for_http());
+        .with_state(state)
+        .layer(DefaultBodyLimit::max(7 * 1024 * 1024))
+        .layer(TraceLayer::new_for_http());
     let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into());
     let port: u16 = env::var("PORT").unwrap_or_else(|_| "8080".into()).parse()?;
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
