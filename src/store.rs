@@ -1037,6 +1037,12 @@ pub struct ParticipantSummary {
     pub submitted: bool,
     pub revoked: bool,
     pub display_name: Option<String>,
+    #[serde(default)]
+    pub surname: Option<String>,
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub avatar_filename: Option<String>,
     pub created_at: i64,
     pub used_at: Option<i64>,
 }
