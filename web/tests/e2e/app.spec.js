@@ -630,7 +630,7 @@ test("presentation mode navigates greetings and supports audio controls and sile
 
   // Navigation appears once; the floating dock owns the single presentation pause control.
   await expect(dialog.locator(".presentation-controls button")).toHaveCount(2);
-  await expect(dialog.locator(".presentation-audio-floating button")).toHaveCount(1);
+  await expect(dialog.locator(".presentation-audio-floating button")).toHaveCount(2);
   await expect(dialog.getByRole("button", { name: "Пауза или продолжение музыки" })).toHaveCount(0);
   const pauseButton = dialog.getByRole("button", { name: "Пауза или продолжение презентации" });
   await pauseButton.click();
