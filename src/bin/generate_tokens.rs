@@ -20,13 +20,10 @@ fn hash(token: &str) -> String {
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
-    let count: i16 = env::args()
-        .nth(1)
-        .unwrap_or_else(|| "20".into())
-        .parse()?;
+    let count: i16 = env::args().nth(1).unwrap_or_else(|| "20".into()).parse()?;
     anyhow::ensure!((1..=35).contains(&count), "count must be between 1 and 35");
 
-        let store = Store::connect().await?;
+    let store = Store::connect().await?;
 
     let mut invitations = Vec::with_capacity(count as usize);
     let mut output = Vec::with_capacity(count as usize);
