@@ -1251,6 +1251,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                                                 html!("div", {
                                                     .class("leaderboard-row")
                                                     .child(html!("span", {.class("leaderboard-rank").text(&(rank + 1).to_string())}))
+                                                    .child(avatar_dom(&entry.display_name, "", entry.avatar_url.clone()))
                                                     .child(html!("strong", {.text(&entry.display_name)}))
                                                     .child(html!("span", {.class("leaderboard-likes").text(&format!("♥ {}", entry.like_count))}))
                                                 })
