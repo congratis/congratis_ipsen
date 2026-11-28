@@ -773,15 +773,17 @@ impl Store {
                 document.clone().get_field("campaign_id").eq(campaign_id)
                     .and(document.clone().get_field("used").eq(true))
                     .and(voters.clone().contains(voter_number)),
-                document.clone().merge(r.expr(json!({
-                    "liked_by": voters.set_difference(r.expr(vec![voter_number]))
-                }))),
+                document.clone().merge(r.object(r.args((
+                    "liked_by",
+                    voters.clone().set_difference(r.expr(vec![voter_number]))
+                )))),
                 r.branch(
                     document.clone().get_field("campaign_id").eq(campaign_id)
                         .and(document.clone().get_field("used").eq(true)),
-                    document.clone().merge(r.expr(json!({
-                        "liked_by": voters.append(voter_number)
-                    }))),
+                    document.clone().merge(r.object(r.args((
+                        "liked_by",
+                        voters.clone().append(voter_number)
+                    )))),
                     document
                 )
             )
