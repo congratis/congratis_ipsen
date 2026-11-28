@@ -7,6 +7,11 @@ use wasm_bindgen::{closure::Closure, JsCast};
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 use web_sys::{Element, EventSource, HtmlAudioElement, HtmlElement, HtmlInputElement, HtmlTextAreaElement, MessageEvent, NodeList, WebSocket};
 
+thread_local! {
+    // Keep detached Image elements alive while the browser fetches avatars ahead of first use.
+    static AVATAR_PRELOADS: RefCell<Vec<(String, web_sys::HtmlImageElement)>> = RefCell::new(Vec::new());
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 struct User { subject_id: String, role: String, csrf_token: String }
 
@@ -45,6 +50,21 @@ impl Route {
 }
 #[derive(Clone, Deserialize, Serialize)]
 struct Greeting { ornament_number: i16, display_name: String, #[serde(default)] surname: String, #[serde(default)] first_name: String, #[serde(default)] avatar_url: Option<String>, message: String, #[serde(default)] like_count: usize, #[serde(default)] liked_by_me: bool }
+
+fn preload_avatar_images(greetings: &[Greeting]) {
+    AVATAR_PRELOADS.with(|preloads| {
+        let mut preloads = preloads.borrow_mut();
+        for url in greetings.iter().filter_map(|greeting| greeting.avatar_url.as_deref()) {
+            if preloads.iter().any(|(loaded_url, _)| loaded_url == url) {
+                continue;
+            }
+            if let Ok(image) = web_sys::HtmlImageElement::new() {
+                image.set_src(url);
+                preloads.push((url.to_owned(), image));
+            }
+        }
+    });
+}
 #[derive(Clone, Deserialize)]
 struct LeaderboardEntry { display_name: String, #[serde(default)] avatar_url: Option<String>, like_count: usize }
 #[derive(Deserialize)]
@@ -534,6 +554,8 @@ async fn load_greetings(state: AppState) {
             }
             items.sort_by_key(|greeting| greeting.ornament_number);
             state.submitted_count.set(items.len());
+            // Start image requests before the participant opens a filled ornament.
+            preload_avatar_images(&items);
             state.greetings.set(items);
         },
         Err(error) => set_note(&state, format!("Не удалось загрузить поздравления: {error}")),
@@ -681,6 +703,7 @@ fn connect_events(state: AppState) {
                             like_count: 0,
                             liked_by_me: false,
                         };
+                        preload_avatar_images(std::slice::from_ref(&greeting));
                         let mut all = greeting_state.greetings.lock_mut();
                         if let Some(old) = all.iter_mut().find(|g| g.ornament_number == greeting.ornament_number) { *old = greeting; }
                         else { all.push(greeting); }
@@ -1243,7 +1266,12 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                                             .attr("type", "button")
                                             .attr("aria-label", "Нравится")
                                             .attr("title", "Поставить или убрать лайк")
-                                            .text(&format!("{} {}", if greeting.liked_by_me { "♥" } else { "♡" }, greeting.like_count))
+                                            .child(html!("span", {
+                                                .class("presentation-like-heart")
+                                                .attr("aria-hidden", "true")
+                                                .text(if greeting.liked_by_me { "♥" } else { "♡" })
+                                            }))
+                                            .child(html!("span", {.text(&greeting.like_count.to_string())}))
                                             .event(clone!(state => move |_: events::Click| {
                                                 let current = state.clone();
                                                 spawn_local(async move { toggle_greeting_like(current, number).await; });
@@ -1398,7 +1426,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
 }
 fn avatar_dom(surname: &str, first_name: &str, avatar_url: Option<String>) -> Dom {
     if let Some(url) = avatar_url {
-        html!("img", { .class("participant-avatar").attr("src", &url).attr("alt", &format!("{surname} {first_name}")) })
+        html!("img", { .class("participant-avatar").attr("src", &url).attr("alt", &format!("{surname} {first_name}")).attr("loading", "eager").attr("decoding", "async") })
     } else {
         let initials = format!("{}{}", surname.chars().next().unwrap_or('?'), first_name.chars().next().unwrap_or('?')).to_uppercase();
         html!("div", { .class("participant-avatar").class("avatar-initials").attr("aria-label", &format!("{surname} {first_name}")).text(&initials) })

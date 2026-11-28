@@ -125,6 +125,7 @@ dialog.presentation-overlay::backdrop{background:radial-gradient(ellipse at 50% 
 @keyframes story-progress{from{width:0}to{width:100%}}
 .presentation-like{display:inline-flex;align-items:center;justify-content:center;gap:8px;margin:12px auto 0;min-width:76px;padding:10px 18px;border:1px solid #e8c77b88;border-radius:999px;background:#09251edb;color:#fff5dc;font-size:18px;font-weight:700;box-shadow:0 5px 18px #0004}
 .presentation-like.liked{color:#ff7885;border-color:#ff7885;background:#4b1723}
+.presentation-like-heart{font-size:36px;line-height:1}
 .presentation-controls{margin-top:24px}
 .presentation-audio-floating{position:fixed;z-index:40;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;flex-wrap:nowrap;justify-content:center;gap:10px;width:max-content;max-width:calc(100vw - 24px);padding:10px 14px;border:1px solid #e8c77b88;border-radius:999px;background:#071e19ed;box-shadow:0 8px 32px #000b;backdrop-filter:blur(12px)}
 .presentation-audio-floating .volume-control{margin:0 4px}
