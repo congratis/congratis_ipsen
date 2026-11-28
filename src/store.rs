@@ -107,6 +107,8 @@ pub struct Ornament {
     #[serde(default)]
     pub avatar_filename: Option<String>,
     pub message: Option<String>,
+    #[serde(default)]
+    pub liked_by: Vec<i16>,
     pub created_at: i64,
     pub used_at: Option<i64>,
 }
@@ -665,6 +667,7 @@ impl Store {
                 avatar_filename: item.avatar_filename,
                 created_at: item.created_at,
                 used_at: item.used_at,
+                like_count: item.liked_by.len(),
             })
             .collect())
     }
@@ -745,6 +748,59 @@ impl Store {
     pub async fn list_campaign_greetings(&self, campaign_id: &str) -> Result<Vec<Ornament>> {
         Ok(self.list_campaign_ornaments(campaign_id).await?
             .into_iter().filter(|ornament| ornament.used).collect())
+    }
+
+    /// Atomically toggles a participant's like on another participant's greeting.
+    /// Voter IDs are stored on the greeting itself, so duplicate taps and concurrent
+    /// requests cannot inflate the count.
+    pub async fn toggle_greeting_like(
+        &self,
+        campaign_id: &str,
+        voter_number: i16,
+        target_number: i16,
+    ) -> Result<Option<(bool, usize)>> {
+        if voter_number == target_number {
+            return Ok(None);
+        }
+        let id = if campaign_id == LEGACY_CAMPAIGN_ID {
+            json!(target_number)
+        } else {
+            json!(campaign_ornament_key(campaign_id, target_number))
+        };
+        let update = reql::func!(|document| {
+            let voters = document.clone().get_field("liked_by").default(r.expr(Vec::<i16>::new()));
+            r.branch(
+                document.clone().get_field("campaign_id").eq(campaign_id)
+                    .and(document.clone().get_field("used").eq(true))
+                    .and(voters.clone().contains(voter_number)),
+                document.clone().merge(r.expr(json!({
+                    "liked_by": voters.set_difference(r.expr(vec![voter_number]))
+                }))),
+                r.branch(
+                    document.clone().get_field("campaign_id").eq(campaign_id)
+                        .and(document.clone().get_field("used").eq(true)),
+                    document.clone().merge(r.expr(json!({
+                        "liked_by": voters.append(voter_number)
+                    }))),
+                    document
+                )
+            )
+        });
+        let result = self.first::<WriteResult>(
+            r.db(self.database.as_str()).table(TABLE).get(id.clone()).update(update)
+        ).await?.ok_or_else(|| anyhow!("missing greeting like update result"))?;
+        if result.errors != 0 {
+            bail!("greeting like update failed: {}", result.first_error.unwrap_or_default());
+        }
+        if result.replaced == 0 {
+            return Ok(None);
+        }
+        let updated: Option<Ornament> = self.first(
+            r.db(self.database.as_str()).table(TABLE).get(id)
+        ).await?;
+        let Some(updated) = updated else { return Ok(None); };
+        let liked = updated.liked_by.contains(&voter_number);
+        Ok(Some((liked, updated.liked_by.len())))
     }
 
     pub async fn insert_invitations(&self, invitations: &[(i16, String)]) -> Result<()> {
@@ -1054,6 +1110,8 @@ pub struct ParticipantSummary {
     pub avatar_filename: Option<String>,
     pub created_at: i64,
     pub used_at: Option<i64>,
+    #[serde(default)]
+    pub like_count: usize,
 }
 impl Store {
     pub async fn activate_invitation(&self, token_hash: &str) -> Result<Option<(i16, String)>> {
