@@ -627,6 +627,16 @@ test("presentation mode navigates greetings and supports audio controls and sile
   let dialog = page.getByRole("dialog", { name: "С теплом, Анна" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Поздравление 1 из 2")).toBeVisible();
+
+  // Navigation appears once; the floating dock owns the single presentation pause control.
+  await expect(dialog.locator(".presentation-controls button")).toHaveCount(2);
+  await expect(dialog.locator(".presentation-audio-floating button")).toHaveCount(1);
+  await expect(dialog.getByRole("button", { name: "Пауза или продолжение музыки" })).toHaveCount(0);
+  const pauseButton = dialog.getByRole("button", { name: "Пауза или продолжение презентации" });
+  await pauseButton.click();
+  await expect(dialog.locator(".presentation-progress-fill.is-paused").first()).toBeVisible();
+  await pauseButton.click();
+  await expect(dialog.locator(".presentation-progress-fill.is-paused")).toHaveCount(0);
   await page.getByRole("button", { name: "Следующее поздравление" }).click();
   dialog = page.getByRole("dialog", { name: "С теплом, Борис" });
   await expect(dialog).toBeVisible();
