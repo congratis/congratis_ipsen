@@ -408,7 +408,7 @@ fn play_presentation_audio(state: AppState) {
                 audio
             }
             Err(_) => {
-                state.presentation_paused.set(true);
+                state.music_playing.set(false);
                 set_note(&state, "Музыка недоступна — презентация продолжится без звука");
                 return;
             }
@@ -1226,11 +1226,14 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                                 .child_signal(state.greetings.signal_cloned().map(clone!(state => move |items| {
                                     if let Some(greeting) = items.get(index).cloned() {
                                         let number = greeting.ornament_number;
+                                        let own = state.user.lock_ref().as_ref().is_some_and(|user| user.role == "participant" && user.subject_id.parse::<i16>().ok() == Some(number));
+                                        if own { return Some(html!("p", {.class("muted").text("Это твоё поздравление")})); }
                                         Some(html!("button", {
                                             .class("presentation-like")
                                             .class_signal("liked", state.greetings.signal_cloned().map(move |list| list.iter().find(|item| item.ornament_number == number).is_some_and(|item| item.liked_by_me)))
                                             .attr("type", "button")
                                             .attr("aria-label", "Нравится")
+                                            .attr("title", "Поставить или убрать лайк")
                                             .text(&format!("{} {}", if greeting.liked_by_me { "♥" } else { "♡" }, greeting.like_count))
                                             .event(clone!(state => move |_: events::Click| {
                                                 let current = state.clone();
