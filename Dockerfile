@@ -3,12 +3,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compil
 RUN rustup target add wasm32-unknown-unknown
 WORKDIR /app
 COPY Cargo.toml ./
+COPY Cargo.lock ./
 COPY src ./src
 RUN cargo build --release --bins
 COPY frontend ./frontend
 COPY web ./web
 WORKDIR /app/web
-RUN npm install --no-audit --no-fund \
+RUN npm ci --no-audit --no-fund \
     && npm run build \
     && cp index.html dist/index.html \
     && cp style.css dist/style.css \
