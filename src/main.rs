@@ -626,7 +626,7 @@ async fn presence_connection(mut socket: WebSocket, state: AppState, session: Au
         {
             let mut presence = state.presence.lock().await;
             let record = presence.entry((campaign_id.clone(), number))
-                .or_insert(PresenceRecord { connections: 0, last_activity: chrono::Utc::now().timestamp() });
+                .or_insert(PresenceRecord { connections: 0, last_activity: 0 });
             record.connections += 1;
         }
         publish_presence(&state, &campaign_id, number).await;
