@@ -727,6 +727,7 @@ fn field(
                 if let Some(target) = event.target() {
                     if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
                         value.set(input.value());
+                        if let Some(state) = &draft_state { send_presence_activity(state); }
                         if let (Some(state), Some(subject_id)) = (&draft_state, &draft_subject_id) {
                             persist_draft(state, subject_id);
                         }
@@ -1058,19 +1059,20 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                                 .class("secondary")
                                 .attr("type", "button")
                                 .attr("aria-label", "Пауза или продолжение музыки")
-                                .text_signal(state.presentation_paused.signal().map(|paused| if paused { "Продолжить музыку" } else { "Пауза музыки" }))
+                                 .text_signal(state.presentation_paused.signal().map(|paused| if paused { "▶" } else { "Ⅱ" }))
                                 .event(clone!(state => move |_: events::Click| toggle_presentation_pause(state.clone())))
                             }))
                             .child(html!("button", {
                                 .class("secondary")
                                 .attr("type", "button")
                                 .attr("aria-label", "Включить или выключить звук")
-                                .text_signal(state.music_muted.signal().map(|muted| if muted { "Включить звук" } else { "Выключить звук" }))
+                                 .text_signal(state.music_muted.signal().map(|muted| if muted { "◖" } else { "◗" }))
                                 .event(clone!(state => move |_: events::Click| toggle_music_mute(state.clone())))
                             }))
                             .child(html!("label", {
                                 .class("volume-control")
-                                .text("Громкость")
+                                .attr("aria-label", "Громкость")
+                                .child(html!("span", { .attr("aria-hidden", "true").text("♪") }))
                                 .child(html!("input", {
                                     .attr("type", "range")
                                     .attr("min", "0")
