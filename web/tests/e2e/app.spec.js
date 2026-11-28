@@ -41,7 +41,7 @@ async function mockParticipantSession(page, { exchangeStatus = 200, participantC
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ participant_count: participantCount, submitted_count: 0 })
+      body: JSON.stringify({ participant_count: participantCount, submitted_count: 0, campaign_name: "Зимняя кампания" })
     })
   );
   await page.route("**/api/greetings", route => {
@@ -141,7 +141,8 @@ test("failed invite exchange preserves an existing cookie session", async ({ pag
 test("participant draft is restored from local storage and updated while typing", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("congratis:draft:1", JSON.stringify({
-      display_name: "Мария",
+      surname: "Иванова",
+      first_name: "Мария",
       message: "Пусть новый год принесёт радость!"
     }));
   });
@@ -150,16 +151,20 @@ test("participant draft is restored from local storage and updated while typing"
   await expect(page.locator(".tree-frame")).toBeVisible();
   await page.getByRole("button", { name: "Шар номер 1", exact: true }).click();
 
-  const name = page.getByRole("textbox", { name: "Как тебя зовут?", exact: true });
+  const surname = page.getByRole("textbox", { name: "Фамилия", exact: true });
+  const firstName = page.getByRole("textbox", { name: "Имя", exact: true });
   const message = page.getByRole("textbox", { name: "Твоё поздравление", exact: true });
-  await expect(name).toHaveValue("Мария");
+  await expect(surname).toHaveValue("Иванова");
+  await expect(firstName).toHaveValue("Мария");
   await expect(message).toHaveValue("Пусть новый год принесёт радость!");
 
-  await name.fill("Иван");
+  await surname.fill("Петров");
+  await firstName.fill("Иван");
   await message.fill("Здоровья и исполнения желаний!");
   const draft = await page.evaluate(() => JSON.parse(localStorage.getItem("congratis:draft:1")));
   expect(draft).toEqual({
-    display_name: "Иван",
+    surname: "Петров",
+    first_name: "Иван",
     message: "Здоровья и исполнения желаний!"
   });
 });
@@ -183,16 +188,16 @@ test("submission dialog traps keyboard focus and restores it without discarding 
   await page.keyboard.press("Tab");
   await expect(close).toBeFocused();
 
-  await dialog.getByRole("textbox", { name: "Как тебя зовут?", exact: true }).fill("Иван");
+  await dialog.getByRole("textbox", { name: "Фамилия", exact: true }).fill("Иванов");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(ornament).toBeFocused();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("congratis:draft:1")))
-    .toContain("Иван");
+    .toContain("Иванов");
 
   await ornament.click();
   dialog = page.getByRole("dialog", { name: "Добавь своё пожелание" });
-  await expect(dialog.getByRole("textbox", { name: "Как тебя зовут?", exact: true })).toHaveValue("Иван");
+  await expect(dialog.getByRole("textbox", { name: "Как тебя зовут?", exact: true })).toHaveValue("Иванов");
   await dialog.getByRole("button", { name: "Закрыть форму поздравления" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(ornament).toBeFocused();
