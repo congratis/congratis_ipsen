@@ -16,9 +16,7 @@ async fn committed_greeting_is_published_by_changefeed() {
 
     // Use a dedicated database so this test can run alongside the atomic-claim test.
     env::set_var("RETHINKDB_DB", "congratis_feed_ci");
-    let store = Store::connect()
-        .await
-        .expect("connect and initialize RethinkDB");
+    let store = Store::connect().await.expect("connect and initialize RethinkDB");
 
     let token = format!(
         "changefeed-{}",
@@ -37,15 +35,14 @@ async fn committed_greeting_is_published_by_changefeed() {
     let (ready_tx, mut ready_rx) = watch::channel(false);
     let feed_store = store.clone();
     let feed_task = tokio::spawn(async move {
-        let _ = feed_store.subscribe_changefeed(&events_tx, ready_tx).await;
+        let _ = feed_store
+            .subscribe_changefeed(&events_tx, ready_tx)
+            .await;
     });
 
     tokio::time::timeout(Duration::from_secs(10), async {
         while !*ready_rx.borrow() {
-            ready_rx
-                .changed()
-                .await
-                .expect("Changefeed readiness channel");
+            ready_rx.changed().await.expect("Changefeed readiness channel");
         }
     })
     .await

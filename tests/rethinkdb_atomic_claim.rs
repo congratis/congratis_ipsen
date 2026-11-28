@@ -13,9 +13,7 @@ async fn concurrent_redemption_claims_invitation_exactly_once() {
         return;
     }
 
-    let store = Store::connect()
-        .await
-        .expect("connect and initialize RethinkDB");
+    let store = Store::connect().await.expect("connect and initialize RethinkDB");
     let token = format!("integration-{}", uuidless_nonce());
     let hash = token_hash(&token);
 
@@ -25,10 +23,7 @@ async fn concurrent_redemption_claims_invitation_exactly_once() {
         invitations.push((number, token_hash(&format!("{token}-{number}"))));
     }
     assert!(
-        store
-            .insert_invitations(&[(36, token_hash("out-of-range"))])
-            .await
-            .is_err(),
+        store.insert_invitations(&[(36, token_hash("out-of-range"))]).await.is_err(),
         "a campaign must reject more than 35 participants"
     );
     store
@@ -36,11 +31,7 @@ async fn concurrent_redemption_claims_invitation_exactly_once() {
         .await
         .expect("seed a 35-participant campaign");
     assert_eq!(
-        store
-            .list_participants()
-            .await
-            .expect("list campaign participants")
-            .len(),
+        store.list_participants().await.expect("list campaign participants").len(),
         35
     );
 
@@ -57,10 +48,7 @@ async fn concurrent_redemption_claims_invitation_exactly_once() {
         "exactly one concurrent claim must succeed"
     );
 
-    let greetings = store
-        .list_greetings()
-        .await
-        .expect("load committed greeting");
+    let greetings = store.list_greetings().await.expect("load committed greeting");
     assert_eq!(greetings.len(), 1);
     assert_eq!(greetings[0].ornament_number, 1);
     assert!(matches!(

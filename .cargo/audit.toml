@@ -1,8 +1,0 @@
-# RUSTSEC-2025-0009 applies to AES functions in ring 0.16.20.
-# The only path to this version is reql 0.11.2 -> scram 0.6.0 -> ring 0.16.20.
-# scram 0.6.0 uses ring::digest, ring::hmac and ring::pbkdf2 for SCRAM-SHA-256;
-# it does not call the affected AES APIs. Revisit this exception when the
-# RethinkDB driver stack is upgraded to a maintained SCRAM implementation.
-[advisories]
-ignore = ["RUSTSEC-2025-0009"]
-informational_warnings = ["unmaintained"]
