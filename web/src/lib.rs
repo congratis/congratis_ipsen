@@ -46,7 +46,7 @@ impl Route {
 #[derive(Clone, Deserialize, Serialize)]
 struct Greeting { ornament_number: i16, display_name: String, #[serde(default)] surname: String, #[serde(default)] first_name: String, #[serde(default)] avatar_url: Option<String>, message: String }
 #[derive(Clone, Deserialize)]
-struct RealtimeGreeting { campaign_id: String, ornament_number: i16, display_name: String, #[serde(default)] surname: String, #[serde(default)] first_name: String, #[serde(default)] avatar_url: Option<String>, message: String }
+struct RealtimeGreeting { campaign_id: String, ornament_number: i16, display_name: String, #[serde(default)] surname: Option<String>, #[serde(default)] first_name: Option<String>, #[serde(default)] avatar_filename: Option<String>, message: String }
 #[derive(Clone, Deserialize)]
 #[allow(dead_code)]
 struct Participant {
@@ -598,9 +598,9 @@ fn connect_events(state: AppState) {
                         let greeting = Greeting {
                             ornament_number: event.ornament_number,
                             display_name: event.display_name,
-                            surname: String::new(),
-                            first_name: String::new(),
-                            avatar_url: None,
+                            surname: event.surname.unwrap_or_default(),
+                            first_name: event.first_name.unwrap_or_default(),
+                            avatar_url: event.avatar_filename.map(|filename| format!("/avatars/{filename}")),
                             message: event.message,
                         };
                         let mut all = greeting_state.greetings.lock_mut();
