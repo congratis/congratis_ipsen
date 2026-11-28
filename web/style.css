@@ -85,3 +85,29 @@ dialog.presentation-overlay::backdrop{background:radial-gradient(ellipse at 50% 
 .ipsen-brand img{display:block;width:100%;height:100%;object-fit:contain}
 .authenticated-shell{padding-top:92px}
 @media(max-width:600px){.ipsen-brand{top:12px;right:14px;width:126px;height:36px}.authenticated-shell{padding-top:72px}}
+
+
+/* Live presence and compact presentation audio controls */
+.online-count {
+    padding: 8px 13px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.presentation-audio-controls .icon-control {
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    line-height: 1;
+}
+.volume-control span {
+    font-size: 16px;
+    line-height: 1;
+}
+.volume-control input {
+    width: 88px;
+}
