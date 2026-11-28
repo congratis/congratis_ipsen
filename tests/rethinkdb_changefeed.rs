@@ -8,7 +8,7 @@ fn token_hash(token: &str) -> String {
 }
 
 #[tokio::test]
-async fn committed_greeting_is_published_by_changefeed() {
+async fn changefeed_only_publishes_submitted_greetings_across_campaigns() {
     if env::var_os("RETHINKDB_TESTS").is_none() {
         eprintln!("skipping RethinkDB integration test; set RETHINKDB_TESTS=1 to enable");
         return;
@@ -19,19 +19,6 @@ async fn committed_greeting_is_published_by_changefeed() {
     let store = Store::connect()
         .await
         .expect("connect and initialize RethinkDB");
-
-    let token = format!(
-        "changefeed-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos()
-    );
-    let hash = token_hash(&token);
-    store
-        .insert_invitations(&[(1, hash.clone())])
-        .await
-        .expect("seed one invitation");
 
     let (events_tx, mut events_rx) = broadcast::channel(16);
     let (ready_tx, mut ready_rx) = watch::channel(false);
@@ -51,17 +38,49 @@ async fn committed_greeting_is_published_by_changefeed() {
     .await
     .expect("Changefeed must finish its initial snapshot");
 
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock")
+        .as_nanos()
+        .to_string();
+    let campaign_id = format!("changefeed-{suffix}");
+    let token = format!("changefeed-token-{suffix}");
+    let hash = token_hash(&token);
+
+    store
+        .create_campaign(&campaign_id, "Changefeed test")
+        .await
+        .expect("create a second campaign");
+    store
+        .insert_campaign_invitations(&campaign_id, &[(1, hash.clone())])
+        .await
+        .expect("insert an unused invitation");
+
+    // Creating an unused invitation must not generate a greeting notification.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), events_rx.recv())
+            .await
+            .is_err(),
+        "unused invitations must be filtered out by the database changefeed"
+    );
+
     let ornament = store
-        .claim_invitation(&hash, "Realtime tester", "Changefeed delivery works")
+        .claim_campaign_invitation(&campaign_id, &hash, "Realtime tester", "Changefeed delivery works")
         .await
         .expect("claim invitation")
         .expect("invitation should be available");
     assert_eq!(ornament, 1);
 
-    let event = tokio::time::timeout(Duration::from_secs(10), events_rx.recv())
-        .await
-        .expect("Changefeed should publish the committed greeting")
-        .expect("broadcast event should be available");
+    let event = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let event = events_rx.recv().await.expect("broadcast event should be available");
+            if event.campaign_id == campaign_id {
+                break event;
+            }
+        }
+    })
+    .await
+    .expect("Changefeed should publish the committed greeting for the target campaign");
 
     assert_eq!(event.ornament_number, 1);
     assert_eq!(event.display_name, "Realtime tester");
