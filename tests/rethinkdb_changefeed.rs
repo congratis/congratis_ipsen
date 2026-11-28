@@ -57,10 +57,18 @@ async fn changefeed_only_publishes_submitted_greetings_across_campaigns() {
         .expect("insert an unused invitation");
 
     // Creating an unused invitation must not generate a greeting notification.
+    let unexpected_campaign_event = tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            let event = events_rx.recv().await.expect("broadcast event should be available");
+            if event.campaign_id == campaign_id {
+                break event;
+            }
+            // Existing greetings from other campaigns are valid on the shared admin feed.
+        }
+    })
+    .await;
     assert!(
-        tokio::time::timeout(Duration::from_millis(500), events_rx.recv())
-            .await
-            .is_err(),
+        unexpected_campaign_event.is_err(),
         "unused invitations must be filtered out by the database changefeed"
     );
 
