@@ -85,6 +85,23 @@ request 200 --request POST "$BASE_URL/api/auth/admin/login" \
   --header 'Content-Type: application/json' --data "$admin_payload" \
   --cookie-jar "$COOKIE_JAR"
 admin_csrf="$(jq -er '.csrf_token' "$BODY")"
+
+echo "Checking authenticated WebSocket upgrade through Nginx..."
+set +e
+curl --silent --show-error --http1.1 --max-time 2 \
+  --dump-header "$HEADERS" --output /dev/null \
+  --header 'Connection: Upgrade' --header 'Upgrade: websocket' \
+  --header 'Sec-WebSocket-Version: 13' \
+  --header 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+  --cookie "$COOKIE_JAR" "$BASE_URL/api/presence"
+ws_curl_status=$?
+set -e
+if ! grep -Eiq '^HTTP/1\\.1 101' "$HEADERS"; then
+  echo "Expected authenticated WebSocket HTTP 101 upgrade (curl exit: $ws_curl_status)" >&2
+  cat "$HEADERS" >&2
+  exit 1
+fi
+
 request 200 "$BASE_URL/api/admin/participants" --cookie "$COOKIE_JAR"
 jq -e 'length == 20 and .[0].ornament_number == 1 and .[0].submitted == true' "$BODY" >/dev/null
 
