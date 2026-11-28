@@ -2,7 +2,7 @@ use dominator::{append_dom, clone, events, html, routing, Dom};
 use futures_signals::{map_ref, signal::{Mutable, SignalExt}};
 use gloo_net::http::Request;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, future::Future, rc::Rc};
 use wasm_bindgen::{closure::Closure, JsCast};
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 use web_sys::{Element, EventSource, HtmlAudioElement, HtmlElement, HtmlInputElement, HtmlTextAreaElement, MessageEvent, NodeList, WebSocket};
@@ -167,6 +167,24 @@ fn trace(msg: &str) {
     web_sys::console::log_1(&format!("[congratis] {msg}").into());
 }
 
+async fn api_request<F, E>(
+    request: F,
+    allow_unauthorized: bool,
+) -> Result<gloo_net::http::Response, String>
+where
+    F: Future<Output = Result<gloo_net::http::Response, E>>,
+{
+    let response = request.await.map_err(|_| {
+        "Не удалось связаться с сервером. Проверьте подключение и повторите попытку.".to_owned()
+    })?;
+
+    if response.ok() || (allow_unauthorized && response.status() == 401) {
+        Ok(response)
+    } else {
+        Err(response_error(response).await)
+    }
+}
+
 async fn response_error(response: gloo_net::http::Response) -> String {
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
@@ -179,23 +197,33 @@ async fn response_error(response: gloo_net::http::Response) -> String {
         }
     }
 
-    if body.trim().is_empty() {
-        format!("HTTP {status}")
-    } else {
-        body
+    match status {
+        401 => "Сессия истекла. Войдите снова.".to_owned(),
+        403 => "Недостаточно прав для выполнения действия.".to_owned(),
+        404 => "Запрашиваемые данные не найдены.".to_owned(),
+        409 => "Данные уже изменились. Обновите страницу и повторите попытку.".to_owned(),
+        413 => "Размер отправленных данных превышает допустимый.".to_owned(),
+        429 => "Слишком много запросов. Попробуйте позже.".to_owned(),
+        500..=599 => "Сервер временно недоступен. Попробуйте позже.".to_owned(),
+        _ => format!("Не удалось выполнить запрос (HTTP {status})."),
     }
 }
 
+async fn parse_json<T: for<'de> Deserialize<'de>>(
+    response: gloo_net::http::Response,
+) -> Result<T, String> {
+    response
+        .json::<T>()
+        .await
+        .map_err(|_| "Сервер вернул некорректный ответ. Повторите попытку.".to_owned())
+}
+
 async fn fetch_me() -> Result<Option<User>, String> {
-    let response = Request::get("/api/me").send().await.map_err(|error| error.to_string())?;
-    let status = response.status();
-    if status == 401 {
+    let response = api_request(Request::get("/api/me").send(), true).await?;
+    if response.status() == 401 {
         return Ok(None);
     }
-    if !response.ok() {
-        return Err(response_error(response).await);
-    }
-    response.json::<User>().await.map(Some).map_err(|error| error.to_string())
+    parse_json::<User>(response).await.map(Some)
 }
 
 async fn restore_session(state: &AppState, during_exchange: bool) -> Result<(), String> {
@@ -223,52 +251,43 @@ async fn restore_session(state: &AppState, during_exchange: bool) -> Result<(), 
 }
 
 async fn get_json<T: for<'de> Deserialize<'de>>(path: &str) -> Result<T, String> {
-    let response = Request::get(path).send().await.map_err(|e| e.to_string())?;
-    if !response.ok() {
-        return Err(response_error(response).await);
-    }
-    response.json::<T>().await.map_err(|e| e.to_string())
+    let response = api_request(Request::get(path).send(), false).await?;
+    parse_json(response).await
 }
 
-async fn post_json<T: for<'de> Deserialize<'de>>(path: &str, body: &impl Serialize, csrf: Option<&str>) -> Result<T, String> {
+async fn post_json<T: for<'de> Deserialize<'de>>(
+    path: &str,
+    body: &impl Serialize,
+    csrf: Option<&str>,
+) -> Result<T, String> {
     let mut request = Request::post(path).header("content-type", "application/json");
     if let Some(token) = csrf {
         request = request.header("x-csrf-token", token);
     }
-    let response = request.json(body).map_err(|e| e.to_string())?.send().await.map_err(|e| e.to_string())?;
-    if !response.ok() {
-        return Err(response_error(response).await);
-    }
-    response.json::<T>().await.map_err(|e| e.to_string())
+    let request = request
+        .json(body)
+        .map_err(|_| "Не удалось подготовить запрос. Повторите попытку.".to_owned())?;
+    let response = api_request(request.send(), false).await?;
+    parse_json(response).await
 }
 
 async fn post_empty(path: &str, csrf: &str) -> Result<(), String> {
-    let response = Request::post(path)
-        .header("x-csrf-token", csrf)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if response.ok() {
-        Ok(())
-    } else {
-        Err(response_error(response).await)
-    }
+    api_request(
+        Request::post(path).header("x-csrf-token", csrf).send(),
+        false,
+    )
+    .await?;
+    Ok(())
 }
 
 async fn delete_json(path: &str, body: &impl Serialize, csrf: &str) -> Result<(), String> {
-    let response = Request::delete(path)
+    let request = Request::delete(path)
         .header("content-type", "application/json")
         .header("x-csrf-token", csrf)
         .json(body)
-        .map_err(|error| error.to_string())?
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    if response.ok() {
-        Ok(())
-    } else {
-        Err(response_error(response).await)
-    }
+        .map_err(|_| "Не удалось подготовить запрос. Повторите попытку.".to_owned())?;
+    api_request(request.send(), false).await?;
+    Ok(())
 }
 fn set_note(state: &AppState, value: impl Into<String>) { state.note.set(value.into()); }
 fn remember_dialog_trigger(state: &AppState, event: &events::Click) {
