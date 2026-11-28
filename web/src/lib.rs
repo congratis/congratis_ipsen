@@ -407,7 +407,7 @@ async fn delete_json(path: &str, body: &impl Serialize, csrf: &str) -> Result<()
         .header("content-type", "application/json")
         .header("x-csrf-token", csrf)
         .json(body)
-        .map_err(|_| "Не удалось подготовить запрос. Повторите попытку.")?;
+        .map_err(|_| "Не удалось подготовить запрос. Повторите попытку.".to_owned())?;
     api_request(request.send(), false).await?;
     Ok(())
 }
