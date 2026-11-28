@@ -1496,7 +1496,8 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod campaign_validation_tests {
-    use super::campaign_numbers;
+    use super::{add_campaign_count, campaign_numbers};
+    use std::collections::HashMap;
 
     #[test]
     fn campaign_size_accepts_only_one_through_thirty_five() {
