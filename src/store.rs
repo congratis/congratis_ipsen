@@ -657,6 +657,9 @@ impl Store {
                 submitted: item.used,
                 revoked: item.revoked,
                 display_name: item.display_name,
+                surname: item.surname,
+                first_name: item.first_name,
+                avatar_filename: item.avatar_filename,
                 created_at: item.created_at,
                 used_at: item.used_at,
             })
