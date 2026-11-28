@@ -62,9 +62,9 @@ async fn campaign_data_and_deletion_are_isolated_and_retryable() {
     let greetings_a = store.list_campaign_greetings(&campaign_a).await.unwrap();
     let greetings_b = store.list_campaign_greetings(&campaign_b).await.unwrap();
     assert_eq!(greetings_a.len(), 1);
-    assert_eq!(greetings_a[0].display_name.as_deref(), Some("Alice"));
+    assert_eq!(greetings_a[0].display_name.as_deref(), Some("Smith Alice"));
     assert_eq!(greetings_b.len(), 1);
-    assert_eq!(greetings_b[0].display_name.as_deref(), Some("Bob"));
+    assert_eq!(greetings_b[0].display_name.as_deref(), Some("Jones Bob"));
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
     let session_a = format!("session-a-{suffix}");
