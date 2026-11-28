@@ -746,12 +746,13 @@ async fn sse_events(
     State(state): State<AppState>, headers: HeaderMap
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let session = authenticated(&state, &headers).await?;
+    let is_admin = session.role == "admin";
     let campaign_id = session.campaign_id.unwrap_or_else(|| christmas_greetings::store::LEGACY_CAMPAIGN_ID.to_owned());
     let receiver = state.events.subscribe();
-    let stream = stream::unfold((receiver, campaign_id), |(mut receiver, campaign_id)| async move {
+    let stream = stream::unfold((receiver, campaign_id, is_admin), |(mut receiver, campaign_id, is_admin)| async move {
         loop {
             let event = match receiver.recv().await {
-                Ok(greeting) if greeting.campaign_id == campaign_id => {
+                Ok(greeting) if is_admin || greeting.campaign_id == campaign_id => {
                     Event::default().event("greeting").json_data(greeting)
                         .unwrap_or_else(|_| Event::default().event("resync").data("snapshot"))
                 }
@@ -759,7 +760,7 @@ async fn sse_events(
                 Err(broadcast::error::RecvError::Lagged(_)) => Event::default().event("resync").data("snapshot"),
                 Err(broadcast::error::RecvError::Closed) => return None,
             };
-            return Some((Ok::<Event, Infallible>(event), (receiver, campaign_id)));
+            return Some((Ok::<Event, Infallible>(event), (receiver, campaign_id, is_admin)));
         }
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new()
