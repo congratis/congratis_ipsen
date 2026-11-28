@@ -810,9 +810,10 @@ impl Store {
         } else {
             json!(campaign_ornament_key(campaign_id, target_number))
         };
-        let Some(target): Option<Ornament> = self.first(
+        let target: Option<Ornament> = self.first(
             r.db(self.database.as_str()).table(TABLE).get(ornament_id)
-        ).await? else { return Ok(None); };
+        ).await?;
+        let Some(target) = target else { return Ok(None); };
         if !target.used || target.campaign_id.as_deref().unwrap_or(LEGACY_CAMPAIGN_ID) != campaign_id {
             return Ok(None);
         }
