@@ -259,7 +259,11 @@ async fn campaign_summary(
     })?;
     let participant_count = participants.len();
     let submitted_count = participants.iter().filter(|participant| participant.submitted).count();
-    Ok(Json(CampaignSummary { participant_count, submitted_count }))
+    let campaign_name = state.store.get_campaign(campaign_id).await.map_err(|e| {
+        tracing::error!(?e, "campaign title lookup failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить название кампании")
+    })?.map(|campaign| campaign.name).unwrap_or_else(|| "Congratis".to_owned());
+    Ok(Json(CampaignSummary { participant_count, submitted_count, campaign_name }))
 }
 
 async fn list_greetings(
