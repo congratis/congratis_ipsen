@@ -646,7 +646,6 @@ fn connect_presence_events(state: AppState) {
 
     let close_state = state.clone();
     let close_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
-        if close_state.user.lock_ref().is_none() { return; }
         let retry_state = close_state.clone();
         let callback = Closure::once_into_js(move || connect_presence_events(retry_state));
         if let Some(window) = web_sys::window() {
@@ -1521,6 +1520,10 @@ fn participants_grid(state: AppState, participants: Vec<Participant>) -> Dom {
             let display_name = participant.display_name.unwrap_or_default();
             let status = if participant.submitted {
                 "Поздравление опубликовано"
+            } else if participant.filling {
+                "Заполняет приглашение сейчас"
+            } else if participant.online {
+                "Сейчас онлайн"
             } else if participant.activated {
                 "Приглашение активировано"
             } else if participant.revoked {
