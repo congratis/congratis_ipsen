@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 argon2 = "0.5"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 axum = { version = "0.8", features = ["macros", "ws"] }
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
