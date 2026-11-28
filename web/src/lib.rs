@@ -1264,8 +1264,8 @@ fn show_form(state: AppState) {
                 .event(clone!(form_state => move |event: events::Change| {
                     let Some(input) = event.target().and_then(|target| target.dyn_into::<HtmlInputElement>().ok()) else { return; };
                     let Some(file) = input.files().and_then(|files| files.get(0)) else { return; };
-                    if file.size() > 5.0 * 1024.0 * 1024.0 { set_note(&form_state, "Фотография должна быть не больше 5 МБ"); return; }
-                    if !matches!(file.type_().as_str(), "image/jpeg" | "image/png" | "image/webp") { set_note(&form_state, "Поддерживаются только JPEG, PNG и WebP"); return; }
+                    if file.size() > 1024.0 * 1024.0 { input.set_value(""); form_state.avatar_data_url.set(None); set_note(&form_state, "Фотография должна быть не больше 1 МБ"); return; }
+                    if !matches!(file.type_().as_str(), "image/jpeg" | "image/png" | "image/webp") { input.set_value(""); form_state.avatar_data_url.set(None); set_note(&form_state, "Поддерживаются только JPEG, PNG и WebP"); return; }
                     let Ok(reader) = web_sys::FileReader::new() else { set_note(&form_state, "Не удалось прочитать фотографию"); return; };
                     let callback = Closure::<dyn FnMut(web_sys::Event)>::new(clone!(form_state => move |event: web_sys::Event| {
                         if let Some(reader) = event.target().and_then(|target| target.dyn_into::<web_sys::FileReader>().ok()) {
