@@ -107,6 +107,7 @@ struct AppState {
     sse_connection: Rc<RefCell<Option<EventSourceConnection>>>,
     presence_connection: Rc<RefCell<Option<PresenceConnection>>>,
     online_count: Mutable<usize>,
+    presence_activity_at: Rc<RefCell<f64>>,
     name: Mutable<String>,
     message: Mutable<String>,
     admin_name: Mutable<String>,
@@ -122,7 +123,7 @@ struct AppState {
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), presence_connection: Rc::new(RefCell::new(None)), online_count: Mutable::new(0), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
+        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), presence_connection: Rc::new(RefCell::new(None)), online_count: Mutable::new(0), presence_activity_at: Rc::new(RefCell::new(0.0)), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -659,9 +660,14 @@ fn connect_presence_events(state: AppState) {
 }
 
 fn send_presence_activity(state: &AppState) {
+    let now = js_sys::Date::now();
+    let mut last_sent = state.presence_activity_at.borrow_mut();
+    if now - *last_sent < 2000.0 { return; }
     if let Some(connection) = state.presence_connection.borrow().as_ref() {
         if connection.socket.ready_state() == WebSocket::OPEN {
-            let _ = connection.socket.send_with_str(r#"{"type":"activity"}"#);
+            if connection.socket.send_with_str(r#"{"type":"activity"}"#).is_ok() {
+                *last_sent = now;
+            }
         }
     }
 }
@@ -1057,6 +1063,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                             .class("presentation-audio-controls")
                             .child(html!("button", {
                                 .class("secondary")
+                                .class("icon-control")
                                 .attr("type", "button")
                                 .attr("aria-label", "Пауза или продолжение музыки")
                                  .text_signal(state.presentation_paused.signal().map(|paused| if paused { "▶" } else { "Ⅱ" }))
@@ -1064,6 +1071,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                             }))
                             .child(html!("button", {
                                 .class("secondary")
+                                .class("icon-control")
                                 .attr("type", "button")
                                 .attr("aria-label", "Включить или выключить звук")
                                  .text_signal(state.music_muted.signal().map(|muted| if muted { "◖" } else { "◗" }))
