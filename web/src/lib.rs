@@ -600,7 +600,6 @@ fn connect_events(state: AppState) {
 
                     if greeting_state.user.lock_ref().as_ref().is_some_and(|user| user.role == "admin") {
                         let state = greeting_state.clone();
-                        let campaign_id = event.campaign_id;
                         spawn_local(async move {
                             refresh_admin_participants(state).await;
                         });
@@ -633,7 +632,10 @@ fn connect_events(state: AppState) {
         let state = open_state.clone();
         spawn_local(async move {
             load_greetings(state.clone()).await;
-            load_campaign(state).await;
+            load_campaign(state.clone()).await;
+            if state.user.lock_ref().as_ref().is_some_and(|user| user.role == "admin") {
+                refresh_admin_participants(state).await;
+            }
         });
     });
     let _ = source.add_event_listener_with_callback("open", open_handler.as_ref().unchecked_ref());
