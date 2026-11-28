@@ -39,7 +39,11 @@ struct Greeting {
     first_name: String,
     avatar_url: Option<String>,
     message: String,
+    like_count: usize,
+    liked_by_me: bool,
 }
+#[derive(Serialize)]
+struct LeaderboardEntry { display_name: String, avatar_url: Option<String>, like_count: usize }
 #[derive(Serialize)]
 struct CampaignSummary {
     participant_count: usize,
@@ -282,8 +286,53 @@ async fn list_greetings(
         first_name: o.first_name.unwrap_or_default(),
         avatar_url: o.avatar_filename.map(|name| format!("/avatars/{name}")),
         message: o.message?,
+        like_count: o.liked_by.len(),
+        liked_by_me: session.role == "participant" && session.subject_id.parse::<i16>().ok().is_some_and(|number| o.liked_by.contains(&number)),
     })).collect()))
 }
+
+async fn toggle_greeting_like(
+    State(state): State<AppState>, headers: HeaderMap,
+    axum::extract::Path(target_number): axum::extract::Path<i16>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "participant" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Только участник может ставить отметки «Нравится"));
+    }
+    verify_csrf(&headers, &session)?;
+    let voter_number = session.subject_id.parse::<i16>()
+        .map_err(|_| ApiError(StatusCode::FORBIDDEN, "Некорректная учётная запись участника"))?;
+    if !(1..=35).contains(&target_number) {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Некорректный номер поздравления"));
+    }
+    let campaign_id = session.campaign_id.as_deref().unwrap_or(christmas_greetings::store::LEGACY_CAMPAIGN_ID);
+    let Some((liked, like_count)) = state.store.toggle_greeting_like(campaign_id, voter_number, target_number).await.map_err(|error| {
+        tracing::error!(?error, campaign_id = %campaign_id, target_number, "greeting like toggle failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось сохранить отметку «Нравится»")
+    })? else {
+        return Err(ApiError(StatusCode::CONFLICT, "Нельзя отметить собственное или неопубликованное поздравление"));
+    };
+    Ok(Json(serde_json::json!({"liked": liked, "like_count": like_count})))
+}
+
+async fn leaderboard(
+    State(state): State<AppState>, headers: HeaderMap,
+) -> Result<Json<Vec<LeaderboardEntry>>, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    let campaign_id = session.campaign_id.as_deref().unwrap_or(christmas_greetings::store::LEGACY_CAMPAIGN_ID);
+    let mut entries: Vec<LeaderboardEntry> = state.store.list_campaign_greetings(campaign_id).await.map_err(|error| {
+        tracing::error!(?error, "leaderboard lookup failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить рейтинг поздравлений")
+    })?.into_iter().filter_map(|item| Some(LeaderboardEntry {
+        display_name: item.display_name?,
+        avatar_url: item.avatar_filename.map(|name| format!("/avatars/{name}")),
+        like_count: item.liked_by.len(),
+    })).collect();
+    entries.sort_by(|a,b| b.like_count.cmp(&a.like_count).then_with(|| a.display_name.cmp(&b.display_name)));
+    entries.truncate(5);
+    Ok(Json(entries))
+}
+
 async fn submit(
     State(state): State<AppState>, headers: HeaderMap, Json(payload): Json<SubmitGreeting>
 ) -> Result<impl IntoResponse, ApiError> {
@@ -857,6 +906,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/events", get(sse_events))
         .route("/api/presence", get(presence_ws))
         .route("/api/greetings", get(list_greetings).post(submit))
+        .route("/api/greetings/{number}/like", post(toggle_greeting_like))
+        .route("/api/leaderboard", get(leaderboard))
         .route("/api/campaign", get(campaign_summary))
         .route("/api/admin/campaign", post(admin_create_campaign))
         .route("/api/admin/campaigns", get(admin_list_campaigns).post(admin_create_named_campaign))
