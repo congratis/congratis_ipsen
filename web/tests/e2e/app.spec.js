@@ -236,6 +236,39 @@ test("participant can submit a greeting only once even after a rapid double clic
   await expect.poll(() => submissions).toBe(1);
 });
 
+test("participant can attach an optional image avatar to a greeting", async ({ page }) => {
+  await mockParticipantSession(page);
+  let submitted = null;
+  await page.route("**/api/greetings", async route => {
+    if (route.request().method() === "GET") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    }
+    submitted = route.request().postDataJSON();
+    return route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "Поздравление сохранено", ornament_number: 1 })
+    });
+  });
+
+  await page.goto("/#invite=valid-invite-token");
+  await page.getByRole("button", { name: "Шар номер 1", exact: true }).click();
+  await page.getByRole("textbox", { name: "Фамилия", exact: true }).fill("Иванов");
+  await page.getByRole("textbox", { name: "Имя", exact: true }).fill("Иван");
+  await page.getByRole("textbox", { name: "Твоё поздравление", exact: true }).fill("Счастья!");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "avatar.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "base64")
+  });
+  await expect(page.locator(".note")).toContainText("Фотография добавлена");
+  await page.getByRole("button", { name: "Опубликовать поздравление" }).click();
+  await expect.poll(() => submitted).not.toBeNull();
+  expect(submitted.surname).toBe("Иванов");
+  expect(submitted.first_name).toBe("Иван");
+  expect(submitted.avatar_data_url).toMatch(/^data:image\/png;base64,/);
+});
+
 test("admin can reissue an invitation and select the resulting URL for copying", async ({ page }) => {
   await page.route("**/api/me", route =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(admin) })
