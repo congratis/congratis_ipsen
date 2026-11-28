@@ -127,6 +127,8 @@ test("failed invite exchange clears the consumed invitation token from the addre
   await page.goto("/#invite=one-time-token");
 
   await expect(page.getByText(/Не удалось активировать приглашение/)).toBeVisible();
+  await expect(page.getByText("Приглашение недействительно или уже использовано")).toBeVisible();
+  await expect(page.locator("body")).not.toContainText('{"message":');
   await expect.poll(() => page.evaluate(() => location.hash)).toBe("");
 });
 
