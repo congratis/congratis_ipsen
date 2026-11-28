@@ -11,6 +11,7 @@ const TABLE: &str = "ornaments";
 const TOKEN_INDEX: &str = "token_hash";
 const SESSIONS_TABLE: &str = "auth_sessions";
 const CAMPAIGNS_TABLE: &str = "campaigns";
+const LIKES_TABLE: &str = "greeting_likes";
 pub const LEGACY_CAMPAIGN_ID: &str = "legacy-default";
 const INDEX_PROBE_TOKEN: &str = "__congratis_index_probe__";
 
@@ -123,6 +124,15 @@ pub struct Campaign {
     pub updated_at: i64,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct GreetingLike {
+    id: String,
+    campaign_id: String,
+    target_number: i16,
+    voter_number: i16,
+    created_at: i64,
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct WriteResult {
     #[serde(default)]
@@ -222,6 +232,15 @@ impl Store {
             let _: Option<Value> = self.first(
                 r.db(self.database.as_str()).table_create(CAMPAIGNS_TABLE)
             ).await.context("creating campaigns table")?;
+        }
+
+        let tables = self.first::<Vec<String>>(
+            r.db(self.database.as_str()).table_list()
+        ).await?.ok_or_else(|| anyhow!("RethinkDB returned no table list"))?;
+        if !tables.iter().any(|name| name == LIKES_TABLE) {
+            let _: Option<Value> = self.first(
+                r.db(self.database.as_str()).table_create(LIKES_TABLE)
+            ).await.context("creating greeting_likes table")?;
         }
 
         self.migrate_legacy_campaign().await?;
@@ -526,6 +545,16 @@ impl Store {
             }
         }
 
+        // Remove likes after the greeting documents have been deleted.
+        for like in self.list_campaign_like_rows(campaign_id).await? {
+            let result = self.first::<WriteResult>(
+                r.db(self.database.as_str()).table(LIKES_TABLE).get(like.id).delete(())
+            ).await?.ok_or_else(|| anyhow!("missing campaign like deletion result"))?;
+            if result.errors != 0 {
+                bail!("campaign like deletion failed: {}", result.first_error.unwrap_or_default());
+            }
+        }
+
         // Delete participant sessions only; administrator sessions have no campaign ID.
         for _ in 0..2 {
             let mut stream = r.db(self.database.as_str()).table(SESSIONS_TABLE).run::<_, Value>(&self.session);
@@ -652,24 +681,21 @@ impl Store {
         &self,
         campaign_id: &str,
     ) -> Result<Vec<ParticipantSummary>> {
-        Ok(self
-            .list_campaign_ornaments(campaign_id)
-            .await?
-            .into_iter()
-            .map(|item| ParticipantSummary {
-                ornament_number: item.ornament_number,
-                activated: item.activated,
-                submitted: item.used,
-                revoked: item.revoked,
-                display_name: item.display_name,
-                surname: item.surname,
-                first_name: item.first_name,
-                avatar_filename: item.avatar_filename,
-                created_at: item.created_at,
-                used_at: item.used_at,
-                like_count: item.liked_by.len(),
-            })
-            .collect())
+        let ornaments = self.list_campaign_ornaments(campaign_id).await?;
+        let likes = self.list_campaign_like_rows(campaign_id).await?;
+        Ok(ornaments.into_iter().map(|item| ParticipantSummary {
+            ornament_number: item.ornament_number,
+            activated: item.activated,
+            submitted: item.used,
+            revoked: item.revoked,
+            display_name: item.display_name,
+            surname: item.surname,
+            first_name: item.first_name,
+            avatar_filename: item.avatar_filename,
+            created_at: item.created_at,
+            used_at: item.used_at,
+            like_count: likes.iter().filter(|like| like.target_number == item.ornament_number).count(),
+        }).collect())
     }
 
     pub async fn reissue_campaign_invitation(
@@ -745,14 +771,31 @@ impl Store {
         Ok(self.list_campaign_greetings(LEGACY_CAMPAIGN_ID).await?)
     }
 
-    pub async fn list_campaign_greetings(&self, campaign_id: &str) -> Result<Vec<Ornament>> {
-        Ok(self.list_campaign_ornaments(campaign_id).await?
-            .into_iter().filter(|ornament| ornament.used).collect())
+    async fn list_campaign_like_rows(&self, campaign_id: &str) -> Result<Vec<GreetingLike>> {
+        let mut stream = r.db(self.database.as_str()).table(LIKES_TABLE)
+            .filter(reql::func!(|document| document.get_field("campaign_id").eq(campaign_id)))
+            .run::<_, GreetingLike>(&self.session);
+        let mut likes = Vec::new();
+        while let Some(like) = stream.try_next().await? {
+            likes.push(like);
+        }
+        Ok(likes)
     }
 
-    /// Atomically toggles a participant's like on another participant's greeting.
-    /// Voter IDs are stored on the greeting itself, so duplicate taps and concurrent
-    /// requests cannot inflate the count.
+    pub async fn list_campaign_greetings(&self, campaign_id: &str) -> Result<Vec<Ornament>> {
+        let mut ornaments = self.list_campaign_ornaments(campaign_id).await?;
+        let likes = self.list_campaign_like_rows(campaign_id).await?;
+        for ornament in &mut ornaments {
+            ornament.liked_by = likes.iter()
+                .filter(|like| like.target_number == ornament.ornament_number)
+                .map(|like| like.voter_number)
+                .collect();
+        }
+        Ok(ornaments.into_iter().filter(|ornament| ornament.used).collect())
+    }
+
+    /// Toggles a campaign-scoped like using a deterministic primary key.
+    /// The likes table guarantees at most one record per voter and greeting.
     pub async fn toggle_greeting_like(
         &self,
         campaign_id: &str,
@@ -762,47 +805,55 @@ impl Store {
         if voter_number == target_number {
             return Ok(None);
         }
-        let id = if campaign_id == LEGACY_CAMPAIGN_ID {
+        let ornament_id = if campaign_id == LEGACY_CAMPAIGN_ID {
             json!(target_number)
         } else {
             json!(campaign_ornament_key(campaign_id, target_number))
         };
-        let update = reql::func!(|document| {
-            let voters = document.clone().get_field("liked_by").default(r.expr(Vec::<i16>::new()));
-            r.branch(
-                document.clone().get_field("campaign_id").eq(campaign_id)
-                    .and(document.clone().get_field("used").eq(true))
-                    .and(voters.clone().contains(voter_number)),
-                document.clone().merge(r.object(r.args((
-                    "liked_by",
-                    voters.clone().set_difference(r.expr(vec![voter_number]))
-                )))),
-                r.branch(
-                    document.clone().get_field("campaign_id").eq(campaign_id)
-                        .and(document.clone().get_field("used").eq(true)),
-                    document.clone().merge(r.object(r.args((
-                        "liked_by",
-                        voters.clone().append(voter_number)
-                    )))),
-                    document
-                )
-            )
-        });
-        let result = self.first::<WriteResult>(
-            r.db(self.database.as_str()).table(TABLE).get(id.clone()).update(update)
-        ).await?.ok_or_else(|| anyhow!("missing greeting like update result"))?;
-        if result.errors != 0 {
-            bail!("greeting like update failed: {}", result.first_error.unwrap_or_default());
-        }
-        if result.replaced == 0 {
+        let Some(target): Option<Ornament> = self.first(
+            r.db(self.database.as_str()).table(TABLE).get(ornament_id)
+        ).await? else { return Ok(None); };
+        if !target.used || target.campaign_id.as_deref().unwrap_or(LEGACY_CAMPAIGN_ID) != campaign_id {
             return Ok(None);
         }
-        let updated: Option<Ornament> = self.first(
-            r.db(self.database.as_str()).table(TABLE).get(id)
+
+        let like_id = format!("{campaign_id}:{target_number}:{voter_number}");
+        let existing: Option<GreetingLike> = self.first(
+            r.db(self.database.as_str()).table(LIKES_TABLE).get(like_id.clone())
         ).await?;
-        let Some(updated) = updated else { return Ok(None); };
-        let liked = updated.liked_by.contains(&voter_number);
-        Ok(Some((liked, updated.liked_by.len())))
+        let liked = if existing.is_some() {
+            let result = self.first::<WriteResult>(
+                r.db(self.database.as_str()).table(LIKES_TABLE).get(like_id).delete(())
+            ).await?.ok_or_else(|| anyhow!("missing greeting unlike result"))?;
+            if result.errors != 0 {
+                bail!("greeting unlike failed: {}", result.first_error.unwrap_or_default());
+            }
+            false
+        } else {
+            let result = self.first::<WriteResult>(
+                r.db(self.database.as_str()).table(LIKES_TABLE).insert(json!({
+                    "id": like_id,
+                    "campaign_id": campaign_id,
+                    "target_number": target_number,
+                    "voter_number": voter_number,
+                    "created_at": Utc::now().timestamp()
+                }))
+            ).await?.ok_or_else(|| anyhow!("missing greeting like result"))?;
+            if result.errors != 0 {
+                // Another request may have inserted the same deterministic key
+                // after our read. Treat that as already liked, not as a 500.
+                let raced: Option<GreetingLike> = self.first(
+                    r.db(self.database.as_str()).table(LIKES_TABLE).get(format!("{campaign_id}:{target_number}:{voter_number}"))
+                ).await?;
+                if raced.is_none() {
+                    bail!("greeting like failed: {}", result.first_error.unwrap_or_default());
+                }
+            }
+            true
+        };
+        let like_count = self.list_campaign_like_rows(campaign_id).await?
+            .iter().filter(|like| like.target_number == target_number).count();
+        Ok(Some((liked, like_count)))
     }
 
     pub async fn insert_invitations(&self, invitations: &[(i16, String)]) -> Result<()> {
