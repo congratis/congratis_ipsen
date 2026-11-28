@@ -9,7 +9,7 @@ use web_sys::{Element, EventSource, HtmlAudioElement, HtmlElement, HtmlInputElem
 
 thread_local! {
     // Keep detached Image elements alive while the browser fetches avatars ahead of first use.
-    static AVATAR_PRELOADS: RefCell<Vec<(String, web_sys::HtmlImageElement)>> = RefCell::new(Vec::new());
+    static AVATAR_PRELOADS: RefCell<Vec<(String, web_sys::HtmlImageElement)>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -101,9 +101,11 @@ struct CreatedInvitation { ornament_number: i16, token: String }
 #[derive(Clone)]
 struct InvitationLink { ornament_number: i16, url: String }
 
+type EventSourceHandler = (&'static str, Closure<dyn FnMut(web_sys::Event)>);
+
 struct EventSourceConnection {
     source: EventSource,
-    handlers: Vec<(&'static str, Closure<dyn FnMut(web_sys::Event)>)>,
+    handlers: Vec<EventSourceHandler>,
 }
 
 struct PresenceConnection {
@@ -882,10 +884,10 @@ fn send_presence_activity(state: &AppState) {
     let mut last_sent = state.presence_activity_at.borrow_mut();
     if now - *last_sent < 2000.0 { return; }
     if let Some(connection) = state.presence_connection.borrow().as_ref() {
-        if connection.socket.ready_state() == WebSocket::OPEN {
-            if connection.socket.send_with_str(r#"{"type":"activity"}"#).is_ok() {
-                *last_sent = now;
-            }
+        if connection.socket.ready_state() == WebSocket::OPEN
+            && connection.socket.send_with_str(r#"{"type":"activity"}"#).is_ok()
+        {
+            *last_sent = now;
         }
     }
 }
@@ -2271,7 +2273,7 @@ fn watch_routes(state: AppState) {
         let url = routing::url().signal_cloned(),
         let user = state.user.signal_cloned(),
         let ready = state.auth_ready.signal() => {
-            (Route::from_url(&url), user.clone(), *ready)
+            (Route::from_url(url), user.clone(), *ready)
         }
     };
 
@@ -2315,7 +2317,7 @@ fn render(state: AppState) -> Dom {
             let show_ready = *ready && !*exchanging;
             Some(render_route(
                 render_state.clone(),
-                Route::from_url(&url),
+                Route::from_url(url),
                 user.clone(),
                 show_ready,
             ))
