@@ -1206,6 +1206,14 @@ fn participant_tree(state: AppState, user: User) -> Dom {
         })))
     })
 }
+fn avatar_dom(surname: &str, first_name: &str, avatar_url: Option<String>) -> Dom {
+    if let Some(url) = avatar_url {
+        html!("img", { .class("participant-avatar").attr("src", &url).attr("alt", &format!("{surname} {first_name}")) })
+    } else {
+        let initials = format!("{}{}", surname.chars().next().unwrap_or('?'), first_name.chars().next().unwrap_or('?')).to_uppercase();
+        html!("div", { .class("participant-avatar").class("avatar-initials").attr("aria-label", &format!("{surname} {first_name}")).text(&initials) })
+    }
+}
 fn show_form(state: AppState) {
     let form_state = state.clone();
     let subject_id = state.user.lock_ref().as_ref()
@@ -1245,7 +1253,25 @@ fn show_form(state: AppState) {
                 .class("muted")
                 .text("Твоё приглашение одноразовое. После публикации поздравление появится у всей команды.")
             }))
-            .child(field("Как тебя зовут?", "Твоё имя", state.name.clone(), false, Some(form_state.clone()), Some(subject_id.clone())))
+            .child(field("Фамилия", "Твоя фамилия", state.name.clone(), false, Some(form_state.clone()), Some(subject_id.clone())))
+            .child(field("Имя", "Твоё имя", state.first_name.clone(), false, Some(form_state.clone()), Some(subject_id.clone())))
+            .child(html!("label", { .text("Фотография (необязательно)") .child(html!("input", {
+                .attr("type", "file").attr("accept", "image/jpeg,image/png,image/webp")
+                .event(clone!(form_state => move |event: events::Change| {
+                    let Some(input) = event.target().and_then(|target| target.dyn_into::<HtmlInputElement>().ok()) else { return; };
+                    let Some(file) = input.files().and_then(|files| files.get(0)) else { return; };
+                    if file.size() > 5.0 * 1024.0 * 1024.0 { set_note(&form_state, "Фотография должна быть не больше 5 МБ"); return; }
+                    if !matches!(file.type().as_str(), "image/jpeg" | "image/png" | "image/webp") { set_note(&form_state, "Поддерживаются только JPEG, PNG и WebP"); return; }
+                    let Ok(reader) = web_sys::FileReader::new() else { set_note(&form_state, "Не удалось прочитать фотографию"); return; };
+                    let callback = Closure::<dyn FnMut(web_sys::Event)>::new(clone!(form_state => move |event: web_sys::Event| {
+                        if let Some(reader) = event.target().and_then(|target| target.dyn_into::<web_sys::FileReader>().ok()) {
+                            if let Ok(value) = reader.result() { if let Some(data) = value.as_string() { form_state.avatar_data_url.set(Some(data)); set_note(&form_state, "Фотография добавлена"); } }
+                        }
+                    }));
+                    reader.set_onload(Some(callback.as_ref().unchecked_ref())); callback.forget();
+                    if reader.read_as_data_url(&file).is_err() { set_note(&form_state, "Не удалось прочитать фотографию"); }
+                }))
+            })) }))
             .child(field("Твоё поздравление", "Пусть в новом году...", state.message.clone(), true, Some(form_state.clone()), Some(subject_id.clone())))
             .child(html!("div", {
                 .class("note")
@@ -1258,9 +1284,10 @@ fn show_form(state: AppState) {
                     if form_state.submitting.get() {
                         return;
                     }
-                    let display_name = form_state.name.get_cloned();
-                    if display_name.trim().is_empty() || display_name.chars().count() > 80 {
-                        set_note(&form_state, "Имя должно содержать от 1 до 80 символов");
+                    let surname = form_state.name.get_cloned();
+                    let first_name = form_state.first_name.get_cloned();
+                    if surname.trim().is_empty() || surname.chars().count() > 80 || first_name.trim().is_empty() || first_name.chars().count() > 80 {
+                        set_note(&form_state, "Укажи фамилию и имя (до 80 символов каждое)");
                         return;
                     }
                     let message = form_state.message.get_cloned();
@@ -1274,7 +1301,9 @@ fn show_form(state: AppState) {
                     let subject_id = current.user.lock_ref().as_ref().map(|user| user.subject_id.clone()).unwrap_or_default();
                     spawn_local(async move {
                         let body = serde_json::json!({
-                            "display_name": display_name,
+                            "surname": surname,
+                            "first_name": first_name,
+                            "avatar_data_url": current.avatar_data_url.get_cloned(),
                             "message": message
                         });
                         match post_json::<serde_json::Value>("/api/greetings", &body, Some(&csrf)).await {
@@ -1282,6 +1311,8 @@ fn show_form(state: AppState) {
                                 set_note(&current, "Поздравление опубликовано! ✨");
                                 clear_draft(&subject_id);
                                 current.name.set(String::new());
+                                current.first_name.set(String::new());
+                                current.avatar_data_url.set(None);
                                 current.message.set(String::new());
                                 load_greetings(current.clone()).await;
                                 current.submitting.set(false);
