@@ -1001,6 +1001,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                             .class("kicker")
                             .text("CHRISTMAS WISH")
                         }))
+                        .child(avatar_dom(&greeting.surname, &greeting.first_name, greeting.avatar_url.clone()))
                         .child(html!("h2", {
                             .attr("id", "greeting-title")
                             .text(&format!("С теплом, {}", greeting.display_name))
