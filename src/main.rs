@@ -297,7 +297,7 @@ async fn toggle_greeting_like(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let session = authenticated(&state, &headers).await?;
     if session.role != "participant" {
-        return Err(ApiError(StatusCode::FORBIDDEN, "Только участник может ставить отметки «Нравится"));
+        return Err(ApiError(StatusCode::FORBIDDEN, "Только участник может ставить лайки));
     }
     verify_csrf(&headers, &session)?;
     let voter_number = session.subject_id.parse::<i16>()
