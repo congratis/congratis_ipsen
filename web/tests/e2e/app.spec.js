@@ -132,6 +132,33 @@ test("failed invite exchange clears the consumed invitation token from the addre
   await expect.poll(() => page.evaluate(() => location.hash)).toBe("");
 });
 
+test("non-JSON API errors are replaced with a safe server message", async ({ page }) => {
+  await mockParticipantSession(page);
+  await page.route("**/api/auth/participant/exchange", route =>
+    route.fulfill({
+      status: 502,
+      contentType: "text/html",
+      body: "<html>upstream prematurely closed connection</html>"
+    })
+  );
+
+  await page.goto("/#invite=one-time-token");
+
+  await expect(page.getByText(/Не удалось активировать приглашение/)).toBeVisible();
+  await expect(page.getByText("Сервер временно недоступен. Попробуйте позже.")).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("upstream prematurely closed connection");
+});
+
+test("network failures show a user-friendly API message", async ({ page }) => {
+  await mockParticipantSession(page);
+  await page.route("**/api/auth/participant/exchange", route => route.abort());
+
+  await page.goto("/#invite=one-time-token");
+
+  await expect(page.getByText(/Не удалось активировать приглашение/)).toBeVisible();
+  await expect(page.getByText(/Не удалось связаться с сервером/)).toBeVisible();
+});
+
 test("failed invite exchange preserves an existing cookie session", async ({ page }) => {
   await mockParticipantSession(page, { exchangeStatus: 409, meUser: participant });
   await page.goto("/#invite=one-time-token");
