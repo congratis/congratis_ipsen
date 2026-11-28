@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
 };
 use christmas_greetings::store::{AuthSession, GreetingEvent, Store};
-use futures::{stream, SinkExt, StreamExt};
+use futures::{stream, SinkExt};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -865,19 +865,6 @@ async fn sse_events(
         .interval(Duration::from_secs(15)).text("keep-alive")))
 }
 
-#[cfg(test)]
-mod campaign_validation_tests {
-    use super::campaign_numbers;
-
-    #[test]
-    fn campaign_size_accepts_only_one_through_thirty_five() {
-        assert_eq!(campaign_numbers(1).unwrap(), vec![1]);
-        assert_eq!(campaign_numbers(35).unwrap().len(), 35);
-        assert!(campaign_numbers(0).is_err());
-        assert!(campaign_numbers(36).is_err());
-    }
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -932,3 +919,17 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod campaign_validation_tests {
+    use super::campaign_numbers;
+
+    #[test]
+    fn campaign_size_accepts_only_one_through_thirty_five() {
+        assert_eq!(campaign_numbers(1).unwrap(), vec![1]);
+        assert_eq!(campaign_numbers(35).unwrap().len(), 35);
+        assert!(campaign_numbers(0).is_err());
+        assert!(campaign_numbers(36).is_err());
+    }
+}
+
