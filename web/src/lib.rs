@@ -1,19 +1,29 @@
 use dominator::{append_dom, clone, events, html, routing, Dom};
-use futures_signals::{map_ref, signal::{Mutable, SignalExt}};
+use futures_signals::{
+    map_ref,
+    signal::{Mutable, SignalExt},
+};
 use gloo_net::http::Request;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, future::Future, rc::Rc};
 use wasm_bindgen::{closure::Closure, JsCast};
 use wasm_bindgen_futures::{spawn_local, JsFuture};
-use web_sys::{Element, EventSource, HtmlAudioElement, HtmlElement, HtmlInputElement, HtmlTextAreaElement, MessageEvent, NodeList, WebSocket};
+use web_sys::{
+    Element, EventSource, HtmlAudioElement, HtmlElement, HtmlInputElement, HtmlTextAreaElement,
+    MessageEvent, NodeList, WebSocket,
+};
 
 thread_local! {
     // Keep detached Image elements alive while the browser fetches avatars ahead of first use.
-    static AVATAR_PRELOADS: RefCell<Vec<(String, web_sys::HtmlImageElement)>> = RefCell::new(Vec::new());
+    static AVATAR_PRELOADS: RefCell<Vec<(String, web_sys::HtmlImageElement)>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-struct User { subject_id: String, role: String, csrf_token: String }
+struct User {
+    subject_id: String,
+    role: String,
+    csrf_token: String,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Route {
@@ -49,12 +59,29 @@ impl Route {
     }
 }
 #[derive(Clone, Deserialize, Serialize)]
-struct Greeting { ornament_number: i16, display_name: String, #[serde(default)] surname: String, #[serde(default)] first_name: String, #[serde(default)] avatar_url: Option<String>, message: String, #[serde(default)] like_count: usize, #[serde(default)] liked_by_me: bool }
+struct Greeting {
+    ornament_number: i16,
+    display_name: String,
+    #[serde(default)]
+    surname: String,
+    #[serde(default)]
+    first_name: String,
+    #[serde(default)]
+    avatar_url: Option<String>,
+    message: String,
+    #[serde(default)]
+    like_count: usize,
+    #[serde(default)]
+    liked_by_me: bool,
+}
 
 fn preload_avatar_images(greetings: &[Greeting]) {
     AVATAR_PRELOADS.with(|preloads| {
         let mut preloads = preloads.borrow_mut();
-        for url in greetings.iter().filter_map(|greeting| greeting.avatar_url.as_deref()) {
+        for url in greetings
+            .iter()
+            .filter_map(|greeting| greeting.avatar_url.as_deref())
+        {
             if preloads.iter().any(|(loaded_url, _)| loaded_url == url) {
                 continue;
             }
@@ -66,11 +93,30 @@ fn preload_avatar_images(greetings: &[Greeting]) {
     });
 }
 #[derive(Clone, Deserialize)]
-struct LeaderboardEntry { display_name: String, #[serde(default)] avatar_url: Option<String>, like_count: usize }
+struct LeaderboardEntry {
+    display_name: String,
+    #[serde(default)]
+    avatar_url: Option<String>,
+    like_count: usize,
+}
 #[derive(Deserialize)]
-struct LikeResponse { liked: bool, like_count: usize }
+struct LikeResponse {
+    liked: bool,
+    like_count: usize,
+}
 #[derive(Clone, Deserialize)]
-struct RealtimeGreeting { campaign_id: String, ornament_number: i16, display_name: String, #[serde(default)] surname: Option<String>, #[serde(default)] first_name: Option<String>, #[serde(default)] avatar_filename: Option<String>, message: String }
+struct RealtimeGreeting {
+    campaign_id: String,
+    ornament_number: i16,
+    display_name: String,
+    #[serde(default)]
+    surname: Option<String>,
+    #[serde(default)]
+    first_name: Option<String>,
+    #[serde(default)]
+    avatar_filename: Option<String>,
+    message: String,
+}
 #[derive(Clone, Deserialize)]
 #[allow(dead_code)]
 struct Participant {
@@ -83,27 +129,54 @@ struct Participant {
     #[serde(default)]
     filling: bool,
     display_name: Option<String>,
-    #[serde(default)] surname: Option<String>,
-    #[serde(default)] first_name: Option<String>,
-    #[serde(default)] avatar_filename: Option<String>,
+    #[serde(default)]
+    surname: Option<String>,
+    #[serde(default)]
+    first_name: Option<String>,
+    #[serde(default)]
+    avatar_filename: Option<String>,
     created_at: i64,
     used_at: Option<i64>,
-    #[serde(default)] like_count: usize,
+    #[serde(default)]
+    like_count: usize,
 }
 #[derive(Clone, Deserialize)]
-struct CampaignSummary { participant_count: usize, submitted_count: usize, #[serde(default)] campaign_name: String }
+struct CampaignSummary {
+    participant_count: usize,
+    submitted_count: usize,
+    #[serde(default)]
+    campaign_name: String,
+}
 #[derive(Clone, Deserialize)]
-struct CampaignAdminItem { id: String, name: String, created_at: i64, participant_count: usize, submitted_count: usize, #[serde(default)] online_count: usize }
+struct CampaignAdminItem {
+    id: String,
+    name: String,
+    participant_count: usize,
+    submitted_count: usize,
+    #[serde(default)]
+    online_count: usize,
+}
 #[derive(Clone, Deserialize)]
-struct CreateCampaignResponse { campaign: CampaignAdminItem, invitations: Vec<CreatedInvitation> }
+struct CreateCampaignResponse {
+    campaign: CampaignAdminItem,
+    invitations: Vec<CreatedInvitation>,
+}
 #[derive(Clone, Deserialize)]
-struct CreatedInvitation { ornament_number: i16, token: String }
+struct CreatedInvitation {
+    ornament_number: i16,
+    token: String,
+}
 #[derive(Clone)]
-struct InvitationLink { ornament_number: i16, url: String }
+struct InvitationLink {
+    ornament_number: i16,
+    url: String,
+}
+
+type EventSourceHandler = (&'static str, Closure<dyn FnMut(web_sys::Event)>);
 
 struct EventSourceConnection {
     source: EventSource,
-    handlers: Vec<(&'static str, Closure<dyn FnMut(web_sys::Event)>)>,
+    handlers: Vec<EventSourceHandler>,
 }
 
 struct PresenceConnection {
@@ -159,9 +232,58 @@ struct AppState {
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), leaderboard: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_title: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), presentation_timeout: Rc::new(RefCell::new(None)), music_muted: Mutable::new(false), music_playing: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), presence_connection: Rc::new(RefCell::new(None)), online_count: Mutable::new(0), presence_activity_at: Rc::new(RefCell::new(0.0)), name: Mutable::new(String::new()), first_name: Mutable::new(String::new()), avatar_data_url: Mutable::new(None), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
+        Self {
+            user: Mutable::new(None),
+            auth_ready: Mutable::new(false),
+            exchanging: Mutable::new(false),
+            greetings: Mutable::new(Vec::new()),
+            leaderboard: Mutable::new(Vec::new()),
+            participants: Mutable::new(None),
+            campaigns: Mutable::new(None),
+            selected_campaign: Mutable::new(None),
+            campaign_participants: Mutable::new(None),
+            campaign_invite_count: Mutable::new("5".into()),
+            campaign_name: Mutable::new(String::new()),
+            campaign_title: Mutable::new(String::new()),
+            campaign_count: Mutable::new(0),
+            submitted_count: Mutable::new(0),
+            selected: Mutable::new(None),
+            presentation: Mutable::new(false),
+            presentation_index: Mutable::new(0),
+            presentation_ornament: Mutable::new(None),
+            presentation_paused: Mutable::new(false),
+            presentation_timeout: Rc::new(RefCell::new(None)),
+            music_muted: Mutable::new(false),
+            music_playing: Mutable::new(false),
+            music_volume: Mutable::new(0.65),
+            audio: Mutable::new(None),
+            sse_connection: Rc::new(RefCell::new(None)),
+            presence_connection: Rc::new(RefCell::new(None)),
+            online_count: Mutable::new(0),
+            presence_activity_at: Rc::new(RefCell::new(0.0)),
+            name: Mutable::new(String::new()),
+            first_name: Mutable::new(String::new()),
+            avatar_data_url: Mutable::new(None),
+            message: Mutable::new(String::new()),
+            admin_name: Mutable::new(String::new()),
+            admin_password: Mutable::new(String::new()),
+            note: Mutable::new(String::new()),
+            invite_url: Mutable::new(String::new()),
+            invite_urls: Mutable::new(Vec::new()),
+            campaign_size: Mutable::new("20".into()),
+            campaign_creating: Mutable::new(false),
+            submitting: Mutable::new(false),
+            logging_in: Mutable::new(false),
+            dialog_return_focus: Mutable::new(None),
+        }
     }
-    fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
+    fn csrf(&self) -> String {
+        self.user
+            .lock_ref()
+            .as_ref()
+            .map(|u| u.csrf_token.clone())
+            .unwrap_or_default()
+    }
 }
 fn trace(msg: &str) {
     web_sys::console::log_1(&format!("[congratis] {msg}").into());
@@ -285,19 +407,28 @@ async fn delete_json(path: &str, body: &impl Serialize, csrf: &str) -> Result<()
         .header("content-type", "application/json")
         .header("x-csrf-token", csrf)
         .json(body)
-        .map_err(|_| "Не удалось подготовить запрос. Повторите попытку.".to_owned())?;
+        .map_err(|_| "Не удалось подготовить запрос. Повторите попытку.")?;
     api_request(request.send(), false).await?;
     Ok(())
 }
-fn set_note(state: &AppState, value: impl Into<String>) { state.note.set(value.into()); }
+fn set_note(state: &AppState, value: impl Into<String>) {
+    state.note.set(value.into());
+}
 fn remember_dialog_trigger(state: &AppState, event: &events::Click) {
-    if let Some(target) = event.target().and_then(|target| target.dyn_into::<web_sys::HtmlElement>().ok()) {
+    if let Some(target) = event
+        .target()
+        .and_then(|target| target.dyn_into::<web_sys::HtmlElement>().ok())
+    {
         state.dialog_return_focus.set(Some(target));
     }
 }
 fn restore_dialog_focus(state: &AppState) {
-    let Some(element) = state.dialog_return_focus.get_cloned() else { return; };
-    let Some(window) = web_sys::window() else { return; };
+    let Some(element) = state.dialog_return_focus.get_cloned() else {
+        return;
+    };
+    let Some(window) = web_sys::window() else {
+        return;
+    };
     let callback = Closure::once_into_js(move || {
         let _ = element.focus();
     });
@@ -309,7 +440,9 @@ fn close_submission_dialog(state: &AppState) {
         .and_then(|document| document.get_element_by_id("submission-dialog"))
     {
         if let Ok(dialog) = dialog.dyn_into::<web_sys::HtmlDialogElement>() {
-            if dialog.open() { dialog.close(); }
+            if dialog.open() {
+                dialog.close();
+            }
             dialog.remove();
         }
     }
@@ -317,9 +450,15 @@ fn close_submission_dialog(state: &AppState) {
 }
 
 fn focus_first_dialog_control(dialog_id: &'static str) {
-    let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
-    let Some(dialog) = document.get_element_by_id(dialog_id) else { return; };
-    let Ok(dialog) = dialog.dyn_into::<web_sys::HtmlDialogElement>() else { return; };
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let Some(dialog) = document.get_element_by_id(dialog_id) else {
+        return;
+    };
+    let Ok(dialog) = dialog.dyn_into::<web_sys::HtmlDialogElement>() else {
+        return;
+    };
     if !dialog.open() {
         let _ = dialog.show_modal();
     }
@@ -332,11 +471,15 @@ fn focus_first_dialog_control(dialog_id: &'static str) {
     }
 }
 fn schedule_dialog_focus(dialog_id: &'static str) {
-    let Some(window) = web_sys::window() else { return; };
+    let Some(window) = web_sys::window() else {
+        return;
+    };
     // child_signal replaces the dialog node asynchronously; wait two frames so
     // focus/showModal run against the final node, not the node being removed.
     let callback = Closure::once_into_js(move || {
-        let Some(window) = web_sys::window() else { return; };
+        let Some(window) = web_sys::window() else {
+            return;
+        };
         let callback = Closure::once_into_js(move || focus_first_dialog_control(dialog_id));
         let _ = window.request_animation_frame(callback.unchecked_ref());
     });
@@ -377,13 +520,19 @@ fn trap_dialog_focus(event: &web_sys::KeyboardEvent, dialog_id: &str) -> Option<
 
     let document = web_sys::window()?.document()?;
     let dialog_element = document.get_element_by_id(dialog_id)?;
-    let dialog = dialog_element.dyn_into::<web_sys::HtmlDialogElement>().ok()?;
+    let dialog = dialog_element
+        .dyn_into::<web_sys::HtmlDialogElement>()
+        .ok()?;
     if !dialog.open() {
         let _ = dialog.show_modal();
     }
     let active = document.active_element()?;
 
-    let items = html_elements(&dialog.query_selector_all(&dialog_focusable_selector()).ok()?);
+    let items = html_elements(
+        &dialog
+            .query_selector_all(&dialog_focusable_selector())
+            .ok()?,
+    );
     let (first, last) = (items.first()?, items.last()?);
 
     // Shift+Tab уходит с первого на последний, Tab — с последнего на первый.
@@ -404,42 +553,47 @@ fn trap_dialog_focus(event: &web_sys::KeyboardEvent, dialog_id: &str) -> Option<
 }
 
 fn install_dialog_keyboard_handler(state: AppState) {
-    let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
-    let callback = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
-        move |event: web_sys::KeyboardEvent| {
-        if state.selected.get_cloned().is_some() {
-            match event.key().as_str() {
-                "Escape" => {
-                    event.prevent_default();
-                    state.selected.set(None);
-                    restore_dialog_focus(&state);
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let callback =
+        Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |event: web_sys::KeyboardEvent| {
+            if state.selected.get_cloned().is_some() {
+                match event.key().as_str() {
+                    "Escape" => {
+                        event.prevent_default();
+                        state.selected.set(None);
+                        restore_dialog_focus(&state);
+                    }
+                    "Tab" => {
+                        trap_dialog_focus(&event, "greeting-dialog");
+                    }
+                    _ => {}
                 }
-                "Tab" => {
-                    trap_dialog_focus(&event, "greeting-dialog");
+            } else if web_sys::window()
+                .and_then(|window| window.document())
+                .and_then(|document| document.get_element_by_id("submission-dialog"))
+                .is_some()
+            {
+                match event.key().as_str() {
+                    "Escape" => {
+                        event.prevent_default();
+                        close_submission_dialog(&state);
+                    }
+                    "Tab" => {
+                        trap_dialog_focus(&event, "submission-dialog");
+                    }
+                    _ => {}
                 }
-                _ => {}
+            } else if state.presentation.get() && event.key() == "Escape" {
+                event.prevent_default();
+                exit_presentation(state.clone());
             }
-        } else if web_sys::window()
-            .and_then(|window| window.document())
-            .and_then(|document| document.get_element_by_id("submission-dialog"))
-            .is_some()
-        {
-            match event.key().as_str() {
-                "Escape" => {
-                    event.prevent_default();
-                    close_submission_dialog(&state);
-                }
-                "Tab" => {
-                    trap_dialog_focus(&event, "submission-dialog");
-                }
-                _ => {}
-            }
-        } else if state.presentation.get() && event.key() == "Escape" {
-            event.prevent_default();
-            exit_presentation(state.clone());
-        }
-    });
-    if document.add_event_listener_with_callback("keydown", callback.as_ref().unchecked_ref()).is_ok() {
+        });
+    if document
+        .add_event_listener_with_callback("keydown", callback.as_ref().unchecked_ref())
+        .is_ok()
+    {
         callback.forget();
     }
 }
@@ -447,22 +601,32 @@ const PRESENTATION_AUDIO_URL: &str = "/music.mp3";
 
 fn clear_presentation_timeout(state: &AppState) {
     if let Some(id) = state.presentation_timeout.borrow_mut().take() {
-        if let Some(window) = web_sys::window() { window.clear_timeout_with_handle(id); }
+        if let Some(window) = web_sys::window() {
+            window.clear_timeout_with_handle(id);
+        }
     }
 }
 fn schedule_presentation_timeout(state: &AppState) {
     clear_presentation_timeout(state);
-    if !state.presentation.get() || state.presentation_paused.get() { return; }
+    if !state.presentation.get() || state.presentation_paused.get() {
+        return;
+    }
     let index = state.presentation_index.get();
-    if index >= state.greetings.lock_ref().len() { return; }
+    if index >= state.greetings.lock_ref().len() {
+        return;
+    }
     let current = state.clone();
     let callback = Closure::once_into_js(move || {
-        if !current.presentation.get() || current.presentation_paused.get() { return; }
+        if !current.presentation.get() || current.presentation_paused.get() {
+            return;
+        }
         let next = current.presentation_index.get().saturating_add(1);
         set_presentation_index(&current, next);
     });
     if let Some(window) = web_sys::window() {
-        if let Ok(id) = window.set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), 4000) {
+        if let Ok(id) = window
+            .set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), 4000)
+        {
             *state.presentation_timeout.borrow_mut() = Some(id);
         }
     }
@@ -471,7 +635,11 @@ fn set_presentation_index(state: &AppState, index: usize) {
     let greetings = state.greetings.get_cloned();
     let index = index.min(greetings.len());
     state.presentation_index.set(index);
-    state.presentation_ornament.set(greetings.get(index).map(|greeting| greeting.ornament_number));
+    state.presentation_ornament.set(
+        greetings
+            .get(index)
+            .map(|greeting| greeting.ornament_number),
+    );
     schedule_presentation_timeout(state);
 }
 
@@ -488,7 +656,10 @@ fn play_presentation_audio(state: AppState) {
             }
             Err(_) => {
                 state.music_playing.set(false);
-                set_note(&state, "Музыка недоступна — презентация продолжится без звука");
+                set_note(
+                    &state,
+                    "Музыка недоступна — презентация продолжится без звука",
+                );
                 return;
             }
         },
@@ -500,7 +671,7 @@ fn play_presentation_audio(state: AppState) {
             spawn_local(async move {
                 if JsFuture::from(promise).await.is_err() {
                     if let Some(audio) = current.audio.get_cloned() {
-                        audio.pause();
+                        let _ = audio.pause();
                     }
                     current.audio.set(None);
                     current.music_playing.set(false);
@@ -513,7 +684,10 @@ fn play_presentation_audio(state: AppState) {
         Err(_) => {
             state.audio.set(None);
             state.music_playing.set(false);
-            set_note(&state, "Музыка недоступна — презентация продолжится без звука");
+            set_note(
+                &state,
+                "Музыка недоступна — презентация продолжится без звука",
+            );
         }
     }
 }
@@ -541,7 +715,9 @@ fn toggle_presentation_pause(state: AppState) {
     state.presentation_paused.set(paused);
     if paused {
         clear_presentation_timeout(&state);
-        if let Some(audio) = state.audio.get_cloned() { audio.pause(); }
+        if let Some(audio) = state.audio.get_cloned() {
+            let _ = audio.pause();
+        }
         state.music_playing.set(false);
     } else {
         play_presentation_audio(state.clone());
@@ -552,18 +728,24 @@ fn toggle_presentation_pause(state: AppState) {
 fn toggle_music_mute(state: AppState) {
     let muted = !state.music_muted.get();
     state.music_muted.set(muted);
-    if let Some(audio) = state.audio.get_cloned() { audio.set_muted(muted); }
+    if let Some(audio) = state.audio.get_cloned() {
+        audio.set_muted(muted);
+    }
 }
 
 fn set_music_volume(state: &AppState, volume: f64) {
     let volume = volume.clamp(0.0, 1.0);
     state.music_volume.set(volume);
-    if let Some(audio) = state.audio.get_cloned() { audio.set_volume(volume); }
+    if let Some(audio) = state.audio.get_cloned() {
+        audio.set_volume(volume);
+    }
 }
 
 fn exit_presentation(state: AppState) {
     clear_presentation_timeout(&state);
-    if let Some(audio) = state.audio.get_cloned() { audio.pause(); }
+    if let Some(audio) = state.audio.get_cloned() {
+        let _ = audio.pause();
+    }
     state.audio.set(None);
     state.music_playing.set(false);
     state.presentation.set(false);
@@ -578,10 +760,15 @@ async fn toggle_greeting_like(state: AppState, ornament_number: i16) {
         &format!("/api/greetings/{ornament_number}/like"),
         &serde_json::json!({}),
         Some(&csrf),
-    ).await {
+    )
+    .await
+    {
         Ok(result) => {
             let mut greetings = state.greetings.get_cloned();
-            if let Some(greeting) = greetings.iter_mut().find(|item| item.ornament_number == ornament_number) {
+            if let Some(greeting) = greetings
+                .iter_mut()
+                .find(|item| item.ornament_number == ornament_number)
+            {
                 greeting.like_count = result.like_count;
                 greeting.liked_by_me = result.liked;
             }
@@ -599,7 +786,10 @@ async fn load_greetings(state: AppState) {
         Ok(mut items) => {
             // Preserve committed SSE updates that may arrive while this snapshot is in flight.
             for greeting in state.greetings.get_cloned() {
-                if !items.iter().any(|item| item.ornament_number == greeting.ornament_number) {
+                if !items
+                    .iter()
+                    .any(|item| item.ornament_number == greeting.ornament_number)
+                {
                     items.push(greeting);
                 }
             }
@@ -608,8 +798,11 @@ async fn load_greetings(state: AppState) {
             // Start image requests before the participant opens a filled ornament.
             preload_avatar_images(&items);
             state.greetings.set(items);
-        },
-        Err(error) => set_note(&state, format!("Не удалось загрузить поздравления: {error}")),
+        }
+        Err(error) => set_note(
+            &state,
+            format!("Не удалось загрузить поздравления: {error}"),
+        ),
     }
 }
 async fn load_participants(state: AppState) {
@@ -617,7 +810,10 @@ async fn load_participants(state: AppState) {
         Ok(mut items) => {
             let previous = state.participants.get_cloned().unwrap_or_default();
             for item in &mut items {
-                if let Some(old) = previous.iter().find(|old| old.ornament_number == item.ornament_number) {
+                if let Some(old) = previous
+                    .iter()
+                    .find(|old| old.ornament_number == item.ornament_number)
+                {
                     item.online = old.online;
                     item.filling = old.filling;
                 }
@@ -656,21 +852,32 @@ async fn load_campaign_participants(state: AppState, campaign_id: &str) {
         Ok(mut items) => {
             let previous = state.campaign_participants.get_cloned().unwrap_or_default();
             for item in &mut items {
-                if let Some(old) = previous.iter().find(|old| old.ornament_number == item.ornament_number) {
+                if let Some(old) = previous
+                    .iter()
+                    .find(|old| old.ornament_number == item.ornament_number)
+                {
                     item.online = old.online;
                     item.filling = old.filling;
                 }
             }
             state.campaign_participants.set(Some(items));
-        },
-        Err(error) => set_note(&state, format!("Не удалось загрузить участников кампании: {error}")),
+        }
+        Err(error) => set_note(
+            &state,
+            format!("Не удалось загрузить участников кампании: {error}"),
+        ),
     }
 }
 
 async fn refresh_admin_participants(state: AppState) {
     load_participants(state.clone()).await;
     load_campaigns(state.clone()).await;
-    if let Some(campaign_id) = state.selected_campaign.lock_ref().as_ref().map(|campaign| campaign.id.clone()) {
+    if let Some(campaign_id) = state
+        .selected_campaign
+        .lock_ref()
+        .as_ref()
+        .map(|campaign| campaign.id.clone())
+    {
         load_campaign_participants(state.clone(), &campaign_id).await;
     }
 }
@@ -681,26 +888,53 @@ async fn load_campaign(state: AppState) {
             state.campaign_count.set(summary.participant_count);
             state.submitted_count.set(summary.submitted_count);
             state.campaign_title.set(summary.campaign_name);
-        },
-        Err(error) => set_note(&state, format!("Не удалось загрузить параметры кампании: {error}")),
+        }
+        Err(error) => set_note(
+            &state,
+            format!("Не удалось загрузить параметры кампании: {error}"),
+        ),
     }
 }
 fn ornament_positions(count: usize) -> Vec<(f64, f64)> {
     const DEFAULT: [(f64, f64); 20] = [
-        (50.2,18.3),(46.2,27.9),(55.1,28.7),(41.5,38.1),(50.5,38.5),
-        (59.1,38.6),(37.7,49.8),(46.5,50.3),(55.2,50.5),(63.8,50.7),
-        (35.9,60.4),(45.0,61.0),(55.3,61.1),(64.5,61.6),(32.3,72.5),
-        (42.7,73.2),(56.0,73.6),(66.0,73.3),(45.4,85.2),(59.7,85.5)
+        (50.2, 18.3),
+        (46.2, 27.9),
+        (55.1, 28.7),
+        (41.5, 38.1),
+        (50.5, 38.5),
+        (59.1, 38.6),
+        (37.7, 49.8),
+        (46.5, 50.3),
+        (55.2, 50.5),
+        (63.8, 50.7),
+        (35.9, 60.4),
+        (45.0, 61.0),
+        (55.3, 61.1),
+        (64.5, 61.6),
+        (32.3, 72.5),
+        (42.7, 73.2),
+        (56.0, 73.6),
+        (66.0, 73.3),
+        (45.4, 85.2),
+        (59.7, 85.5),
     ];
-    if count == 20 { return DEFAULT.to_vec(); }
+    if count == 20 {
+        return DEFAULT.to_vec();
+    }
     let row_capacity = [1usize, 2, 3, 4, 5, 6, 7, 7];
     let row_y = [17.5, 27.0, 36.5, 46.0, 55.5, 65.0, 74.5, 84.0];
     let mut remaining = count.min(35);
     let mut points = Vec::with_capacity(remaining);
     for (row, capacity) in row_capacity.iter().enumerate() {
-        if remaining == 0 { break; }
+        if remaining == 0 {
+            break;
+        }
         let columns = remaining.min(*capacity);
-        let half_span = if columns <= 1 { 0.0 } else { 5.0 + row as f64 * 1.9 };
+        let half_span = if columns <= 1 {
+            0.0
+        } else {
+            5.0 + row as f64 * 1.9
+        };
         for column in 0..columns {
             let offset = if columns <= 1 {
                 0.0
@@ -714,12 +948,13 @@ fn ornament_positions(count: usize) -> Vec<(f64, f64)> {
     points
 }
 fn disconnect_events(state: &AppState) {
-    let Some(connection) = state.sse_connection.borrow_mut().take() else { return; };
+    let Some(connection) = state.sse_connection.borrow_mut().take() else {
+        return;
+    };
     for (event_name, handler) in &connection.handlers {
-        let _ = connection.source.remove_event_listener_with_callback(
-            event_name,
-            handler.as_ref().unchecked_ref(),
-        );
+        let _ = connection
+            .source
+            .remove_event_listener_with_callback(event_name, handler.as_ref().unchecked_ref());
     }
     connection.source.close();
 }
@@ -727,7 +962,9 @@ fn disconnect_events(state: &AppState) {
 fn connect_events(state: AppState) {
     // Replacing a connection must release its listeners before the new EventSource is created.
     disconnect_events(&state);
-    let Ok(source) = EventSource::new("/api/events") else { return; };
+    let Ok(source) = EventSource::new("/api/events") else {
+        return;
+    };
     let mut handlers = Vec::with_capacity(3);
     // Event callbacks share application data but must not retain the connection that owns them.
     let callback_state = AppState {
@@ -736,45 +973,59 @@ fn connect_events(state: AppState) {
     };
 
     let greeting_state = callback_state.clone();
-    let greeting_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-        if let Ok(message) = event.dyn_into::<MessageEvent>() {
-            if let Some(raw) = message.data().as_string() {
-                if let Ok(event) = serde_json::from_str::<RealtimeGreeting>(&raw) {
-                    let is_admin = greeting_state.user.lock_ref().as_ref().is_some_and(|user| user.role == "admin");
-                    // The admin's public tree is the legacy campaign; named campaign
-                    // greetings update only their own admin status lists.
-                    if !is_admin || event.campaign_id == "legacy-default" {
-                        let greeting = Greeting {
-                            ornament_number: event.ornament_number,
-                            display_name: event.display_name,
-                            surname: event.surname.unwrap_or_default(),
-                            first_name: event.first_name.unwrap_or_default(),
-                            avatar_url: event.avatar_filename.map(|filename| format!("/avatars/{filename}")),
-                            message: event.message,
-                            like_count: 0,
-                            liked_by_me: false,
-                        };
-                        preload_avatar_images(std::slice::from_ref(&greeting));
-                        let mut all = greeting_state.greetings.lock_mut();
-                        if let Some(old) = all.iter_mut().find(|g| g.ornament_number == greeting.ornament_number) { *old = greeting; }
-                        else { all.push(greeting); }
-                        all.sort_by_key(|item| item.ornament_number);
-                        let submitted_count = all.len();
-                        drop(all);
-                        greeting_state.submitted_count.set(submitted_count);
-                    }
+    let greeting_handler =
+        Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+            if let Ok(message) = event.dyn_into::<MessageEvent>() {
+                if let Some(raw) = message.data().as_string() {
+                    if let Ok(event) = serde_json::from_str::<RealtimeGreeting>(&raw) {
+                        let is_admin = greeting_state
+                            .user
+                            .lock_ref()
+                            .as_ref()
+                            .is_some_and(|user| user.role == "admin");
+                        // The admin's public tree is the legacy campaign; named campaign
+                        // greetings update only their own admin status lists.
+                        if !is_admin || event.campaign_id == "legacy-default" {
+                            let greeting = Greeting {
+                                ornament_number: event.ornament_number,
+                                display_name: event.display_name,
+                                surname: event.surname.unwrap_or_default(),
+                                first_name: event.first_name.unwrap_or_default(),
+                                avatar_url: event
+                                    .avatar_filename
+                                    .map(|filename| format!("/avatars/{filename}")),
+                                message: event.message,
+                                like_count: 0,
+                                liked_by_me: false,
+                            };
+                            preload_avatar_images(std::slice::from_ref(&greeting));
+                            let mut all = greeting_state.greetings.lock_mut();
+                            if let Some(old) = all
+                                .iter_mut()
+                                .find(|g| g.ornament_number == greeting.ornament_number)
+                            {
+                                *old = greeting;
+                            } else {
+                                all.push(greeting);
+                            }
+                            all.sort_by_key(|item| item.ornament_number);
+                            let submitted_count = all.len();
+                            drop(all);
+                            greeting_state.submitted_count.set(submitted_count);
+                        }
 
-                    if is_admin {
-                        let state = greeting_state.clone();
-                        spawn_local(async move {
-                            refresh_admin_participants(state).await;
-                        });
+                        if is_admin {
+                            let state = greeting_state.clone();
+                            spawn_local(async move {
+                                refresh_admin_participants(state).await;
+                            });
+                        }
                     }
                 }
             }
-        }
-    });
-    let _ = source.add_event_listener_with_callback("greeting", greeting_handler.as_ref().unchecked_ref());
+        });
+    let _ = source
+        .add_event_listener_with_callback("greeting", greeting_handler.as_ref().unchecked_ref());
     handlers.push(("greeting", greeting_handler));
 
     let resync_state = callback_state.clone();
@@ -783,12 +1034,18 @@ fn connect_events(state: AppState) {
         spawn_local(async move {
             load_greetings(state.clone()).await;
             load_campaign(state.clone()).await;
-            if state.user.lock_ref().as_ref().is_some_and(|user| user.role == "admin") {
+            if state
+                .user
+                .lock_ref()
+                .as_ref()
+                .is_some_and(|user| user.role == "admin")
+            {
                 refresh_admin_participants(state).await;
             }
         });
     });
-    let _ = source.add_event_listener_with_callback("resync", resync_handler.as_ref().unchecked_ref());
+    let _ =
+        source.add_event_listener_with_callback("resync", resync_handler.as_ref().unchecked_ref());
     handlers.push(("resync", resync_handler));
 
     // EventSource fires "open" both on the initial connection and after reconnects.
@@ -799,7 +1056,12 @@ fn connect_events(state: AppState) {
         spawn_local(async move {
             load_greetings(state.clone()).await;
             load_campaign(state.clone()).await;
-            if state.user.lock_ref().as_ref().is_some_and(|user| user.role == "admin") {
+            if state
+                .user
+                .lock_ref()
+                .as_ref()
+                .is_some_and(|user| user.role == "admin")
+            {
                 refresh_admin_participants(state).await;
             }
         });
@@ -811,24 +1073,45 @@ fn connect_events(state: AppState) {
 }
 
 fn disconnect_presence_events(state: &AppState) {
-    let Some(connection) = state.presence_connection.borrow_mut().take() else { return; };
+    let Some(connection) = state.presence_connection.borrow_mut().take() else {
+        return;
+    };
     connection.socket.set_onmessage(None);
     connection.socket.set_onclose(None);
     let _ = connection.socket.close();
 }
 
 fn apply_presence_update(state: &AppState, value: serde_json::Value) {
-    let kind = value.get("kind").and_then(|v| v.as_str()).unwrap_or_default();
+    let kind = value
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
     if let Some(count) = value.get("online_count").and_then(|v| v.as_u64()) {
-        if kind == "count" || value.get("campaign_id").and_then(|v| v.as_str()) == Some("legacy-default") {
+        if kind == "count"
+            || value.get("campaign_id").and_then(|v| v.as_str()) == Some("legacy-default")
+        {
             state.online_count.set(count as usize);
         }
     }
-    if kind != "presence" { return; }
-    let campaign_id = value.get("campaign_id").and_then(|v| v.as_str()).unwrap_or_default();
-    let number = value.get("ornament_number").and_then(|v| v.as_i64()).unwrap_or_default() as i16;
-    let online = value.get("online").and_then(|v| v.as_bool()).unwrap_or(false);
-    let filling = value.get("filling").and_then(|v| v.as_bool()).unwrap_or(false);
+    if kind != "presence" {
+        return;
+    }
+    let campaign_id = value
+        .get("campaign_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let number = value
+        .get("ornament_number")
+        .and_then(|v| v.as_i64())
+        .unwrap_or_default() as i16;
+    let online = value
+        .get("online")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let filling = value
+        .get("filling")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     if campaign_id == "legacy-default" {
         if let Some(mut items) = state.participants.get_cloned() {
@@ -839,7 +1122,12 @@ fn apply_presence_update(state: &AppState, value: serde_json::Value) {
             state.participants.set(Some(items));
         }
     }
-    if state.selected_campaign.lock_ref().as_ref().is_some_and(|campaign| campaign.id == campaign_id) {
+    if state
+        .selected_campaign
+        .lock_ref()
+        .as_ref()
+        .is_some_and(|campaign| campaign.id == campaign_id)
+    {
         if let Some(mut items) = state.campaign_participants.get_cloned() {
             if let Some(item) = items.iter_mut().find(|item| item.ornament_number == number) {
                 item.online = online;
@@ -848,7 +1136,10 @@ fn apply_presence_update(state: &AppState, value: serde_json::Value) {
             state.campaign_participants.set(Some(items));
         }
     }
-    let online_count = value.get("online_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let online_count = value
+        .get("online_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
     if let Some(mut items) = state.campaigns.get_cloned() {
         if let Some(item) = items.iter_mut().find(|item| item.id == campaign_id) {
             item.online_count = online_count;
@@ -865,12 +1156,20 @@ fn apply_presence_update(state: &AppState, value: serde_json::Value) {
 
 fn connect_presence_events(state: AppState) {
     disconnect_presence_events(&state);
-    let Some(window) = web_sys::window() else { return; };
-    let Ok(protocol) = window.location().protocol() else { return; };
-    let Ok(host) = window.location().host() else { return; };
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Ok(protocol) = window.location().protocol() else {
+        return;
+    };
+    let Ok(host) = window.location().host() else {
+        return;
+    };
     let scheme = if protocol == "https:" { "wss:" } else { "ws:" };
     let url = format!("{scheme}//{host}/api/presence");
-    let Ok(socket) = WebSocket::new(&url) else { return; };
+    let Ok(socket) = WebSocket::new(&url) else {
+        return;
+    };
 
     let message_state = state.clone();
     let message_handler = Closure::<dyn FnMut(MessageEvent)>::new(move |event: MessageEvent| {
@@ -887,24 +1186,34 @@ fn connect_presence_events(state: AppState) {
         let retry_state = close_state.clone();
         let callback = Closure::once_into_js(move || connect_presence_events(retry_state));
         if let Some(window) = web_sys::window() {
-            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), 2500);
+            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                callback.unchecked_ref(),
+                2500,
+            );
         }
     });
     socket.set_onclose(Some(close_handler.as_ref().unchecked_ref()));
     *state.presence_connection.borrow_mut() = Some(PresenceConnection {
-        socket, _message_handler: message_handler, _close_handler: close_handler
+        socket,
+        _message_handler: message_handler,
+        _close_handler: close_handler,
     });
 }
 
 fn send_presence_activity(state: &AppState) {
     let now = js_sys::Date::now();
     let mut last_sent = state.presence_activity_at.borrow_mut();
-    if now - *last_sent < 2000.0 { return; }
+    if now - *last_sent < 2000.0 {
+        return;
+    }
     if let Some(connection) = state.presence_connection.borrow().as_ref() {
-        if connection.socket.ready_state() == WebSocket::OPEN {
-            if connection.socket.send_with_str(r#"{"type":"activity"}"#).is_ok() {
-                *last_sent = now;
-            }
+        if connection.socket.ready_state() == WebSocket::OPEN
+            && connection
+                .socket
+                .send_with_str(r#"{"type":"activity"}"#)
+                .is_ok()
+        {
+            *last_sent = now;
         }
     }
 }
@@ -913,17 +1222,31 @@ fn draft_storage_key(subject_id: &str) -> String {
     format!("congratis:draft:{subject_id}")
 }
 fn restore_draft(state: &AppState, subject_id: &str) {
-    let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten()) else { return; };
-    let Ok(Some(raw)) = storage.get_item(&draft_storage_key(subject_id)) else { return; };
-    let Ok(draft) = serde_json::from_str::<serde_json::Value>(&raw) else { return; };
-    if let Some(name) = draft.get("surname").and_then(serde_json::Value::as_str) { state.name.set(name.to_owned()); }
-    if let Some(name) = draft.get("first_name").and_then(serde_json::Value::as_str) { state.first_name.set(name.to_owned()); }
+    let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+    else {
+        return;
+    };
+    let Ok(Some(raw)) = storage.get_item(&draft_storage_key(subject_id)) else {
+        return;
+    };
+    let Ok(draft) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return;
+    };
+    if let Some(name) = draft.get("surname").and_then(serde_json::Value::as_str) {
+        state.name.set(name.to_owned());
+    }
+    if let Some(name) = draft.get("first_name").and_then(serde_json::Value::as_str) {
+        state.first_name.set(name.to_owned());
+    }
     if let Some(message) = draft.get("message").and_then(serde_json::Value::as_str) {
         state.message.set(message.to_owned());
     }
 }
 fn persist_draft(state: &AppState, subject_id: &str) {
-    let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten()) else { return; };
+    let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+    else {
+        return;
+    };
     let draft = serde_json::json!({
         "surname": state.name.get_cloned(),
         "first_name": state.first_name.get_cloned(),
@@ -934,7 +1257,9 @@ fn persist_draft(state: &AppState, subject_id: &str) {
     }
 }
 fn clear_draft(subject_id: &str) {
-    if let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten()) {
+    if let Some(storage) =
+        web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+    {
         let _ = storage.remove_item(&draft_storage_key(subject_id));
     }
 }
@@ -949,7 +1274,7 @@ fn field(
     if is_textarea {
         html!("label", { .text(label).child(html!("textarea", {
             .attr("rows", "4").attr("maxlength", "500").attr("placeholder", placeholder)
-            .property("value", &value.get_cloned())
+            .prop("value", &value.get_cloned())
             .event(clone!(value, draft_state, draft_subject_id => move |event: events::Input| {
                 if let Some(target) = event.target() {
                     if let Ok(input) = target.dyn_into::<HtmlTextAreaElement>() {
@@ -965,7 +1290,7 @@ fn field(
     } else {
         html!("label", { .text(label).child(html!("input", {
             .attr("type", "text").attr("maxlength", "80").attr("placeholder", placeholder)
-            .property("value", &value.get_cloned())
+            .prop("value", &value.get_cloned())
             .event(clone!(value, draft_state, draft_subject_id => move |event: events::Input| {
                 if let Some(target) = event.target() {
                     if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
@@ -998,7 +1323,11 @@ fn ipsen_brand() -> Dom {
 
 fn participant_tree(state: AppState, user: User) -> Dom {
     let is_mine = user.role == "participant";
-    let pill_label = if is_mine { format!("Твой шар №{}", user.subject_id) } else { "Режим администратора".to_string() };
+    let pill_label = if is_mine {
+        format!("Твой шар №{}", user.subject_id)
+    } else {
+        "Режим администратора".to_string()
+    };
     html!("main", {
         .class("shell")
         .class_signal("authenticated-shell", futures_signals::signal::always(is_mine))
@@ -1140,7 +1469,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                     .attr("aria-labelledby", "greeting-title")
                     .child(html!("section", {
                         .class("dialog")
-                        
+
                         .child(html!("button", {
                             .class("close")
                             .attr("type", "button")
@@ -1403,7 +1732,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                                     .attr("max", "1")
                                     .attr("step", "0.05")
                                     .attr("aria-label", "Громкость музыки")
-                                    .property("value", &state.music_volume.get().to_string())
+                                    .prop("value", &state.music_volume.get().to_string())
                                     .event(clone!(state => move |event: events::Input| {
                                         if let Some(target) = event.target() {
                                             if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
@@ -1443,14 +1772,23 @@ fn avatar_dom(surname: &str, first_name: &str, avatar_url: Option<String>) -> Do
     if let Some(url) = avatar_url {
         html!("img", { .class("participant-avatar").attr("src", &url).attr("alt", &format!("{surname} {first_name}")).attr("loading", "eager").attr("decoding", "async") })
     } else {
-        let initials = format!("{}{}", surname.chars().next().unwrap_or('?'), first_name.chars().next().unwrap_or('?')).to_uppercase();
+        let initials = format!(
+            "{}{}",
+            surname.chars().next().unwrap_or('?'),
+            first_name.chars().next().unwrap_or('?')
+        )
+        .to_uppercase();
         html!("div", { .class("participant-avatar").class("avatar-initials").attr("aria-label", &format!("{surname} {first_name}")).text(&initials) })
     }
 }
 fn show_form(state: AppState) {
     let form_state = state.clone();
-    let subject_id = state.user.lock_ref().as_ref()
-        .map(|user| user.subject_id.clone()).unwrap_or_default();
+    let subject_id = state
+        .user
+        .lock_ref()
+        .as_ref()
+        .map(|user| user.subject_id.clone())
+        .unwrap_or_default();
     let dialog = html!("dialog", {
         .class("overlay")
         .attr("id", "submission-dialog")
@@ -1463,7 +1801,7 @@ fn show_form(state: AppState) {
         }))
         .child(html!("section", {
             .class("dialog")
-            
+
             .child(html!("button", {
                 .class("close")
                 .attr("type", "button")
@@ -1580,7 +1918,7 @@ fn create_named_campaign_panel(state: AppState) -> Dom {
             .child(html!("input", {
                 .attr("type", "text").attr("maxlength", "100")
                 .attr("aria-label", "Название кампании")
-                .property("value", &state.campaign_name.get_cloned())
+                .prop("value", &state.campaign_name.get_cloned())
                 .event(clone!(state => move |event: events::Input| {
                     if let Some(target) = event.target() {
                         if let Ok(input) = target.dyn_into::<HtmlInputElement>() { state.campaign_name.set(input.value()); }
@@ -1593,7 +1931,7 @@ fn create_named_campaign_panel(state: AppState) -> Dom {
             .child(html!("input", {
                 .attr("type", "number").attr("min", "1").attr("max", "35").attr("step", "1")
                 .attr("aria-label", "Размер новой кампании")
-                .property("value", &state.campaign_size.get_cloned())
+                .prop("value", &state.campaign_size.get_cloned())
                 .event(clone!(state => move |event: events::Input| {
                     if let Some(target) = event.target() {
                         if let Ok(input) = target.dyn_into::<HtmlInputElement>() { state.campaign_size.set(input.value()); }
@@ -1717,7 +2055,11 @@ fn campaigns_panel(state: AppState) -> Dom {
     })
 }
 
-fn campaign_participants_grid(state: AppState, campaign_id: String, participants: Vec<Participant>) -> Dom {
+fn campaign_participants_grid(
+    state: AppState,
+    campaign_id: String,
+    participants: Vec<Participant>,
+) -> Dom {
     html!("div", {
         .class("admin-grid")
         .children(participants.into_iter().map(clone!(state, campaign_id => move |participant| {
@@ -1820,7 +2162,7 @@ fn campaign_participants_panel(state: AppState) -> Dom {
                             .child(html!("input", {
                                 .attr("type", "number").attr("min", "1").attr("max", "35").attr("step", "1")
                                 .attr("aria-label", "Количество новых приглашений")
-                                .property("value", &state.campaign_invite_count.get_cloned())
+                                .prop("value", &state.campaign_invite_count.get_cloned())
                                 .event(clone!(state => move |event: events::Input| {
                                     if let Some(target) = event.target() {
                                         if let Ok(input) = target.dyn_into::<HtmlInputElement>() { state.campaign_invite_count.set(input.value()); }
@@ -2024,7 +2366,7 @@ fn admin_screen(state: AppState) -> Dom {
                                 .attr("type", "url")
                                 .attr("readonly", "")
                                 .attr("aria-label", &format!("Ссылка для шара №{}", invite.ornament_number))
-                                .property("value", &invite.url)
+                                .prop("value", &invite.url)
                                 .event(|event: events::Click| {
                                     if let Some(target) = event.target() {
                                         if let Ok(input) = target.dyn_into::<HtmlInputElement>() { input.select(); }
@@ -2049,7 +2391,7 @@ fn admin_screen(state: AppState) -> Dom {
                         .attr("type", "url")
                         .attr("readonly", "")
                         .attr("aria-label", "Одноразовая ссылка-приглашение")
-                        .property("value", &url)
+                        .prop("value", &url)
                         .event(|event: events::Click| {
                             if let Some(target) = event.target() {
                                 if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
@@ -2183,7 +2525,7 @@ fn reset_session_state(state: &AppState) {
     disconnect_events(state);
     disconnect_presence_events(state);
     if let Some(audio) = state.audio.get_cloned() {
-        audio.pause();
+        let _ = audio.pause();
     }
     state.audio.set(None);
 
@@ -2272,7 +2614,10 @@ fn begin_invitation(state: AppState, token: String) {
             }
             Err(error) => {
                 trace(&format!("exchange error: {error}"));
-                set_note(&state, format!("Не удалось активировать приглашение: {error}"));
+                set_note(
+                    &state,
+                    format!("Не удалось активировать приглашение: {error}"),
+                );
                 // Keep exchanging=true while restoring a pre-existing cookie session,
                 // so the landing page is not rendered between the failed exchange and recovery.
                 let _ = restore_session(&state, true).await;
@@ -2290,7 +2635,7 @@ fn watch_routes(state: AppState) {
         let url = routing::url().signal_cloned(),
         let user = state.user.signal_cloned(),
         let ready = state.auth_ready.signal() => {
-            (Route::from_url(&url), user.clone(), *ready)
+            (Route::from_url(url), user.clone(), *ready)
         }
     };
 
@@ -2334,7 +2679,7 @@ fn render(state: AppState) -> Dom {
             let show_ready = *ready && !*exchanging;
             Some(render_route(
                 render_state.clone(),
-                Route::from_url(&url),
+                Route::from_url(url),
                 user.clone(),
                 show_ready,
             ))
