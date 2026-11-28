@@ -496,7 +496,6 @@ async fn load_campaigns(state: AppState) {
     }
 }
 async fn load_campaign_participants(state: AppState, campaign_id: &str) {
-    state.campaign_participants.set(None);
     let path = format!("/api/admin/campaigns/{campaign_id}/participants");
     match get_json::<Vec<Participant>>(&path).await {
         Ok(mut items) => {
@@ -513,6 +512,15 @@ async fn load_campaign_participants(state: AppState, campaign_id: &str) {
         Err(error) => set_note(&state, format!("Не удалось загрузить участников кампании: {error}")),
     }
 }
+
+async fn refresh_admin_participants(state: AppState) {
+    load_participants(state.clone()).await;
+    load_campaigns(state.clone()).await;
+    if let Some(campaign_id) = state.selected_campaign.lock_ref().as_ref().map(|campaign| campaign.id.clone()) {
+        load_campaign_participants(state.clone(), &campaign_id).await;
+    }
+}
+
 async fn load_campaign(state: AppState) {
     match get_json::<CampaignSummary>("/api/campaign").await {
         Ok(summary) => {
@@ -594,11 +602,7 @@ fn connect_events(state: AppState) {
                         let state = greeting_state.clone();
                         let campaign_id = event.campaign_id;
                         spawn_local(async move {
-                            load_participants(state.clone()).await;
-                            load_campaigns(state.clone()).await;
-                            if state.selected_campaign.lock_ref().as_ref().is_some_and(|campaign| campaign.id == campaign_id) {
-                                load_campaign_participants(state.clone(), &campaign_id).await;
-                            }
+                            refresh_admin_participants(state).await;
                         });
                     }
                 }
@@ -613,7 +617,10 @@ fn connect_events(state: AppState) {
         let state = resync_state.clone();
         spawn_local(async move {
             load_greetings(state.clone()).await;
-            load_campaign(state).await;
+            load_campaign(state.clone()).await;
+            if state.user.lock_ref().as_ref().is_some_and(|user| user.role == "admin") {
+                refresh_admin_participants(state).await;
+            }
         });
     });
     let _ = source.add_event_listener_with_callback("resync", resync_handler.as_ref().unchecked_ref());
