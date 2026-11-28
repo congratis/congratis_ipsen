@@ -60,6 +60,7 @@ test("successful invite exchange opens the tree and clears the token from the ad
   await page.goto("/#invite=valid-invite-token");
 
   await expect(page.locator(".tree-frame")).toBeVisible();
+  await expect(page.getByText("Зимняя кампания", { exact: true })).toBeVisible();
   await expect(page.getByText("Твой шар №1")).toBeVisible();
   await expect(page.locator(".ornament")).toHaveCount(20);
   await expect.poll(() => page.evaluate(() => location.hash)).toBe("");
@@ -197,7 +198,7 @@ test("submission dialog traps keyboard focus and restores it without discarding 
 
   await ornament.click();
   dialog = page.getByRole("dialog", { name: "Добавь своё пожелание" });
-  await expect(dialog.getByRole("textbox", { name: "Как тебя зовут?", exact: true })).toHaveValue("Иванов");
+  await expect(dialog.getByRole("textbox", { name: "Фамилия", exact: true })).toHaveValue("Иванов");
   await dialog.getByRole("button", { name: "Закрыть форму поздравления" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(ornament).toBeFocused();
@@ -225,7 +226,8 @@ test("participant can submit a greeting only once even after a rapid double clic
   await page.getByRole("button", { name: "Шар номер 1", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Добавь своё пожелание" })).toBeVisible();
 
-  await page.getByRole("textbox", { name: "Как тебя зовут?", exact: true }).fill("Алексей");
+  await page.getByRole("textbox", { name: "Фамилия", exact: true }).fill("Смирнов");
+  await page.getByRole("textbox", { name: "Имя", exact: true }).fill("Алексей");
   await page.getByRole("textbox", { name: "Твоё поздравление", exact: true }).fill("Счастья и добра в новом году!");
   const submit = page.getByRole("button", { name: "Опубликовать поздравление" });
   await submit.click();
