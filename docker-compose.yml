@@ -39,6 +39,7 @@ services:
       RETHINKDB_PORT: "28015"
       RETHINKDB_USER: admin
       RETHINKDB_PASSWORD: ${RETHINKDB_PASSWORD:?Set RETHINKDB_PASSWORD in .env}
+      AVATAR_DIR: /data/avatars
     depends_on:
       rethinkdb:
         condition: service_healthy
@@ -49,6 +50,8 @@ services:
     cap_drop:
       - ALL
     read_only: true
+    volumes:
+      - /opt/congratis/data/avatars:/data/avatars
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
     networks:
