@@ -1116,7 +1116,7 @@ impl Store {
     pub async fn list_participants(&self) -> Result<Vec<ParticipantSummary>> {
         self.list_campaign_participants(LEGACY_CAMPAIGN_ID).await
     }
-    pub async fn claim_greeting(&self, campaign_id: &str, number: i16, display_name: &str, message: &str) -> Result<bool> {
+    pub async fn claim_greeting(&self, campaign_id: &str, number: i16, surname: &str, first_name: &str, avatar_filename: Option<&str>, message: &str) -> Result<bool> {
         if self.get_campaign(campaign_id).await?.is_none_or(|campaign| campaign.status != "active") {
             return Ok(false);
         }
