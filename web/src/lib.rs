@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::{closure::Closure, JsCast};
 use wasm_bindgen_futures::{spawn_local, JsFuture};
-use web_sys::{Element, EventSource, HtmlAudioElement, HtmlElement, HtmlInputElement, HtmlTextAreaElement, MessageEvent, NodeList};
+use web_sys::{Element, EventSource, HtmlAudioElement, HtmlElement, HtmlInputElement, HtmlTextAreaElement, MessageEvent, NodeList, WebSocket};
 
 #[derive(Clone, Deserialize, Serialize)]
 struct User { subject_id: String, role: String, csrf_token: String }
@@ -52,6 +52,10 @@ struct Participant {
     activated: bool,
     submitted: bool,
     revoked: bool,
+    #[serde(default)]
+    online: bool,
+    #[serde(default)]
+    filling: bool,
     display_name: Option<String>,
     created_at: i64,
     used_at: Option<i64>,
@@ -59,7 +63,7 @@ struct Participant {
 #[derive(Clone, Deserialize)]
 struct CampaignSummary { participant_count: usize, submitted_count: usize }
 #[derive(Clone, Deserialize)]
-struct CampaignAdminItem { id: String, name: String, created_at: i64, participant_count: usize, submitted_count: usize }
+struct CampaignAdminItem { id: String, name: String, created_at: i64, participant_count: usize, submitted_count: usize, #[serde(default)] online_count: usize }
 #[derive(Clone, Deserialize)]
 struct CreateCampaignResponse { campaign: CampaignAdminItem, invitations: Vec<CreatedInvitation> }
 #[derive(Clone, Deserialize)]
@@ -70,6 +74,12 @@ struct InvitationLink { ornament_number: i16, url: String }
 struct EventSourceConnection {
     source: EventSource,
     handlers: Vec<(&'static str, Closure<dyn FnMut(web_sys::Event)>)>,
+}
+
+struct PresenceConnection {
+    socket: WebSocket,
+    _message_handler: Closure<dyn FnMut(MessageEvent)>,
+    _close_handler: Closure<dyn FnMut(web_sys::Event)>,
 }
 
 #[derive(Clone)]
@@ -95,6 +105,8 @@ struct AppState {
     music_volume: Mutable<f64>,
     audio: Mutable<Option<HtmlAudioElement>>,
     sse_connection: Rc<RefCell<Option<EventSourceConnection>>>,
+    presence_connection: Rc<RefCell<Option<PresenceConnection>>>,
+    online_count: Mutable<usize>,
     name: Mutable<String>,
     message: Mutable<String>,
     admin_name: Mutable<String>,
@@ -110,7 +122,7 @@ struct AppState {
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
+        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), presence_connection: Rc::new(RefCell::new(None)), online_count: Mutable::new(0), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -572,6 +584,89 @@ fn connect_events(state: AppState) {
 
     *state.sse_connection.borrow_mut() = Some(EventSourceConnection { source, handlers });
 }
+
+fn disconnect_presence_events(state: &AppState) {
+    let Some(connection) = state.presence_connection.borrow_mut().take() else { return; };
+    connection.socket.set_onmessage(None);
+    connection.socket.set_onclose(None);
+    let _ = connection.socket.close();
+}
+
+fn apply_presence_update(state: &AppState, value: serde_json::Value) {
+    let kind = value.get("kind").and_then(|v| v.as_str()).unwrap_or_default();
+    if let Some(count) = value.get("online_count").and_then(|v| v.as_u64()) {
+        state.online_count.set(count as usize);
+    }
+    if kind != "presence" { return; }
+    let campaign_id = value.get("campaign_id").and_then(|v| v.as_str()).unwrap_or_default();
+    let number = value.get("ornament_number").and_then(|v| v.as_i64()).unwrap_or_default() as i16;
+    let online = value.get("online").and_then(|v| v.as_bool()).unwrap_or(false);
+    let filling = value.get("filling").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    if let Some(mut items) = state.participants.get_cloned() {
+        if let Some(item) = items.iter_mut().find(|item| item.ornament_number == number) {
+            item.online = online;
+            item.filling = filling;
+        }
+        state.participants.set(Some(items));
+    }
+    if let Some(mut items) = state.campaign_participants.get_cloned() {
+        if let Some(item) = items.iter_mut().find(|item| item.ornament_number == number) {
+            item.online = online;
+            item.filling = filling;
+        }
+        state.campaign_participants.set(Some(items));
+    }
+    if let Some(mut items) = state.campaigns.get_cloned() {
+        if let Some(item) = items.iter_mut().find(|item| item.id == campaign_id) {
+            item.online_count = value.get("online_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        }
+        state.campaigns.set(Some(items));
+    }
+}
+
+fn connect_presence_events(state: AppState) {
+    disconnect_presence_events(&state);
+    let Some(window) = web_sys::window() else { return; };
+    let Ok(protocol) = window.location().protocol() else { return; };
+    let Ok(host) = window.location().host() else { return; };
+    let scheme = if protocol == "https:" { "wss:" } else { "ws:" };
+    let url = format!("{scheme}//{host}/api/presence");
+    let Ok(socket) = WebSocket::new(&url) else { return; };
+
+    let message_state = state.clone();
+    let message_handler = Closure::<dyn FnMut(MessageEvent)>::new(move |event: MessageEvent| {
+        if let Some(raw) = event.data().as_string() {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
+                apply_presence_update(&message_state, value);
+            }
+        }
+    });
+    socket.set_onmessage(Some(message_handler.as_ref().unchecked_ref()));
+
+    let close_state = state.clone();
+    let close_handler = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+        if close_state.user.lock_ref().is_none() { return; }
+        let retry_state = close_state.clone();
+        let callback = Closure::once_into_js(move || connect_presence_events(retry_state));
+        if let Some(window) = web_sys::window() {
+            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), 2500);
+        }
+    });
+    socket.set_onclose(Some(close_handler.as_ref().unchecked_ref()));
+    *state.presence_connection.borrow_mut() = Some(PresenceConnection {
+        socket, _message_handler: message_handler, _close_handler: close_handler
+    });
+}
+
+fn send_presence_activity(state: &AppState) {
+    if let Some(connection) = state.presence_connection.borrow().as_ref() {
+        if connection.socket.ready_state() == WebSocket::OPEN {
+            let _ = connection.socket.send_with_str(r#"{"type":"activity"}"#);
+        }
+    }
+}
+
 fn draft_storage_key(subject_id: &str) -> String {
     format!("congratis:draft:{subject_id}")
 }
@@ -617,6 +712,7 @@ fn field(
                 if let Some(target) = event.target() {
                     if let Ok(input) = target.dyn_into::<HtmlTextAreaElement>() {
                         value.set(input.value());
+                        if let Some(state) = &draft_state { send_presence_activity(state); }
                         if let (Some(state), Some(subject_id)) = (&draft_state, &draft_subject_id) {
                             persist_draft(state, subject_id);
                         }
@@ -670,9 +766,14 @@ fn participant_tree(state: AppState, user: User) -> Dom {
         .child(html!("p", {.class("lead").text("Выбери шар — внутри тебя ждёт новогоднее поздравление. Все пожелания команды собраны на одной ёлке.")}))
         .child(html!("div", {
             .class("toolbar")
-            .child(html!("span", {
+             .child(html!("span", {
                 .class("pill")
                 .text(&pill_label)
+            }))
+            .child(html!("span", {
+                .class("pill online-count")
+                .attr("aria-label", "Участников онлайн")
+                .text_signal(state.online_count.signal().map(|count| format!("● {count} онлайн")))
             }))
             .child_signal(futures_signals::signal::always(!is_mine).map(|visible| {
                 visible.then(|| html!("button", {
@@ -1091,9 +1192,6 @@ fn show_form(state: AppState) {
                                 current.name.set(String::new());
                                 current.message.set(String::new());
                                 load_greetings(current.clone()).await;
-                                if let Some(window) = web_sys::window() {
-                                    let _ = window.location().reload();
-                                }
                             }
                             Err(error) => {
                                 current.submitting.set(false);
@@ -1192,7 +1290,7 @@ fn campaign_card(state: AppState, campaign: CampaignAdminItem) -> Dom {
     html!("article", {
         .class("admin-item")
         .child(html!("strong", {.text(&campaign.name)}))
-        .child(html!("small", {.text(&format!("Участников: {} · Поздравлений: {}", campaign.participant_count, campaign.submitted_count))}))
+        .child(html!("small", {.text(&format!("Участников: {} · Онлайн: {} · Поздравлений: {}", campaign.participant_count, campaign.online_count, campaign.submitted_count))}))
         .child(html!("small", {.text(if protected { "Системная кампания — удаление запрещено" } else { "Кампания доступна для управления" })}))
         .child(if protected {
             html!("span", {.class("muted").text("Системная кампания — защищена")})
@@ -1269,6 +1367,10 @@ fn campaign_participants_grid(state: AppState, campaign_id: String, participants
             let display_name = participant.display_name.clone().unwrap_or_default();
             let status = if participant.submitted {
                 "Поздравление опубликовано"
+            } else if participant.filling {
+                "Заполняет приглашение сейчас"
+            } else if participant.online {
+                "Сейчас онлайн"
             } else if participant.activated {
                 "Приглашение активировано"
             } else if participant.revoked {
@@ -1715,6 +1817,7 @@ fn landing_screen(state: AppState) -> Dom {
 
 fn reset_session_state(state: &AppState) {
     disconnect_events(state);
+    disconnect_presence_events(state);
     if let Some(audio) = state.audio.get_cloned() {
         audio.pause();
     }
@@ -1737,6 +1840,7 @@ fn reset_session_state(state: &AppState) {
     state.campaign_name.set(String::new());
     state.campaign_count.set(0);
     state.submitted_count.set(0);
+    state.online_count.set(0);
     state.selected.set(None);
     state.presentation.set(false);
     state.presentation_paused.set(false);
@@ -1765,8 +1869,9 @@ async fn load_session_data(state: AppState, user: &User) {
         load_campaigns(state.clone()).await;
         trace("data: participants and campaigns loaded");
     }
-    connect_events(state);
-    trace("data: SSE connected");
+    connect_events(state.clone());
+    connect_presence_events(state);
+    trace("data: SSE and presence WebSockets connected");
 }
 
 fn begin_invitation(state: AppState, token: String) {
