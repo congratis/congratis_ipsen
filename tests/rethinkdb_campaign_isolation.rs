@@ -56,8 +56,8 @@ async fn campaign_data_and_deletion_are_isolated_and_retryable() {
         store.activate_invitation(&token_b).await.unwrap(),
         Some((1, campaign_b.clone()))
     );
-    assert!(store.claim_greeting(&campaign_a, 1, "Alice", "Greeting A").await.unwrap());
-    assert!(store.claim_greeting(&campaign_b, 1, "Bob", "Greeting B").await.unwrap());
+    assert!(store.claim_greeting(&campaign_a, 1, "Smith", "Alice", None, "Greeting A").await.unwrap());
+    assert!(store.claim_greeting(&campaign_b, 1, "Jones", "Bob", None, "Greeting B").await.unwrap());
 
     let greetings_a = store.list_campaign_greetings(&campaign_a).await.unwrap();
     let greetings_b = store.list_campaign_greetings(&campaign_b).await.unwrap();
@@ -92,7 +92,7 @@ async fn campaign_data_and_deletion_are_isolated_and_retryable() {
     assert!(store.get_auth_session(&session_b).await.unwrap().is_some());
     assert!(store.get_auth_session(&admin_session).await.unwrap().is_some());
 
-    assert!(!store.claim_greeting(&campaign_a, 1, "Mallory", "Must not be stored").await.unwrap());
+    assert!(!store.claim_greeting(&campaign_a, 1, "Evil", "Mallory", None, "Must not be stored").await.unwrap());
     assert_eq!(store.activate_invitation(&token_a).await.unwrap(), None);
 
     let legacy = match store.get_campaign("legacy-default").await.unwrap() {
