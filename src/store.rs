@@ -526,7 +526,10 @@ impl Store {
             let query = r
                 .db(self.database.as_str())
                 .table(TABLE)
-                .get_all(r.args(("__congratis_campaign_index_probe__", campaign_index_options())))
+                .get_all(r.args((
+                    "__congratis_campaign_index_probe__",
+                    campaign_index_options(),
+                )))
                 .limit(1);
             let mut stream = query.run::<_, Ornament>(&self.session);
             match stream.try_next().await {
