@@ -596,7 +596,9 @@ fn disconnect_presence_events(state: &AppState) {
 fn apply_presence_update(state: &AppState, value: serde_json::Value) {
     let kind = value.get("kind").and_then(|v| v.as_str()).unwrap_or_default();
     if let Some(count) = value.get("online_count").and_then(|v| v.as_u64()) {
-        state.online_count.set(count as usize);
+        if kind == "count" || value.get("campaign_id").and_then(|v| v.as_str()) == Some("legacy-default") {
+            state.online_count.set(count as usize);
+        }
     }
     if kind != "presence" { return; }
     let campaign_id = value.get("campaign_id").and_then(|v| v.as_str()).unwrap_or_default();
@@ -604,19 +606,23 @@ fn apply_presence_update(state: &AppState, value: serde_json::Value) {
     let online = value.get("online").and_then(|v| v.as_bool()).unwrap_or(false);
     let filling = value.get("filling").and_then(|v| v.as_bool()).unwrap_or(false);
 
-    if let Some(mut items) = state.participants.get_cloned() {
-        if let Some(item) = items.iter_mut().find(|item| item.ornament_number == number) {
-            item.online = online;
-            item.filling = filling;
+    if campaign_id == "legacy-default" {
+        if let Some(mut items) = state.participants.get_cloned() {
+            if let Some(item) = items.iter_mut().find(|item| item.ornament_number == number) {
+                item.online = online;
+                item.filling = filling;
+            }
+            state.participants.set(Some(items));
         }
-        state.participants.set(Some(items));
     }
-    if let Some(mut items) = state.campaign_participants.get_cloned() {
-        if let Some(item) = items.iter_mut().find(|item| item.ornament_number == number) {
-            item.online = online;
-            item.filling = filling;
+    if state.selected_campaign.lock_ref().as_ref().is_some_and(|campaign| campaign.id == campaign_id) {
+        if let Some(mut items) = state.campaign_participants.get_cloned() {
+            if let Some(item) = items.iter_mut().find(|item| item.ornament_number == number) {
+                item.online = online;
+                item.filling = filling;
+            }
+            state.campaign_participants.set(Some(items));
         }
-        state.campaign_participants.set(Some(items));
     }
     if let Some(mut items) = state.campaigns.get_cloned() {
         if let Some(item) = items.iter_mut().find(|item| item.id == campaign_id) {
@@ -1074,7 +1080,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                                 .class("icon-control")
                                 .attr("type", "button")
                                 .attr("aria-label", "Включить или выключить звук")
-                                 .text_signal(state.music_muted.signal().map(|muted| if muted { "◖" } else { "◗" }))
+                                 .text_signal(state.music_muted.signal().map(|muted| if muted { "◖×" } else { "◖))" }))
                                 .event(clone!(state => move |_: events::Click| toggle_music_mute(state.clone())))
                             }))
                             .child(html!("label", {
