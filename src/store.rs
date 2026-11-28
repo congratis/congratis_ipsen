@@ -1247,6 +1247,10 @@ impl Store {
         let mut stream = r
             .db(self.database.as_str())
             .table(TABLE)
+            // The shared feed serves participants and admins across campaigns,
+            // so keep campaign scoping at the authenticated SSE subscriber. The
+            // database only streams submitted greetings, not unused invitations.
+            .filter(reql::func!(|ornament| ornament.get_field("used").eq(true)))
             .changes(options)
             .run::<_, Value>(session);
 
