@@ -477,7 +477,10 @@ async fn load_campaign_participants(state: AppState, campaign_id: &str) {
     state.campaign_participants.set(None);
     let path = format!("/api/admin/campaigns/{campaign_id}/participants");
     match get_json::<Vec<Participant>>(&path).await {
-        Ok(items) => state.campaign_participants.set(Some(items)),
+        Ok(items) => {
+            state.campaign_participants.set(Some(items));
+            connect_presence_events(state.clone());
+        },
         Err(error) => set_note(&state, format!("Не удалось загрузить участников кампании: {error}")),
     }
 }
@@ -1207,6 +1210,8 @@ fn show_form(state: AppState) {
                                 current.name.set(String::new());
                                 current.message.set(String::new());
                                 load_greetings(current.clone()).await;
+                                current.submitting.set(false);
+                                close_submission_dialog(&current);
                             }
                             Err(error) => {
                                 current.submitting.set(false);
