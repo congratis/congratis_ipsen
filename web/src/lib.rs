@@ -585,20 +585,25 @@ fn connect_events(state: AppState) {
         if let Ok(message) = event.dyn_into::<MessageEvent>() {
             if let Some(raw) = message.data().as_string() {
                 if let Ok(event) = serde_json::from_str::<RealtimeGreeting>(&raw) {
-                    let greeting = Greeting {
-                        ornament_number: event.ornament_number,
-                        display_name: event.display_name,
-                        message: event.message,
-                    };
-                    let mut all = greeting_state.greetings.lock_mut();
-                    if let Some(old) = all.iter_mut().find(|g| g.ornament_number == greeting.ornament_number) { *old = greeting; }
-                    else { all.push(greeting); }
-                    all.sort_by_key(|item| item.ornament_number);
-                    let submitted_count = all.len();
-                    drop(all);
-                    greeting_state.submitted_count.set(submitted_count);
+                    let is_admin = greeting_state.user.lock_ref().as_ref().is_some_and(|user| user.role == "admin");
+                    // The admin's public tree is the legacy campaign; named campaign
+                    // greetings update only their own admin status lists.
+                    if !is_admin || event.campaign_id == "legacy-default" {
+                        let greeting = Greeting {
+                            ornament_number: event.ornament_number,
+                            display_name: event.display_name,
+                            message: event.message,
+                        };
+                        let mut all = greeting_state.greetings.lock_mut();
+                        if let Some(old) = all.iter_mut().find(|g| g.ornament_number == greeting.ornament_number) { *old = greeting; }
+                        else { all.push(greeting); }
+                        all.sort_by_key(|item| item.ornament_number);
+                        let submitted_count = all.len();
+                        drop(all);
+                        greeting_state.submitted_count.set(submitted_count);
+                    }
 
-                    if greeting_state.user.lock_ref().as_ref().is_some_and(|user| user.role == "admin") {
+                    if is_admin {
                         let state = greeting_state.clone();
                         spawn_local(async move {
                             refresh_admin_participants(state).await;
