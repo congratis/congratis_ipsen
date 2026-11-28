@@ -761,9 +761,8 @@ fn restore_draft(state: &AppState, subject_id: &str) {
     let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten()) else { return; };
     let Ok(Some(raw)) = storage.get_item(&draft_storage_key(subject_id)) else { return; };
     let Ok(draft) = serde_json::from_str::<serde_json::Value>(&raw) else { return; };
-    if let Some(name) = draft.get("display_name").and_then(serde_json::Value::as_str) {
-        state.name.set(name.to_owned());
-    }
+    if let Some(name) = draft.get("surname").and_then(serde_json::Value::as_str) { state.name.set(name.to_owned()); }
+    if let Some(name) = draft.get("first_name").and_then(serde_json::Value::as_str) { state.first_name.set(name.to_owned()); }
     if let Some(message) = draft.get("message").and_then(serde_json::Value::as_str) {
         state.message.set(message.to_owned());
     }
@@ -771,7 +770,8 @@ fn restore_draft(state: &AppState, subject_id: &str) {
 fn persist_draft(state: &AppState, subject_id: &str) {
     let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten()) else { return; };
     let draft = serde_json::json!({
-        "display_name": state.name.get_cloned(),
+        "surname": state.name.get_cloned(),
+        "first_name": state.first_name.get_cloned(),
         "message": state.message.get_cloned()
     });
     if let Ok(raw) = serde_json::to_string(&draft) {
@@ -1936,6 +1936,7 @@ fn reset_session_state(state: &AppState) {
     state.campaign_participants.set(None);
     state.campaign_invite_count.set("5".into());
     state.campaign_name.set(String::new());
+    state.campaign_title.set(String::new());
     state.campaign_count.set(0);
     state.submitted_count.set(0);
     state.online_count.set(0);
@@ -1947,6 +1948,8 @@ fn reset_session_state(state: &AppState) {
     state.invite_url.set(String::new());
     state.invite_urls.set(Vec::new());
     state.name.set(String::new());
+    state.first_name.set(String::new());
+    state.avatar_data_url.set(None);
     state.message.set(String::new());
     state.admin_name.set(String::new());
     state.admin_password.set(String::new());
