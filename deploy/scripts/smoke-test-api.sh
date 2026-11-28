@@ -42,7 +42,7 @@ request 403 "$BASE_URL/api/admin/participants" --cookie "$COOKIE_JAR"
 echo "Checking CSRF enforcement..."
 request 403 --request POST "$BASE_URL/api/greetings" \
   --header 'Content-Type: application/json' --cookie "$COOKIE_JAR" \
-  --data '{"display_name":"CI","message":"missing CSRF must be rejected"}'
+  --data '{"surname":"CI","first_name":"Participant","message":"missing CSRF must be rejected"}'
 
 echo "Opening authenticated SSE stream..."
 curl --silent --show-error --no-buffer --max-time 8 \
@@ -51,7 +51,7 @@ SSE_PID=$!
 sleep 1
 
 echo "Submitting a greeting through the real API..."
-greeting='{"display_name":"CI Participant","message":"Real HTTP and RethinkDB integration works"}'
+greeting='{"surname":"CI","first_name":"Participant","message":"Real HTTP and RethinkDB integration works"}'
 request 201 --request POST "$BASE_URL/api/greetings" \
   --header 'Content-Type: application/json' --header "X-CSRF-Token: $csrf" \
   --cookie "$COOKIE_JAR" --data "$greeting"

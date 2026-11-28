@@ -39,6 +39,6 @@ async fn invitation_activates_once_and_session_can_be_revoked() {
     store.revoke_auth_session(&session.id).await.expect("revoke session");
     assert!(store.get_auth_session(&session.id).await.unwrap().unwrap().revoked);
 
-    assert!(store.claim_greeting("legacy-default", 1, "Tester", "One greeting only").await.unwrap());
-    assert!(!store.claim_greeting("legacy-default", 1, "Tester", "Replay").await.unwrap());
+    assert!(store.claim_greeting("legacy-default", 1, "Tester", "First", None, "One greeting only").await.unwrap());
+    assert!(!store.claim_greeting("legacy-default", 1, "Tester", "Second", None, "Replay").await.unwrap());
 }

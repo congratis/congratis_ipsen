@@ -1,6 +1,7 @@
 use argon2::{password_hash::{PasswordHash, PasswordVerifier}, Argon2};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State},
+    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, DefaultBodyLimit, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{sse::{Event, KeepAlive, Sse}, IntoResponse, Response},
     routing::{delete, get, post},
@@ -34,12 +35,16 @@ struct AppState {
 struct Greeting {
     ornament_number: i16,
     display_name: String,
+    surname: String,
+    first_name: String,
+    avatar_url: Option<String>,
     message: String,
 }
 #[derive(Serialize)]
 struct CampaignSummary {
     participant_count: usize,
     submitted_count: usize,
+    campaign_name: String,
 }
 #[derive(Deserialize)]
 struct ParticipantExchange { token: String }
@@ -69,7 +74,7 @@ struct CreateCampaignResponse {
 #[derive(Serialize)]
 struct CreatedInvitation { ornament_number: i16, token: String }
 #[derive(Deserialize)]
-struct SubmitGreeting { display_name: String, message: String }
+struct SubmitGreeting { surname: String, first_name: String, message: String, #[serde(default)] avatar_data_url: Option<String> }
 #[derive(Serialize)]
 struct ApiMessage { message: &'static str }
 #[derive(Serialize)]
@@ -254,7 +259,11 @@ async fn campaign_summary(
     })?;
     let participant_count = participants.len();
     let submitted_count = participants.iter().filter(|participant| participant.submitted).count();
-    Ok(Json(CampaignSummary { participant_count, submitted_count }))
+    let campaign_name = state.store.get_campaign(campaign_id).await.map_err(|e| {
+        tracing::error!(?e, "campaign title lookup failed");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить название кампании")
+    })?.map(|campaign| campaign.name).unwrap_or_else(|| "Congratis".to_owned());
+    Ok(Json(CampaignSummary { participant_count, submitted_count, campaign_name }))
 }
 
 async fn list_greetings(
@@ -269,6 +278,9 @@ async fn list_greetings(
     Ok(Json(ornaments.into_iter().filter_map(|o| Some(Greeting {
         ornament_number: o.ornament_number,
         display_name: o.display_name?,
+        surname: o.surname.unwrap_or_default(),
+        first_name: o.first_name.unwrap_or_default(),
+        avatar_url: o.avatar_filename.map(|name| format!("/avatars/{name}")),
         message: o.message?,
     })).collect()))
 }
@@ -282,20 +294,57 @@ async fn submit(
     verify_csrf(&headers, &session)?;
     let ornament: i16 = session.subject_id.parse()
         .map_err(|_| ApiError(StatusCode::FORBIDDEN, "Некорректная учётная запись участника"))?;
-    let name = payload.display_name.trim();
+    let surname = payload.surname.trim();
+    let first_name = payload.first_name.trim();
     let message = payload.message.trim();
-    if name.is_empty() || name.chars().count() > 80 {
-        return Err(ApiError(StatusCode::BAD_REQUEST, "Имя должно содержать от 1 до 80 символов"));
+    if surname.is_empty() || surname.chars().count() > 80 || first_name.is_empty() || first_name.chars().count() > 80 {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Фамилия и имя обязательны (до 80 символов каждое)"));
     }
     if message.is_empty() || message.chars().count() > 500 {
         return Err(ApiError(StatusCode::BAD_REQUEST, "Поздравление должно содержать от 1 до 500 символов"));
     }
+    let mut avatar_filename: Option<String> = None;
+    if let Some(data_url) = payload.avatar_data_url.as_deref() {
+        let (declared_type, encoded) = data_url.split_once(",").ok_or(ApiError(StatusCode::BAD_REQUEST, "Некорректный формат фотографии"))?;
+        if !matches!(declared_type, "data:image/jpeg;base64" | "data:image/png;base64" | "data:image/webp;base64") {
+            return Err(ApiError(StatusCode::BAD_REQUEST, "Поддерживаются только JPEG, PNG и WebP"));
+        }
+        let bytes = BASE64.decode(encoded).map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Некорректные данные фотографии"))?;
+        if bytes.is_empty() || bytes.len() > 5 * 1024 * 1024 {
+            return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "Фотография должна быть не больше 5 МБ"));
+        }
+        let format = image::guess_format(&bytes).map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Файл не является корректным изображением"))?;
+        let expected = match declared_type { "data:image/jpeg;base64" => image::ImageFormat::Jpeg, "data:image/png;base64" => image::ImageFormat::Png, _ => image::ImageFormat::WebP };
+        if format != expected { return Err(ApiError(StatusCode::BAD_REQUEST, "Тип файла не совпадает с содержимым")); }
+        let (width, height) = image::ImageReader::with_format(std::io::Cursor::new(&bytes), format).into_dimensions().map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Не удалось прочитать изображение"))?;
+        if width == 0 || height == 0 || width > 10_000 || height > 10_000 || (width as u64) * (height as u64) > 40_000_000 {
+            return Err(ApiError(StatusCode::BAD_REQUEST, "Слишком большое разрешение фотографии"));
+        }
+        let decoded = image::load_from_memory_with_format(&bytes, format).map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Не удалось прочитать изображение"))?;
+        let normalized = decoded.thumbnail(512, 512);
+        let mut output = std::io::Cursor::new(Vec::new());
+        normalized.write_to(&mut output, image::ImageFormat::Png).map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось обработать фотографию"))?;
+        let mut random = [0u8; 16];
+        OsRng.fill_bytes(&mut random);
+        let filename = format!("{}.png", hex::encode(random));
+        let directory = env::var("AVATAR_DIR").unwrap_or_else(|_| "/data/avatars".to_owned());
+        tokio::fs::create_dir_all(&directory).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Хранилище фотографий недоступно"))?;
+        let path = std::path::Path::new(&directory).join(&filename);
+        tokio::fs::write(&path, output.into_inner()).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось сохранить фотографию"))?;
+        avatar_filename = Some(filename);
+    }
     let campaign_id = session.campaign_id.as_deref().unwrap_or(christmas_greetings::store::LEGACY_CAMPAIGN_ID);
-    let claimed = state.store.claim_greeting(campaign_id, ornament, name, message).await.map_err(|e| {
+    let claimed = state.store.claim_greeting(campaign_id, ornament, surname, first_name, avatar_filename.as_deref(), message).await.map_err(|e| {
         tracing::error!(?e, "greeting claim failed");
         ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Ошибка базы данных")
     })?;
-    if !claimed { return Err(ApiError(StatusCode::CONFLICT, "Поздравление уже отправлено")); }
+    if !claimed {
+        if let Some(filename) = avatar_filename.as_deref() {
+            let directory = env::var("AVATAR_DIR").unwrap_or_else(|_| "/data/avatars".to_owned());
+            let _ = tokio::fs::remove_file(std::path::Path::new(&directory).join(filename)).await;
+        }
+        return Err(ApiError(StatusCode::CONFLICT, "Поздравление уже отправлено"));
+    }
     Ok((StatusCode::CREATED, Json(serde_json::json!({
         "message":"Поздравление сохранено", "ornament_number":ornament
     }))))
@@ -797,6 +846,8 @@ async fn main() -> anyhow::Result<()> {
         presence: Arc::new(Mutex::new(HashMap::new())),
         cookie_secure: env::var("COOKIE_SECURE").map(|v| v != "false").unwrap_or(true),
     };
+    let avatar_dir = env::var("AVATAR_DIR").unwrap_or_else(|_| "/data/avatars".to_owned());
+    tokio::fs::create_dir_all(&avatar_dir).await?;
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/auth/participant/exchange", post(participant_exchange))
@@ -817,8 +868,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/admin/participants", get(admin_participants))
         .route("/api/admin/invitations/{number}/reissue", post(admin_reissue_invitation))
         .route("/api/admin/invitations/{number}/revoke", post(admin_revoke_invitation))
+        .nest_service("/avatars", ServeDir::new(&avatar_dir))
         .fallback_service(ServeDir::new("frontend").append_index_html_on_directories(true))
-        .with_state(state).layer(TraceLayer::new_for_http());
+        .with_state(state)
+        .layer(DefaultBodyLimit::max(7 * 1024 * 1024))
+        .layer(TraceLayer::new_for_http());
     let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into());
     let port: u16 = env::var("PORT").unwrap_or_else(|_| "8080".into()).parse()?;
     let addr: SocketAddr = format!("{host}:{port}").parse()?;

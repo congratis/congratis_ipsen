@@ -44,9 +44,9 @@ impl Route {
     }
 }
 #[derive(Clone, Deserialize, Serialize)]
-struct Greeting { ornament_number: i16, display_name: String, message: String }
+struct Greeting { ornament_number: i16, display_name: String, #[serde(default)] surname: String, #[serde(default)] first_name: String, #[serde(default)] avatar_url: Option<String>, message: String }
 #[derive(Clone, Deserialize)]
-struct RealtimeGreeting { campaign_id: String, ornament_number: i16, display_name: String, message: String }
+struct RealtimeGreeting { campaign_id: String, ornament_number: i16, display_name: String, #[serde(default)] surname: Option<String>, #[serde(default)] first_name: Option<String>, #[serde(default)] avatar_filename: Option<String>, message: String }
 #[derive(Clone, Deserialize)]
 #[allow(dead_code)]
 struct Participant {
@@ -59,11 +59,14 @@ struct Participant {
     #[serde(default)]
     filling: bool,
     display_name: Option<String>,
+    #[serde(default)] surname: Option<String>,
+    #[serde(default)] first_name: Option<String>,
+    #[serde(default)] avatar_filename: Option<String>,
     created_at: i64,
     used_at: Option<i64>,
 }
 #[derive(Clone, Deserialize)]
-struct CampaignSummary { participant_count: usize, submitted_count: usize }
+struct CampaignSummary { participant_count: usize, submitted_count: usize, #[serde(default)] campaign_name: String }
 #[derive(Clone, Deserialize)]
 struct CampaignAdminItem { id: String, name: String, created_at: i64, participant_count: usize, submitted_count: usize, #[serde(default)] online_count: usize }
 #[derive(Clone, Deserialize)]
@@ -96,6 +99,7 @@ struct AppState {
     campaign_participants: Mutable<Option<Vec<Participant>>>,
     campaign_invite_count: Mutable<String>,
     campaign_name: Mutable<String>,
+    campaign_title: Mutable<String>,
     campaign_count: Mutable<usize>,
     submitted_count: Mutable<usize>,
     selected: Mutable<Option<Greeting>>,
@@ -111,6 +115,8 @@ struct AppState {
     online_count: Mutable<usize>,
     presence_activity_at: Rc<RefCell<f64>>,
     name: Mutable<String>,
+    first_name: Mutable<String>,
+    avatar_data_url: Mutable<Option<String>>,
     message: Mutable<String>,
     admin_name: Mutable<String>,
     admin_password: Mutable<String>,
@@ -125,7 +131,7 @@ struct AppState {
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), presence_connection: Rc::new(RefCell::new(None)), online_count: Mutable::new(0), presence_activity_at: Rc::new(RefCell::new(0.0)), name: Mutable::new(String::new()), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
+        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_title: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), presence_connection: Rc::new(RefCell::new(None)), online_count: Mutable::new(0), presence_activity_at: Rc::new(RefCell::new(0.0)), name: Mutable::new(String::new()), first_name: Mutable::new(String::new()), avatar_data_url: Mutable::new(None), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -525,6 +531,7 @@ async fn load_campaign(state: AppState) {
         Ok(summary) => {
             state.campaign_count.set(summary.participant_count);
             state.submitted_count.set(summary.submitted_count);
+            state.campaign_title.set(summary.campaign_name);
         },
         Err(error) => set_note(&state, format!("Не удалось загрузить параметры кампании: {error}")),
     }
@@ -591,6 +598,9 @@ fn connect_events(state: AppState) {
                         let greeting = Greeting {
                             ornament_number: event.ornament_number,
                             display_name: event.display_name,
+                            surname: event.surname.unwrap_or_default(),
+                            first_name: event.first_name.unwrap_or_default(),
+                            avatar_url: event.avatar_filename.map(|filename| format!("/avatars/{filename}")),
                             message: event.message,
                         };
                         let mut all = greeting_state.greetings.lock_mut();
@@ -754,9 +764,8 @@ fn restore_draft(state: &AppState, subject_id: &str) {
     let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten()) else { return; };
     let Ok(Some(raw)) = storage.get_item(&draft_storage_key(subject_id)) else { return; };
     let Ok(draft) = serde_json::from_str::<serde_json::Value>(&raw) else { return; };
-    if let Some(name) = draft.get("display_name").and_then(serde_json::Value::as_str) {
-        state.name.set(name.to_owned());
-    }
+    if let Some(name) = draft.get("surname").and_then(serde_json::Value::as_str) { state.name.set(name.to_owned()); }
+    if let Some(name) = draft.get("first_name").and_then(serde_json::Value::as_str) { state.first_name.set(name.to_owned()); }
     if let Some(message) = draft.get("message").and_then(serde_json::Value::as_str) {
         state.message.set(message.to_owned());
     }
@@ -764,7 +773,8 @@ fn restore_draft(state: &AppState, subject_id: &str) {
 fn persist_draft(state: &AppState, subject_id: &str) {
     let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten()) else { return; };
     let draft = serde_json::json!({
-        "display_name": state.name.get_cloned(),
+        "surname": state.name.get_cloned(),
+        "first_name": state.first_name.get_cloned(),
         "message": state.message.get_cloned()
     });
     if let Ok(raw) = serde_json::to_string(&draft) {
@@ -843,7 +853,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
         .child_signal(futures_signals::signal::always(is_mine).map(|visible| visible.then(ipsen_brand)))
         .child(html!("div", {.class("eyebrow").text("A LITTLE CHRISTMAS MAGIC")}))
         .child(html!("h1", {.text("Ёлка добрых ").child(html!("span", {.text("пожеланий")}))}))
-        .child(html!("p", {.class("team-subtitle").text("команда редких заболеваний")}))
+        .child(html!("p", {.class("team-subtitle").text_signal(state.campaign_title.signal_cloned())}))
         .child(html!("p", {.class("lead").text("Выбери шар — внутри тебя ждёт новогоднее поздравление. Все пожелания команды собраны на одной ёлке.")}))
         .child(html!("div", {
             .class("toolbar")
@@ -994,6 +1004,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                             .class("kicker")
                             .text("CHRISTMAS WISH")
                         }))
+                        .child(avatar_dom(&greeting.surname, &greeting.first_name, greeting.avatar_url.clone()))
                         .child(html!("h2", {
                             .attr("id", "greeting-title")
                             .text(&format!("С теплом, {}", greeting.display_name))
@@ -1199,6 +1210,14 @@ fn participant_tree(state: AppState, user: User) -> Dom {
         })))
     })
 }
+fn avatar_dom(surname: &str, first_name: &str, avatar_url: Option<String>) -> Dom {
+    if let Some(url) = avatar_url {
+        html!("img", { .class("participant-avatar").attr("src", &url).attr("alt", &format!("{surname} {first_name}")) })
+    } else {
+        let initials = format!("{}{}", surname.chars().next().unwrap_or('?'), first_name.chars().next().unwrap_or('?')).to_uppercase();
+        html!("div", { .class("participant-avatar").class("avatar-initials").attr("aria-label", &format!("{surname} {first_name}")).text(&initials) })
+    }
+}
 fn show_form(state: AppState) {
     let form_state = state.clone();
     let subject_id = state.user.lock_ref().as_ref()
@@ -1238,7 +1257,25 @@ fn show_form(state: AppState) {
                 .class("muted")
                 .text("Твоё приглашение одноразовое. После публикации поздравление появится у всей команды.")
             }))
-            .child(field("Как тебя зовут?", "Твоё имя", state.name.clone(), false, Some(form_state.clone()), Some(subject_id.clone())))
+            .child(field("Фамилия", "Твоя фамилия", state.name.clone(), false, Some(form_state.clone()), Some(subject_id.clone())))
+            .child(field("Имя", "Твоё имя", state.first_name.clone(), false, Some(form_state.clone()), Some(subject_id.clone())))
+            .child(html!("label", { .text("Фотография (необязательно)") .child(html!("input", {
+                .attr("type", "file").attr("accept", "image/jpeg,image/png,image/webp")
+                .event(clone!(form_state => move |event: events::Change| {
+                    let Some(input) = event.target().and_then(|target| target.dyn_into::<HtmlInputElement>().ok()) else { return; };
+                    let Some(file) = input.files().and_then(|files| files.get(0)) else { return; };
+                    if file.size() > 5.0 * 1024.0 * 1024.0 { set_note(&form_state, "Фотография должна быть не больше 5 МБ"); return; }
+                    if !matches!(file.type_().as_str(), "image/jpeg" | "image/png" | "image/webp") { set_note(&form_state, "Поддерживаются только JPEG, PNG и WebP"); return; }
+                    let Ok(reader) = web_sys::FileReader::new() else { set_note(&form_state, "Не удалось прочитать фотографию"); return; };
+                    let callback = Closure::<dyn FnMut(web_sys::Event)>::new(clone!(form_state => move |event: web_sys::Event| {
+                        if let Some(reader) = event.target().and_then(|target| target.dyn_into::<web_sys::FileReader>().ok()) {
+                            if let Ok(value) = reader.result() { if let Some(data) = value.as_string() { form_state.avatar_data_url.set(Some(data)); set_note(&form_state, "Фотография добавлена"); } }
+                        }
+                    }));
+                    reader.set_onload(Some(callback.as_ref().unchecked_ref())); callback.forget();
+                    if reader.read_as_data_url(&file).is_err() { set_note(&form_state, "Не удалось прочитать фотографию"); }
+                }))
+            })) }))
             .child(field("Твоё поздравление", "Пусть в новом году...", state.message.clone(), true, Some(form_state.clone()), Some(subject_id.clone())))
             .child(html!("div", {
                 .class("note")
@@ -1251,9 +1288,10 @@ fn show_form(state: AppState) {
                     if form_state.submitting.get() {
                         return;
                     }
-                    let display_name = form_state.name.get_cloned();
-                    if display_name.trim().is_empty() || display_name.chars().count() > 80 {
-                        set_note(&form_state, "Имя должно содержать от 1 до 80 символов");
+                    let surname = form_state.name.get_cloned();
+                    let first_name = form_state.first_name.get_cloned();
+                    if surname.trim().is_empty() || surname.chars().count() > 80 || first_name.trim().is_empty() || first_name.chars().count() > 80 {
+                        set_note(&form_state, "Укажи фамилию и имя (до 80 символов каждое)");
                         return;
                     }
                     let message = form_state.message.get_cloned();
@@ -1267,7 +1305,9 @@ fn show_form(state: AppState) {
                     let subject_id = current.user.lock_ref().as_ref().map(|user| user.subject_id.clone()).unwrap_or_default();
                     spawn_local(async move {
                         let body = serde_json::json!({
-                            "display_name": display_name,
+                            "surname": surname,
+                            "first_name": first_name,
+                            "avatar_data_url": current.avatar_data_url.get_cloned(),
                             "message": message
                         });
                         match post_json::<serde_json::Value>("/api/greetings", &body, Some(&csrf)).await {
@@ -1275,6 +1315,8 @@ fn show_form(state: AppState) {
                                 set_note(&current, "Поздравление опубликовано! ✨");
                                 clear_draft(&subject_id);
                                 current.name.set(String::new());
+                                current.first_name.set(String::new());
+                                current.avatar_data_url.set(None);
                                 current.message.set(String::new());
                                 load_greetings(current.clone()).await;
                                 current.submitting.set(false);
@@ -1929,6 +1971,7 @@ fn reset_session_state(state: &AppState) {
     state.campaign_participants.set(None);
     state.campaign_invite_count.set("5".into());
     state.campaign_name.set(String::new());
+    state.campaign_title.set(String::new());
     state.campaign_count.set(0);
     state.submitted_count.set(0);
     state.online_count.set(0);
@@ -1940,6 +1983,8 @@ fn reset_session_state(state: &AppState) {
     state.invite_url.set(String::new());
     state.invite_urls.set(Vec::new());
     state.name.set(String::new());
+    state.first_name.set(String::new());
+    state.avatar_data_url.set(None);
     state.message.set(String::new());
     state.admin_name.set(String::new());
     state.admin_password.set(String::new());

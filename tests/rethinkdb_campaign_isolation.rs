@@ -56,15 +56,15 @@ async fn campaign_data_and_deletion_are_isolated_and_retryable() {
         store.activate_invitation(&token_b).await.unwrap(),
         Some((1, campaign_b.clone()))
     );
-    assert!(store.claim_greeting(&campaign_a, 1, "Alice", "Greeting A").await.unwrap());
-    assert!(store.claim_greeting(&campaign_b, 1, "Bob", "Greeting B").await.unwrap());
+    assert!(store.claim_greeting(&campaign_a, 1, "Smith", "Alice", None, "Greeting A").await.unwrap());
+    assert!(store.claim_greeting(&campaign_b, 1, "Jones", "Bob", None, "Greeting B").await.unwrap());
 
     let greetings_a = store.list_campaign_greetings(&campaign_a).await.unwrap();
     let greetings_b = store.list_campaign_greetings(&campaign_b).await.unwrap();
     assert_eq!(greetings_a.len(), 1);
-    assert_eq!(greetings_a[0].display_name.as_deref(), Some("Alice"));
+    assert_eq!(greetings_a[0].display_name.as_deref(), Some("Smith Alice"));
     assert_eq!(greetings_b.len(), 1);
-    assert_eq!(greetings_b[0].display_name.as_deref(), Some("Bob"));
+    assert_eq!(greetings_b[0].display_name.as_deref(), Some("Jones Bob"));
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
     let session_a = format!("session-a-{suffix}");
@@ -88,11 +88,11 @@ async fn campaign_data_and_deletion_are_isolated_and_retryable() {
     assert_eq!(store.get_campaign(&campaign_b).await.unwrap().unwrap().name, name_b);
     let remaining_b = store.list_campaign_greetings(&campaign_b).await.unwrap();
     assert_eq!(remaining_b.len(), 1);
-    assert_eq!(remaining_b[0].display_name.as_deref(), Some("Bob"));
+    assert_eq!(remaining_b[0].display_name.as_deref(), Some("Jones Bob"));
     assert!(store.get_auth_session(&session_b).await.unwrap().is_some());
     assert!(store.get_auth_session(&admin_session).await.unwrap().is_some());
 
-    assert!(!store.claim_greeting(&campaign_a, 1, "Mallory", "Must not be stored").await.unwrap());
+    assert!(!store.claim_greeting(&campaign_a, 1, "Evil", "Mallory", None, "Must not be stored").await.unwrap());
     assert_eq!(store.activate_invitation(&token_a).await.unwrap(), None);
 
     let legacy = match store.get_campaign("legacy-default").await.unwrap() {

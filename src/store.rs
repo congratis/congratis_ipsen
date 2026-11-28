@@ -81,6 +81,9 @@ pub struct GreetingEvent {
     pub campaign_id: String,
     pub ornament_number: i16,
     pub display_name: String,
+    pub surname: Option<String>,
+    pub first_name: Option<String>,
+    pub avatar_filename: Option<String>,
     pub message: String,
 }
 
@@ -97,6 +100,12 @@ pub struct Ornament {
     #[serde(default)]
     pub revoked: bool,
     pub display_name: Option<String>,
+    #[serde(default)]
+    pub surname: Option<String>,
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub avatar_filename: Option<String>,
     pub message: Option<String>,
     pub created_at: i64,
     pub used_at: Option<i64>,
@@ -651,6 +660,9 @@ impl Store {
                 submitted: item.used,
                 revoked: item.revoked,
                 display_name: item.display_name,
+                surname: item.surname,
+                first_name: item.first_name,
+                avatar_filename: item.avatar_filename,
                 created_at: item.created_at,
                 used_at: item.used_at,
             })
@@ -946,6 +958,9 @@ impl Store {
                 campaign_id,
                 ornament_number: ornament.ornament_number,
                 display_name,
+                surname: ornament.surname,
+                first_name: ornament.first_name,
+                avatar_filename: ornament.avatar_filename,
                 message,
             });
         }
@@ -1031,6 +1046,12 @@ pub struct ParticipantSummary {
     pub submitted: bool,
     pub revoked: bool,
     pub display_name: Option<String>,
+    #[serde(default)]
+    pub surname: Option<String>,
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub avatar_filename: Option<String>,
     pub created_at: i64,
     pub used_at: Option<i64>,
 }
@@ -1101,7 +1122,7 @@ impl Store {
     pub async fn list_participants(&self) -> Result<Vec<ParticipantSummary>> {
         self.list_campaign_participants(LEGACY_CAMPAIGN_ID).await
     }
-    pub async fn claim_greeting(&self, campaign_id: &str, number: i16, display_name: &str, message: &str) -> Result<bool> {
+    pub async fn claim_greeting(&self, campaign_id: &str, number: i16, surname: &str, first_name: &str, avatar_filename: Option<&str>, message: &str) -> Result<bool> {
         if self.get_campaign(campaign_id).await?.is_none_or(|campaign| campaign.status != "active") {
             return Ok(false);
         }
@@ -1111,7 +1132,12 @@ impl Store {
                     .and(document.clone().get_field("revoked").default(r.expr(false)).eq(false))
                     .and(document.clone().get_field("used").eq(false)),
                 document.clone().merge(r.expr(json!({
-                    "used": true, "display_name": display_name, "message": message,
+                    "used": true,
+                    "surname": surname,
+                    "first_name": first_name,
+                    "display_name": format!("{} {}", surname, first_name),
+                    "avatar_filename": avatar_filename,
+                    "message": message,
                     "used_at": Utc::now().timestamp()
                 }))),
                 document

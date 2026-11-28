@@ -73,7 +73,7 @@ dialog.presentation-overlay{padding:20px}
 dialog.presentation-overlay::backdrop{background:radial-gradient(ellipse at 50% 20%,#205644f5,#061a16f7 72%);backdrop-filter:blur(12px)}
 
 
-.team-subtitle{margin:-5px auto 18px;color:var(--gold);font-size:clamp(13px,1.8vw,16px);font-weight:600;letter-spacing:.055em}
+.team-subtitle{margin:-5px auto 18px;color:var(--gold);font-size:clamp(16px,2vw,20px);font-weight:400;letter-spacing:.02em}
 
 
 .no-invitation-art{width:min(100%,760px);margin:18px auto 24px;overflow:hidden;border:1px solid #d8b96d66;border-radius:18px;background:#10251e;box-shadow:0 22px 75px #0007}
@@ -111,3 +111,5 @@ dialog.presentation-overlay::backdrop{background:radial-gradient(ellipse at 50% 
 .volume-control input {
     width: 88px;
 }
+
+.participant-avatar{display:block;width:76px;height:76px;flex:none;margin:12px auto;border-radius:50%;object-fit:cover;border:2px solid #e8c77b;box-shadow:0 4px 18px #0006}.avatar-initials{display:grid;place-items:center;background:linear-gradient(145deg,#477c65,#173c31);color:#fff5dc;font-weight:600;font-size:22px;letter-spacing:.04em}.admin-item .participant-avatar{width:48px;height:48px;margin:4px auto 10px;font-size:15px}
