@@ -2192,6 +2192,7 @@ fn participants_grid(
                             .event(clone!(state, invitation_base, refresh => move |_: events::Click| {
                                 let csrf = state.csrf();
                                 let current = state.clone();
+                                let refresh = refresh.clone();
                                 let path = format!("{invitation_base}/{number}/reissue");
                                 spawn_local(async move {
                                     match post_json::<serde_json::Value>(&path, &serde_json::json!({}), Some(&csrf)).await {
@@ -2222,6 +2223,7 @@ fn participants_grid(
                                 if !confirmed { return; }
                                 let csrf = state.csrf();
                                 let current = state.clone();
+                                let refresh = refresh.clone();
                                 let path = format!("{invitation_base}/{number}/revoke");
                                 spawn_local(async move {
                                     match post_empty(&path, &csrf).await {
