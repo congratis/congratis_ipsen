@@ -1195,15 +1195,6 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                             Some(html!("div", {
                                 .class("presentation-content")
                                 .class_signal("presentation-finale", finale.signal())
-                                .child(html!("div", {.class("kicker").text("CONGRATIS · NEW YEAR PRESENTATION")}))
-                                .child(html!("h2", {
-                                    .attr("id", "presentation-title")
-                                    .text(&title)
-                                }))
-                                .child(html!("p", {
-                                    .class("presentation-message")
-                                    .text(&message)
-                                }))
                                 .child(html!("div", {
                                     .class("presentation-progress")
                                     .attr("aria-label", "Прогресс презентации")
@@ -1218,6 +1209,15 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                                             }))
                                         })
                                     }))
+                                }))
+                                .child(html!("div", {.class("kicker").text("CONGRATIS · NEW YEAR PRESENTATION")}))
+                                .child(html!("h2", {
+                                    .attr("id", "presentation-title")
+                                    .text(&title)
+                                }))
+                                .child(html!("p", {
+                                    .class("presentation-message")
+                                    .text(&message)
                                 }))
                                 .child(html!("div", {
                                     .class("presentation-counter")
@@ -1316,6 +1316,14 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                         .child(html!("div", {
                             .class("presentation-audio-controls")
                             .class("presentation-audio-floating")
+                            .child(html!("button", {
+                                .class("secondary")
+                                .class("icon-control")
+                                .attr("type", "button")
+                                .attr("aria-label", "Пауза или продолжение презентации")
+                                .text_signal(state.presentation_paused.signal().map(|paused| if paused { "▶" } else { "Ⅱ" }))
+                                .event(clone!(state => move |_: events::Click| toggle_presentation_pause(state.clone())))
+                            }))
                             .child(html!("button", {
                                 .class("secondary")
                                 .class("icon-control")
