@@ -14,6 +14,6 @@ wasm-bindgen-futures = "0.4"
 gloo-net = { version = "0.6", features = ["http"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-web-sys = { version = "0.3", features = ["Window", "Document", "Location", "History", "EventSource", "WebSocket", "Event", "MessageEvent", "HtmlInputElement", "HtmlTextAreaElement", "HtmlAudioElement", "HtmlMediaElement", "HtmlElement", "Storage", "KeyboardEvent", "NodeList", "Element", "HtmlDialogElement", "EventTarget", "Node", "console"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "Location", "History", "EventSource", "WebSocket", "Event", "MessageEvent", "HtmlInputElement", "HtmlTextAreaElement", "File", "FileList", "FileReader", "HtmlAudioElement", "HtmlMediaElement", "HtmlElement", "Storage", "KeyboardEvent", "NodeList", "Element", "HtmlDialogElement", "EventTarget", "Node", "console"] }
 js-sys = "0.3"
 console_error_panic_hook = "0.1"
