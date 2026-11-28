@@ -1,18 +1,18 @@
 use argon2::{password_hash::{PasswordHash, PasswordVerifier}, Argon2};
 use axum::{
-    extract::State,
+    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{sse::{Event, KeepAlive, Sse}, IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
 use christmas_greetings::store::{AuthSession, GreetingEvent, Store};
-use futures::stream;
+use futures::{stream, SinkExt, StreamExt};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{convert::Infallible, env, net::SocketAddr, time::Duration};
-use tokio::sync::broadcast;
+use std::{collections::HashMap, convert::Infallible, env, net::SocketAddr, sync::Arc, time::{Duration, Instant}};
+use tokio::sync::{broadcast, Mutex};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
@@ -25,6 +25,8 @@ const ADMIN_TTL: i64 = 60 * 60 * 8;
 struct AppState {
     store: Store,
     events: broadcast::Sender<GreetingEvent>,
+    presence_events: broadcast::Sender<PresenceUpdate>,
+    presence: Arc<Mutex<HashMap<(String, i16), PresenceRecord>>>,
     cookie_secure: bool,
 }
 
@@ -572,6 +574,165 @@ async fn admin_revoke_campaign_invitation(
     Ok(StatusCode::NO_CONTENT)
 }
 
+
+#[derive(Clone)]
+struct PresenceRecord {
+    connections: usize,
+    last_activity: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PresenceUpdate {
+    kind: String,
+    campaign_id: String,
+    ornament_number: i16,
+    online: bool,
+    filling: bool,
+    online_count: usize,
+}
+
+fn presence_message(update: &PresenceUpdate) -> Result<Message, serde_json::Error> {
+    Ok(Message::Text(serde_json::to_string(update)?.into()))
+}
+
+async fn publish_presence(state: &AppState, campaign_id: &str, ornament_number: i16) {
+    let now = chrono::Utc::now().timestamp();
+    let presence = state.presence.lock().await;
+    let online_count = presence.iter()
+        .filter(|((campaign, _), record)| campaign == campaign_id && record.connections > 0)
+        .count();
+    let record = presence.get(&(campaign_id.to_owned(), ornament_number));
+    let online = record.is_some_and(|item| item.connections > 0);
+    let filling = record.is_some_and(|item| online && now - item.last_activity <= 30);
+    drop(presence);
+    let _ = state.presence_events.send(PresenceUpdate {
+        kind: "presence".into(),
+        campaign_id: campaign_id.to_owned(),
+        ornament_number,
+        online,
+        filling,
+        online_count,
+    });
+}
+
+async fn presence_connection(mut socket: WebSocket, state: AppState, session: AuthSession) {
+    let is_admin = session.role == "admin";
+    let campaign_id = session.campaign_id.clone()
+        .unwrap_or_else(|| christmas_greetings::store::LEGACY_CAMPAIGN_ID.to_owned());
+    let ornament_number = if is_admin { None } else { session.subject_id.parse::<i16>().ok() };
+    let mut receiver = state.presence_events.subscribe();
+
+    if let Some(number) = ornament_number {
+        {
+            let mut presence = state.presence.lock().await;
+            let record = presence.entry((campaign_id.clone(), number))
+                .or_insert(PresenceRecord { connections: 0, last_activity: chrono::Utc::now().timestamp() });
+            record.connections += 1;
+        }
+        publish_presence(&state, &campaign_id, number).await;
+    } else if is_admin {
+        let snapshot = state.presence.lock().await.clone();
+        for ((campaign, number), record) in snapshot {
+            let now = chrono::Utc::now().timestamp();
+            let online_count = state.presence.lock().await.iter()
+                .filter(|((id, _), value)| id == &campaign && value.connections > 0).count();
+            let update = PresenceUpdate {
+                kind: "presence".into(),
+                campaign_id: campaign,
+                ornament_number: number,
+                online: record.connections > 0,
+                filling: record.connections > 0 && now - record.last_activity <= 30,
+                online_count,
+            };
+            if let Ok(message) = presence_message(&update) {
+                if socket.send(message).await.is_err() { return; }
+            }
+        }
+    } else {
+        let _ = socket.close().await;
+        return;
+    }
+
+    let mut ping_interval = tokio::time::interval(Duration::from_secs(20));
+    let mut last_pong = Instant::now();
+    loop {
+        tokio::select! {
+            incoming = socket.recv() => {
+                match incoming {
+                    Some(Ok(Message::Text(text))) if !is_admin => {
+                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if value.get("type").and_then(|v| v.as_str()) == Some("activity") {
+                                if let Some(number) = ornament_number {
+                                    if let Some(record) = state.presence.lock().await.get_mut(&(campaign_id.clone(), number)) {
+                                        record.last_activity = chrono::Utc::now().timestamp();
+                                    }
+                                    publish_presence(&state, &campaign_id, number).await;
+                                }
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Pong(_))) => last_pong = Instant::now(),
+                    Some(Ok(Message::Ping(payload))) => {
+                        if socket.send(Message::Pong(payload)).await.is_err() { break; }
+                    }
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    _ => {}
+                }
+            }
+            event = receiver.recv() => {
+                if let Ok(update) = event {
+                    if is_admin || update.campaign_id == campaign_id {
+                        let outgoing = if is_admin {
+                            presence_message(&update)
+                        } else {
+                            Ok(Message::Text(serde_json::json!({
+                                "kind": "count",
+                                "online_count": update.online_count
+                            }).to_string().into()))
+                        };
+                        if let Ok(message) = outgoing {
+                            if socket.send(message).await.is_err() { break; }
+                        }
+                    }
+                }
+            }
+            _ = ping_interval.tick() => {
+                if last_pong.elapsed() > Duration::from_secs(45) { break; }
+                if socket.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
+                if let Some(number) = ornament_number {
+                    let now = chrono::Utc::now().timestamp();
+                    let expired = state.presence.lock().await.get(&(campaign_id.clone(), number))
+                        .is_some_and(|record| record.connections > 0 && now - record.last_activity > 30);
+                    if expired { publish_presence(&state, &campaign_id, number).await; }
+                }
+            }
+        }
+    }
+
+    if let Some(number) = ornament_number {
+        let mut presence = state.presence.lock().await;
+        let key = (campaign_id.clone(), number);
+        if let Some(record) = presence.get_mut(&key) {
+            record.connections = record.connections.saturating_sub(1);
+            if record.connections == 0 { presence.remove(&key); }
+        }
+        drop(presence);
+        publish_presence(&state, &campaign_id, number).await;
+    }
+}
+
+async fn presence_ws(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Result<Response, ApiError> {
+    let session = authenticated(&state, &headers).await?;
+    if session.role != "admin" && session.role != "participant" {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Недостаточно прав"));
+    }
+    Ok(ws.on_upgrade(move |socket| presence_connection(socket, state, session)).into_response())
+}
+
 async fn sse_events(
     State(state): State<AppState>, headers: HeaderMap
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
@@ -630,7 +791,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/auth/admin/login", post(admin_login))
         .route("/api/auth/logout", post(logout))
         .route("/api/me", get(me))
-        .route("/api/events", get(sse_events))
+        .route("/api/events", get(sse_events))\n        .route("/api/presence", get(presence_ws))
         .route("/api/greetings", get(list_greetings).post(submit))
         .route("/api/campaign", get(campaign_summary))
         .route("/api/admin/campaign", post(admin_create_campaign))
