@@ -790,6 +790,7 @@ test("admin can create and delete a named campaign with exact-name confirmation"
 
   page.once("dialog", dialog => {
     expect(dialog.type()).toBe("prompt");
+    expect(dialog.message()).toContain("\n\nВведите точное название кампании для подтверждения:");
     dialog.accept("Зимний вечер");
   });
   const campaignCard = page.locator(".admin-item").filter({ hasText: "Зимний вечер" });
