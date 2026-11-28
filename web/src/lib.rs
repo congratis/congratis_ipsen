@@ -1251,7 +1251,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                                         }))
                                     } else { None }
                                 })))
-                                .child_signal(state.leaderboard.signal_cloned().map(|entries| {
+                                .child_signal(state.leaderboard.signal_cloned().map(move |entries| {
                                     if index == count && count > 0 {
                                         Some(html!("section", {
                                             .class("presentation-leaderboard")
