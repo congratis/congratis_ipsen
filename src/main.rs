@@ -1,7 +1,7 @@
 use argon2::{password_hash::{PasswordHash, PasswordVerifier}, Argon2};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State},
+    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, DefaultBodyLimit, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{sse::{Event, KeepAlive, Sse}, IntoResponse, Response},
     routing::{delete, get, post},
@@ -294,20 +294,53 @@ async fn submit(
     verify_csrf(&headers, &session)?;
     let ornament: i16 = session.subject_id.parse()
         .map_err(|_| ApiError(StatusCode::FORBIDDEN, "Некорректная учётная запись участника"))?;
-    let name = payload.display_name.trim();
+    let surname = payload.surname.trim();
+    let first_name = payload.first_name.trim();
     let message = payload.message.trim();
-    if name.is_empty() || name.chars().count() > 80 {
-        return Err(ApiError(StatusCode::BAD_REQUEST, "Имя должно содержать от 1 до 80 символов"));
+    if surname.is_empty() || surname.chars().count() > 80 || first_name.is_empty() || first_name.chars().count() > 80 {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "Фамилия и имя обязательны (до 80 символов каждое)"));
     }
     if message.is_empty() || message.chars().count() > 500 {
         return Err(ApiError(StatusCode::BAD_REQUEST, "Поздравление должно содержать от 1 до 500 символов"));
     }
+    let mut avatar_filename: Option<String> = None;
+    if let Some(data_url) = payload.avatar_data_url.as_deref() {
+        let (declared_type, encoded) = data_url.split_once(",").ok_or(ApiError(StatusCode::BAD_REQUEST, "Некорректный формат фотографии"))?;
+        if !matches!(declared_type, "data:image/jpeg;base64" | "data:image/png;base64" | "data:image/webp;base64") {
+            return Err(ApiError(StatusCode::BAD_REQUEST, "Поддерживаются только JPEG, PNG и WebP"));
+        }
+        let bytes = BASE64.decode(encoded).map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Некорректные данные фотографии"))?;
+        if bytes.is_empty() || bytes.len() > 5 * 1024 * 1024 {
+            return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "Фотография должна быть не больше 5 МБ"));
+        }
+        let format = image::guess_format(&bytes).map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Файл не является корректным изображением"))?;
+        let expected = match declared_type { "data:image/jpeg;base64" => image::ImageFormat::Jpeg, "data:image/png;base64" => image::ImageFormat::Png, _ => image::ImageFormat::WebP };
+        if format != expected { return Err(ApiError(StatusCode::BAD_REQUEST, "Тип файла не совпадает с содержимым")); }
+        let decoded = image::load_from_memory_with_format(&bytes, format).map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Не удалось прочитать изображение"))?;
+        let normalized = decoded.thumbnail(512, 512);
+        let mut output = std::io::Cursor::new(Vec::new());
+        normalized.write_to(&mut output, image::ImageFormat::Png).map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось обработать фотографию"))?;
+        let mut random = [0u8; 16];
+        OsRng.fill_bytes(&mut random);
+        let filename = format!("{}.png", hex::encode(random));
+        let directory = env::var("AVATAR_DIR").unwrap_or_else(|_| "/data/avatars".to_owned());
+        tokio::fs::create_dir_all(&directory).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Хранилище фотографий недоступно"))?;
+        let path = std::path::Path::new(&directory).join(&filename);
+        tokio::fs::write(&path, output.into_inner()).await.map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось сохранить фотографию"))?;
+        avatar_filename = Some(filename);
+    }
     let campaign_id = session.campaign_id.as_deref().unwrap_or(christmas_greetings::store::LEGACY_CAMPAIGN_ID);
-    let claimed = state.store.claim_greeting(campaign_id, ornament, name, message).await.map_err(|e| {
+    let claimed = state.store.claim_greeting(campaign_id, ornament, surname, first_name, avatar_filename.as_deref(), message).await.map_err(|e| {
         tracing::error!(?e, "greeting claim failed");
         ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Ошибка базы данных")
     })?;
-    if !claimed { return Err(ApiError(StatusCode::CONFLICT, "Поздравление уже отправлено")); }
+    if !claimed {
+        if let Some(filename) = avatar_filename.as_deref() {
+            let directory = env::var("AVATAR_DIR").unwrap_or_else(|_| "/data/avatars".to_owned());
+            let _ = tokio::fs::remove_file(std::path::Path::new(&directory).join(filename)).await;
+        }
+        return Err(ApiError(StatusCode::CONFLICT, "Поздравление уже отправлено"));
+    }
     Ok((StatusCode::CREATED, Json(serde_json::json!({
         "message":"Поздравление сохранено", "ornament_number":ornament
     }))))
