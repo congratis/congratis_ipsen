@@ -96,7 +96,7 @@ curl --silent --show-error --http1.1 --max-time 2 \
   --cookie "$COOKIE_JAR" "$BASE_URL/api/presence"
 ws_curl_status=$?
 set -e
-if ! grep -Eiq '^HTTP/1\\.1 101' "$HEADERS"; then
+if ! grep -Eiq '^HTTP/1\.1 101' "$HEADERS"; then
   echo "Expected authenticated WebSocket HTTP 101 upgrade (curl exit: $ws_curl_status)" >&2
   cat "$HEADERS" >&2
   exit 1
