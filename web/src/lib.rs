@@ -2164,6 +2164,7 @@ fn landing_screen(state: AppState) -> Dom {
 }
 
 fn reset_session_state(state: &AppState) {
+    AVATAR_PRELOADS.with(|preloads| preloads.borrow_mut().clear());
     disconnect_events(state);
     disconnect_presence_events(state);
     if let Some(audio) = state.audio.get_cloned() {

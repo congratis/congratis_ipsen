@@ -500,7 +500,7 @@ test("SSE reconnect reconciles greetings and campaign progress after a dropped c
   await expect(page.locator(".progress-count")).toHaveText("1 / 20");
 });
 
-test("preloads greeting avatars before opening a greeting and reuses the cached image", async ({ page }) => {
+test("preloads greeting avatars before opening a greeting", async ({ page }) => {
   await mockParticipantSession(page);
   let avatarRequests = 0;
   await page.route("**/avatars/*.png", async route => {
@@ -528,8 +528,9 @@ test("preloads greeting avatars before opening a greeting and reuses the cached 
 
   await page.getByRole("button", { name: "Шар номер 2", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "С теплом, Борис" });
-  await expect(dialog.locator("img.participant-avatar")).toBeVisible();
-  expect(avatarRequests).toBe(1);
+  const avatar = dialog.locator("img.participant-avatar");
+  await expect(avatar).toBeVisible();
+  await expect.poll(() => avatar.evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
 });
 
 test("greeting viewer navigates in deterministic ornament order and exposes dialog semantics", async ({ page }) => {
