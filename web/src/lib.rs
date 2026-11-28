@@ -490,14 +490,6 @@ fn toggle_presentation_pause(state: AppState) {
     }
 }
 
-fn toggle_music_playback(state: AppState) {
-    if state.music_playing.get() {
-        if let Some(audio) = state.audio.get_cloned() { audio.pause(); }
-        state.music_playing.set(false);
-    } else {
-        play_presentation_audio(state);
-    }
-}
 fn toggle_music_mute(state: AppState) {
     let muted = !state.music_muted.get();
     state.music_muted.set(muted);
@@ -1324,34 +1316,6 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                             }))
                         }))
                         .child(html!("div", {
-                            .class("presentation-controls")
-                            .child(html!("button", {
-                                .class("secondary")
-                                .attr("type", "button")
-                                .text_signal(state.presentation_paused.signal().map(|paused| if paused { "Продолжить" } else { "Пауза" }))
-                                .event(clone!(state => move |_: events::Click| toggle_presentation_pause(state.clone())))
-                            }))
-                            .child(html!("button", {
-                                .class("secondary")
-                                .attr("type", "button")
-                                .text("← Назад")
-                                .event(clone!(state => move |_: events::Click| {
-                                    let current = state.presentation_index.get();
-                                    if current > 0 { set_presentation_index(&state, current - 1); }
-                                }))
-                            }))
-                            .child(html!("button", {
-                                .class("secondary")
-                                .attr("type", "button")
-                                .text("Далее →")
-                                .event(clone!(state => move |_: events::Click| {
-                                    let current = state.presentation_index.get();
-                                    let total = state.greetings.lock_ref().len();
-                                    if current < total { set_presentation_index(&state, current + 1); }
-                                }))
-                            }))
-                        }))
-                        .child(html!("div", {
                             .class("presentation-audio-controls")
                             .class("presentation-audio-floating")
                             .child(html!("button", {
@@ -1361,14 +1325,6 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                                 .attr("aria-label", "Пауза или продолжение презентации")
                                 .text_signal(state.presentation_paused.signal().map(|paused| if paused { "▶" } else { "Ⅱ" }))
                                 .event(clone!(state => move |_: events::Click| toggle_presentation_pause(state.clone())))
-                            }))
-                            .child(html!("button", {
-                                .class("secondary")
-                                .class("icon-control")
-                                .attr("type", "button")
-                                .attr("aria-label", "Пауза или продолжение музыки")
-                                 .text_signal(state.music_playing.signal().map(|playing| if playing { "Ⅱ" } else { "▶" }))
-                                .event(clone!(state => move |_: events::Click| toggle_music_playback(state.clone())))
                             }))
                             .child(html!("button", {
                                 .class("secondary")
