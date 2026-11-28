@@ -9,6 +9,7 @@ use tokio::sync::{broadcast, watch};
 
 const TABLE: &str = "ornaments";
 const TOKEN_INDEX: &str = "token_hash";
+const CAMPAIGN_INDEX: &str = "campaign_id";
 const SESSIONS_TABLE: &str = "auth_sessions";
 const CAMPAIGNS_TABLE: &str = "campaigns";
 const LIKES_TABLE: &str = "greeting_likes";
@@ -40,6 +41,12 @@ fn campaign_ornament_key(campaign_id: &str, ornament_number: i16) -> String {
 fn token_index_options() -> reql::cmd::get_all::Options {
     let mut options = reql::cmd::get_all::Options::default();
     options.index = Some(TOKEN_INDEX.into());
+    options
+}
+
+fn campaign_index_options() -> reql::cmd::get_all::Options {
+    let mut options = reql::cmd::get_all::Options::default();
+    options.index = Some(CAMPAIGN_INDEX.into());
     options
 }
 
@@ -219,6 +226,24 @@ impl Store {
         }
 
         self.wait_for_token_index().await?;
+
+        let indexes = self
+            .first::<Vec<String>>(r.db(self.database.as_str()).table(TABLE).index_list())
+            .await?
+            .ok_or_else(|| anyhow!("RethinkDB returned no index list"))?;
+
+        if !indexes.iter().any(|name| name == CAMPAIGN_INDEX) {
+            let _: Option<Value> = self
+                .first(
+                    r.db(self.database.as_str())
+                        .table(TABLE)
+                        .index_create(CAMPAIGN_INDEX),
+                )
+                .await
+                .context("creating campaign_id index")?;
+        }
+
+        self.wait_for_campaign_index().await?;
 
         let tables = self
             .first::<Vec<String>>(r.db(self.database.as_str()).table_list())
@@ -495,6 +520,33 @@ impl Store {
         )
     }
 
+    async fn wait_for_campaign_index(&self) -> Result<()> {
+        let mut last_error = None;
+        for _ in 0..40 {
+            let query = r
+                .db(self.database.as_str())
+                .table(TABLE)
+                .get_all(r.args((
+                    "__congratis_campaign_index_probe__",
+                    campaign_index_options(),
+                )))
+                .limit(1);
+            let mut stream = query.run::<_, Ornament>(&self.session);
+            match stream.try_next().await {
+                Ok(_) => return Ok(()),
+                Err(error) => {
+                    last_error = Some(error.to_string());
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+            }
+        }
+
+        bail!(
+            "campaign_id index did not become queryable: {}",
+            last_error.unwrap_or_else(|| "unknown index readiness error".into())
+        )
+    }
+
     pub async fn list_ornaments(&self) -> Result<Vec<Ornament>> {
         // Read the base table stream and sort the bounded campaign collection
         // in Rust. This also avoids an ordered-stream query over an empty table,
@@ -698,9 +750,7 @@ impl Store {
         let mut stream = r
             .db(self.database.as_str())
             .table(TABLE)
-            .filter(reql::func!(|document| document
-                .get_field("campaign_id")
-                .eq(campaign_id)))
+            .get_all(r.args((campaign_id, campaign_index_options())))
             .run::<_, Ornament>(&self.session);
         let mut ornaments = Vec::new();
         while let Some(ornament) = stream.try_next().await? {

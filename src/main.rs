@@ -152,6 +152,21 @@ fn campaign_numbers(count: i16) -> Result<Vec<i16>, ApiError> {
     }
     Ok((1..=count).collect())
 }
+
+fn add_campaign_count(
+    counts: &mut HashMap<String, (usize, usize)>,
+    campaign_id: Option<&str>,
+    submitted: bool,
+) {
+    let campaign_id = campaign_id
+        .unwrap_or(christmas_greetings::store::LEGACY_CAMPAIGN_ID)
+        .to_owned();
+    let entry = counts.entry(campaign_id).or_default();
+    entry.0 += 1;
+    if submitted {
+        entry.1 += 1;
+    }
+}
 fn random_secret() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
@@ -899,22 +914,34 @@ async fn admin_list_campaigns(
             "Не удалось загрузить кампании",
         )
     })?;
-    let mut items = Vec::with_capacity(campaigns.len());
-    for campaign in campaigns {
-        let participants = state.store.list_campaign_participants(&campaign.id).await.map_err(|error| {
-            tracing::error!(?error, campaign_id = %campaign.id, "campaign participant count failed");
-            ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить данные кампании")
-        })?;
-        let participant_count = participants.len();
-        let submitted_count = participants.iter().filter(|item| item.submitted).count();
-        items.push(CampaignAdminItem {
-            id: campaign.id,
-            name: campaign.name,
-            created_at: campaign.created_at,
-            participant_count,
-            submitted_count,
-        });
+    // One table read for all campaigns replaces the previous per-campaign
+    // participant lookup (N+1). Counts only need invitation state, not likes.
+    let ornaments = state.store.list_ornaments().await.map_err(|error| {
+        tracing::error!(?error, "campaign invitation counts lookup failed");
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Не удалось загрузить данные кампании",
+        )
+    })?;
+    let mut counts = HashMap::<String, (usize, usize)>::new();
+    for ornament in ornaments {
+        add_campaign_count(&mut counts, ornament.campaign_id.as_deref(), ornament.used);
     }
+
+    let items = campaigns
+        .into_iter()
+        .map(|campaign| {
+            let (participant_count, submitted_count) =
+                counts.get(&campaign.id).copied().unwrap_or_default();
+            CampaignAdminItem {
+                id: campaign.id,
+                name: campaign.name,
+                created_at: campaign.created_at,
+                participant_count,
+                submitted_count,
+            }
+        })
+        .collect();
     Ok(Json(items))
 }
 
@@ -1469,7 +1496,8 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod campaign_validation_tests {
-    use super::campaign_numbers;
+    use super::{add_campaign_count, campaign_numbers};
+    use std::collections::HashMap;
 
     #[test]
     fn campaign_size_accepts_only_one_through_thirty_five() {
@@ -1477,5 +1505,21 @@ mod campaign_validation_tests {
         assert_eq!(campaign_numbers(35).unwrap().len(), 35);
         assert!(campaign_numbers(0).is_err());
         assert!(campaign_numbers(36).is_err());
+    }
+
+    #[test]
+    fn campaign_counts_include_all_invitations_and_track_submissions() {
+        let mut counts = HashMap::new();
+        add_campaign_count(&mut counts, Some("campaign-a"), false);
+        add_campaign_count(&mut counts, Some("campaign-a"), true);
+        add_campaign_count(&mut counts, Some("campaign-b"), true);
+        add_campaign_count(&mut counts, None, false);
+
+        assert_eq!(counts.get("campaign-a"), Some(&(2, 1)));
+        assert_eq!(counts.get("campaign-b"), Some(&(1, 1)));
+        assert_eq!(
+            counts.get(christmas_greetings::store::LEGACY_CAMPAIGN_ID),
+            Some(&(1, 0))
+        );
     }
 }
