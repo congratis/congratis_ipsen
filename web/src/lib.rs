@@ -465,16 +465,27 @@ async fn load_participants(state: AppState) {
 }
 
 async fn load_campaigns(state: AppState) {
-    state.campaigns.set(None);
     match get_json::<Vec<CampaignAdminItem>>("/api/admin/campaigns").await {
-        Ok(items) => state.campaigns.set(Some(items)),
+        Ok(mut items) => {
+            let previous = state.campaigns.get_cloned().unwrap_or_default();
+            for item in &mut items {
+                if let Some(old) = previous.iter().find(|old| old.id == item.id) {
+                    item.online_count = old.online_count;
+                }
+            }
+            if let Some(selected) = state.selected_campaign.get_cloned() {
+                if let Some(updated) = items.iter().find(|item| item.id == selected.id) {
+                    state.selected_campaign.set(Some(updated.clone()));
+                }
+            }
+            state.campaigns.set(Some(items));
+        }
         Err(error) => {
             state.campaigns.set(Some(Vec::new()));
             set_note(&state, format!("Не удалось загрузить кампании: {error}"));
         }
     }
 }
-
 async fn load_campaign_participants(state: AppState, campaign_id: &str) {
     state.campaign_participants.set(None);
     let path = format!("/api/admin/campaigns/{campaign_id}/participants");
@@ -646,11 +657,18 @@ fn apply_presence_update(state: &AppState, value: serde_json::Value) {
             state.campaign_participants.set(Some(items));
         }
     }
+    let online_count = value.get("online_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     if let Some(mut items) = state.campaigns.get_cloned() {
         if let Some(item) = items.iter_mut().find(|item| item.id == campaign_id) {
-            item.online_count = value.get("online_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            item.online_count = online_count;
         }
         state.campaigns.set(Some(items));
+    }
+    if let Some(mut selected) = state.selected_campaign.get_cloned() {
+        if selected.id == campaign_id {
+            selected.online_count = online_count;
+            state.selected_campaign.set(Some(selected));
+        }
     }
 }
 
