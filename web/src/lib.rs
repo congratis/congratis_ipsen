@@ -678,6 +678,8 @@ fn connect_events(state: AppState) {
                             first_name: event.first_name.unwrap_or_default(),
                             avatar_url: event.avatar_filename.map(|filename| format!("/avatars/{filename}")),
                             message: event.message,
+                            like_count: 0,
+                            liked_by_me: false,
                         };
                         let mut all = greeting_state.greetings.lock_mut();
                         if let Some(old) = all.iter_mut().find(|g| g.ornament_number == greeting.ornament_number) { *old = greeting; }
@@ -1154,19 +1156,26 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                     .attr("aria-labelledby", "presentation-title")
                     .child(html!("section", {
                         .class("presentation-card")
-                        .event(clone!(state => move |event: events::Click| {
-                            let Some(window) = web_sys::window() else { return; };
-                            if window.inner_width().ok().and_then(|width| width.as_f64()).unwrap_or(1024.0) > 700.0 { return; }
-                            if let Some(target) = event.target().and_then(|target| target.dyn_into::<web_sys::Element>().ok()) {
-                                let tag = target.tag_name();
-                                if tag == "BUTTON" || tag == "INPUT" || tag == "A" { return; }
-                            }
-                            let width = window.inner_width().ok().and_then(|value| value.as_f64()).unwrap_or(0.0);
-                            let current = state.presentation_index.get();
-                            let total = state.greetings.lock_ref().len();
-                            if event.client_x() as f64 >= width / 2.0 {
+                        .child(html!("button", {
+                            .class("presentation-tap-zone")
+                            .class("presentation-tap-prev")
+                            .attr("type", "button")
+                            .attr("aria-label", "Предыдущее поздравление")
+                            .event(clone!(state => move |_: events::Click| {
+                                let current = state.presentation_index.get();
+                                if current > 0 { set_presentation_index(&state, current - 1); }
+                            }))
+                        }))
+                        .child(html!("button", {
+                            .class("presentation-tap-zone")
+                            .class("presentation-tap-next")
+                            .attr("type", "button")
+                            .attr("aria-label", "Следующее поздравление")
+                            .event(clone!(state => move |_: events::Click| {
+                                let current = state.presentation_index.get();
+                                let total = state.greetings.lock_ref().len();
                                 if current < total { set_presentation_index(&state, current + 1); }
-                            } else if current > 0 { set_presentation_index(&state, current - 1); }
+                            }))
                         }))
                         .child_signal(state.presentation_index.signal().map(clone!(state => move |index| {
                             let greetings = state.greetings.get_cloned();
