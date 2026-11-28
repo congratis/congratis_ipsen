@@ -93,7 +93,7 @@ struct Participant {
 #[derive(Clone, Deserialize)]
 struct CampaignSummary { participant_count: usize, submitted_count: usize, #[serde(default)] campaign_name: String }
 #[derive(Clone, Deserialize)]
-struct CampaignAdminItem { id: String, name: String, created_at: i64, participant_count: usize, submitted_count: usize, #[serde(default)] online_count: usize }
+struct CampaignAdminItem { id: String, name: String, participant_count: usize, submitted_count: usize, #[serde(default)] online_count: usize }
 #[derive(Clone, Deserialize)]
 struct CreateCampaignResponse { campaign: CampaignAdminItem, invitations: Vec<CreatedInvitation> }
 #[derive(Clone, Deserialize)]
@@ -481,7 +481,7 @@ fn play_presentation_audio(state: AppState) {
             spawn_local(async move {
                 if JsFuture::from(promise).await.is_err() {
                     if let Some(audio) = current.audio.get_cloned() {
-                        audio.pause();
+                        let _ = audio.pause();
                     }
                     current.audio.set(None);
                     current.music_playing.set(false);
@@ -522,7 +522,7 @@ fn toggle_presentation_pause(state: AppState) {
     state.presentation_paused.set(paused);
     if paused {
         clear_presentation_timeout(&state);
-        if let Some(audio) = state.audio.get_cloned() { audio.pause(); }
+        if let Some(audio) = state.audio.get_cloned() { let _ = audio.pause(); }
         state.music_playing.set(false);
     } else {
         play_presentation_audio(state.clone());
@@ -544,7 +544,7 @@ fn set_music_volume(state: &AppState, volume: f64) {
 
 fn exit_presentation(state: AppState) {
     clear_presentation_timeout(&state);
-    if let Some(audio) = state.audio.get_cloned() { audio.pause(); }
+    if let Some(audio) = state.audio.get_cloned() { let _ = audio.pause(); }
     state.audio.set(None);
     state.music_playing.set(false);
     state.presentation.set(false);
@@ -930,7 +930,7 @@ fn field(
     if is_textarea {
         html!("label", { .text(label).child(html!("textarea", {
             .attr("rows", "4").attr("maxlength", "500").attr("placeholder", placeholder)
-            .property("value", &value.get_cloned())
+            .prop("value", &value.get_cloned())
             .event(clone!(value, draft_state, draft_subject_id => move |event: events::Input| {
                 if let Some(target) = event.target() {
                     if let Ok(input) = target.dyn_into::<HtmlTextAreaElement>() {
@@ -946,7 +946,7 @@ fn field(
     } else {
         html!("label", { .text(label).child(html!("input", {
             .attr("type", "text").attr("maxlength", "80").attr("placeholder", placeholder)
-            .property("value", &value.get_cloned())
+            .prop("value", &value.get_cloned())
             .event(clone!(value, draft_state, draft_subject_id => move |event: events::Input| {
                 if let Some(target) = event.target() {
                     if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
@@ -1384,7 +1384,7 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                                     .attr("max", "1")
                                     .attr("step", "0.05")
                                     .attr("aria-label", "Громкость музыки")
-                                    .property("value", &state.music_volume.get().to_string())
+                                    .prop("value", &state.music_volume.get().to_string())
                                     .event(clone!(state => move |event: events::Input| {
                                         if let Some(target) = event.target() {
                                             if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
@@ -1561,7 +1561,7 @@ fn create_named_campaign_panel(state: AppState) -> Dom {
             .child(html!("input", {
                 .attr("type", "text").attr("maxlength", "100")
                 .attr("aria-label", "Название кампании")
-                .property("value", &state.campaign_name.get_cloned())
+                .prop("value", &state.campaign_name.get_cloned())
                 .event(clone!(state => move |event: events::Input| {
                     if let Some(target) = event.target() {
                         if let Ok(input) = target.dyn_into::<HtmlInputElement>() { state.campaign_name.set(input.value()); }
@@ -1574,7 +1574,7 @@ fn create_named_campaign_panel(state: AppState) -> Dom {
             .child(html!("input", {
                 .attr("type", "number").attr("min", "1").attr("max", "35").attr("step", "1")
                 .attr("aria-label", "Размер новой кампании")
-                .property("value", &state.campaign_size.get_cloned())
+                .prop("value", &state.campaign_size.get_cloned())
                 .event(clone!(state => move |event: events::Input| {
                     if let Some(target) = event.target() {
                         if let Ok(input) = target.dyn_into::<HtmlInputElement>() { state.campaign_size.set(input.value()); }
@@ -1801,7 +1801,7 @@ fn campaign_participants_panel(state: AppState) -> Dom {
                             .child(html!("input", {
                                 .attr("type", "number").attr("min", "1").attr("max", "35").attr("step", "1")
                                 .attr("aria-label", "Количество новых приглашений")
-                                .property("value", &state.campaign_invite_count.get_cloned())
+                                .prop("value", &state.campaign_invite_count.get_cloned())
                                 .event(clone!(state => move |event: events::Input| {
                                     if let Some(target) = event.target() {
                                         if let Ok(input) = target.dyn_into::<HtmlInputElement>() { state.campaign_invite_count.set(input.value()); }
@@ -2005,7 +2005,7 @@ fn admin_screen(state: AppState) -> Dom {
                                 .attr("type", "url")
                                 .attr("readonly", "")
                                 .attr("aria-label", &format!("Ссылка для шара №{}", invite.ornament_number))
-                                .property("value", &invite.url)
+                                .prop("value", &invite.url)
                                 .event(|event: events::Click| {
                                     if let Some(target) = event.target() {
                                         if let Ok(input) = target.dyn_into::<HtmlInputElement>() { input.select(); }
@@ -2030,7 +2030,7 @@ fn admin_screen(state: AppState) -> Dom {
                         .attr("type", "url")
                         .attr("readonly", "")
                         .attr("aria-label", "Одноразовая ссылка-приглашение")
-                        .property("value", &url)
+                        .prop("value", &url)
                         .event(|event: events::Click| {
                             if let Some(target) = event.target() {
                                 if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
@@ -2164,7 +2164,7 @@ fn reset_session_state(state: &AppState) {
     disconnect_events(state);
     disconnect_presence_events(state);
     if let Some(audio) = state.audio.get_cloned() {
-        audio.pause();
+        let _ = audio.pause();
     }
     state.audio.set(None);
 
