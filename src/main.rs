@@ -899,22 +899,41 @@ async fn admin_list_campaigns(
             "Не удалось загрузить кампании",
         )
     })?;
-    let mut items = Vec::with_capacity(campaigns.len());
-    for campaign in campaigns {
-        let participants = state.store.list_campaign_participants(&campaign.id).await.map_err(|error| {
-            tracing::error!(?error, campaign_id = %campaign.id, "campaign participant count failed");
-            ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Не удалось загрузить данные кампании")
-        })?;
-        let participant_count = participants.len();
-        let submitted_count = participants.iter().filter(|item| item.submitted).count();
-        items.push(CampaignAdminItem {
-            id: campaign.id,
-            name: campaign.name,
-            created_at: campaign.created_at,
-            participant_count,
-            submitted_count,
-        });
+    // One table read for all campaigns replaces the previous per-campaign
+    // participant lookup (N+1). Counts only need invitation state, not likes.
+    let ornaments = state.store.list_ornaments().await.map_err(|error| {
+        tracing::error!(?error, "campaign invitation counts lookup failed");
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Не удалось загрузить данные кампании",
+        )
+    })?;
+    let mut counts = HashMap::<String, (usize, usize)>::new();
+    for ornament in ornaments {
+        let campaign_id = ornament
+            .campaign_id
+            .unwrap_or_else(|| christmas_greetings::store::LEGACY_CAMPAIGN_ID.to_owned());
+        let entry = counts.entry(campaign_id).or_default();
+        entry.0 += 1;
+        if ornament.used {
+            entry.1 += 1;
+        }
     }
+
+    let items = campaigns
+        .into_iter()
+        .map(|campaign| {
+            let (participant_count, submitted_count) =
+                counts.get(&campaign.id).copied().unwrap_or_default();
+            CampaignAdminItem {
+                id: campaign.id,
+                name: campaign.name,
+                created_at: campaign.created_at,
+                participant_count,
+                submitted_count,
+            }
+        })
+        .collect();
     Ok(Json(items))
 }
 
