@@ -89,7 +89,7 @@ jobs:
           node-version: 20
       - name: Install frontend dependencies
         working-directory: web
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Build frontend with Rollup
         working-directory: web
         run: npm run build
