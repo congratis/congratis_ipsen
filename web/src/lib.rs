@@ -44,7 +44,11 @@ impl Route {
     }
 }
 #[derive(Clone, Deserialize, Serialize)]
-struct Greeting { ornament_number: i16, display_name: String, #[serde(default)] surname: String, #[serde(default)] first_name: String, #[serde(default)] avatar_url: Option<String>, message: String }
+struct Greeting { ornament_number: i16, display_name: String, #[serde(default)] surname: String, #[serde(default)] first_name: String, #[serde(default)] avatar_url: Option<String>, message: String, #[serde(default)] like_count: usize, #[serde(default)] liked_by_me: bool }
+#[derive(Clone, Deserialize)]
+struct LeaderboardEntry { display_name: String, #[serde(default)] avatar_url: Option<String>, like_count: usize }
+#[derive(Deserialize)]
+struct LikeResponse { liked: bool, like_count: usize }
 #[derive(Clone, Deserialize)]
 struct RealtimeGreeting { campaign_id: String, ornament_number: i16, display_name: String, #[serde(default)] surname: Option<String>, #[serde(default)] first_name: Option<String>, #[serde(default)] avatar_filename: Option<String>, message: String }
 #[derive(Clone, Deserialize)]
@@ -64,6 +68,7 @@ struct Participant {
     #[serde(default)] avatar_filename: Option<String>,
     created_at: i64,
     used_at: Option<i64>,
+    #[serde(default)] like_count: usize,
 }
 #[derive(Clone, Deserialize)]
 struct CampaignSummary { participant_count: usize, submitted_count: usize, #[serde(default)] campaign_name: String }
@@ -93,6 +98,7 @@ struct AppState {
     auth_ready: Mutable<bool>,
     exchanging: Mutable<bool>,
     greetings: Mutable<Vec<Greeting>>,
+    leaderboard: Mutable<Vec<LeaderboardEntry>>,
     participants: Mutable<Option<Vec<Participant>>>,
     campaigns: Mutable<Option<Vec<CampaignAdminItem>>>,
     selected_campaign: Mutable<Option<CampaignAdminItem>>,
@@ -107,6 +113,7 @@ struct AppState {
     presentation_index: Mutable<usize>,
     presentation_ornament: Mutable<Option<i16>>,
     presentation_paused: Mutable<bool>,
+    presentation_timeout: Rc<RefCell<Option<i32>>>,
     music_muted: Mutable<bool>,
     music_volume: Mutable<f64>,
     audio: Mutable<Option<HtmlAudioElement>>,
@@ -131,7 +138,7 @@ struct AppState {
 }
 impl AppState {
     fn new() -> Self {
-        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_title: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), presence_connection: Rc::new(RefCell::new(None)), online_count: Mutable::new(0), presence_activity_at: Rc::new(RefCell::new(0.0)), name: Mutable::new(String::new()), first_name: Mutable::new(String::new()), avatar_data_url: Mutable::new(None), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
+        Self { user: Mutable::new(None), auth_ready: Mutable::new(false), exchanging: Mutable::new(false), greetings: Mutable::new(Vec::new()), leaderboard: Mutable::new(Vec::new()), participants: Mutable::new(None), campaigns: Mutable::new(None), selected_campaign: Mutable::new(None), campaign_participants: Mutable::new(None), campaign_invite_count: Mutable::new("5".into()), campaign_name: Mutable::new(String::new()), campaign_title: Mutable::new(String::new()), campaign_count: Mutable::new(0), submitted_count: Mutable::new(0), selected: Mutable::new(None), presentation: Mutable::new(false), presentation_index: Mutable::new(0), presentation_ornament: Mutable::new(None), presentation_paused: Mutable::new(false), presentation_timeout: Rc::new(RefCell::new(None)), music_muted: Mutable::new(false), music_volume: Mutable::new(0.65), audio: Mutable::new(None), sse_connection: Rc::new(RefCell::new(None)), presence_connection: Rc::new(RefCell::new(None)), online_count: Mutable::new(0), presence_activity_at: Rc::new(RefCell::new(0.0)), name: Mutable::new(String::new()), first_name: Mutable::new(String::new()), avatar_data_url: Mutable::new(None), message: Mutable::new(String::new()), admin_name: Mutable::new(String::new()), admin_password: Mutable::new(String::new()), note: Mutable::new(String::new()), invite_url: Mutable::new(String::new()), invite_urls: Mutable::new(Vec::new()), campaign_size: Mutable::new("20".into()), campaign_creating: Mutable::new(false), submitting: Mutable::new(false), logging_in: Mutable::new(false), dialog_return_focus: Mutable::new(None) }
     }
     fn csrf(&self) -> String { self.user.lock_ref().as_ref().map(|u| u.csrf_token.clone()).unwrap_or_default() }
 }
@@ -358,10 +365,34 @@ fn install_dialog_keyboard_handler(state: AppState) {
 }
 const PRESENTATION_AUDIO_URL: &str = "/music.mp3";
 
+fn clear_presentation_timeout(state: &AppState) {
+    if let Some(id) = state.presentation_timeout.borrow_mut().take() {
+        if let Some(window) = web_sys::window() { window.clear_timeout_with_handle(id); }
+    }
+}
+fn schedule_presentation_timeout(state: &AppState) {
+    clear_presentation_timeout(state);
+    if !state.presentation.get() || state.presentation_paused.get() { return; }
+    let index = state.presentation_index.get();
+    if index >= state.greetings.lock_ref().len() { return; }
+    let current = state.clone();
+    let callback = Closure::once_into_js(move || {
+        if !current.presentation.get() || current.presentation_paused.get() { return; }
+        let next = current.presentation_index.get().saturating_add(1);
+        set_presentation_index(&current, next);
+    });
+    if let Some(window) = web_sys::window() {
+        if let Ok(id) = window.set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), 4000) {
+            *state.presentation_timeout.borrow_mut() = Some(id);
+        }
+    }
+}
 fn set_presentation_index(state: &AppState, index: usize) {
     let greetings = state.greetings.get_cloned();
+    let index = index.min(greetings.len());
     state.presentation_index.set(index);
     state.presentation_ornament.set(greetings.get(index).map(|greeting| greeting.ornament_number));
+    schedule_presentation_timeout(state);
 }
 
 fn play_presentation_audio(state: AppState) {
@@ -408,7 +439,14 @@ fn play_presentation_audio(state: AppState) {
 fn start_presentation(state: AppState) {
     state.presentation.set(true);
     state.presentation_paused.set(false);
+    state.leaderboard.set(Vec::new());
     set_presentation_index(&state, 0);
+    let leaderboard_state = state.clone();
+    spawn_local(async move {
+        if let Ok(entries) = get_json::<Vec<LeaderboardEntry>>("/api/leaderboard").await {
+            leaderboard_state.leaderboard.set(entries);
+        }
+    });
     if state.greetings.get_cloned().is_empty() {
         set_note(&state, "Пока нет опубликованных поздравлений");
     } else {
@@ -420,9 +458,11 @@ fn toggle_presentation_pause(state: AppState) {
     let paused = !state.presentation_paused.get();
     state.presentation_paused.set(paused);
     if paused {
+        clear_presentation_timeout(&state);
         if let Some(audio) = state.audio.get_cloned() { audio.pause(); }
     } else {
-        play_presentation_audio(state);
+        play_presentation_audio(state.clone());
+        schedule_presentation_timeout(&state);
     }
 }
 
@@ -439,6 +479,7 @@ fn set_music_volume(state: &AppState, volume: f64) {
 }
 
 fn exit_presentation(state: AppState) {
+    clear_presentation_timeout(&state);
     if let Some(audio) = state.audio.get_cloned() { audio.pause(); }
     state.audio.set(None);
     state.presentation.set(false);
@@ -1964,7 +2005,9 @@ fn reset_session_state(state: &AppState) {
     }
 
     state.user.set(None);
+    clear_presentation_timeout(state);
     state.greetings.set(Vec::new());
+    state.leaderboard.set(Vec::new());
     state.participants.set(None);
     state.campaigns.set(None);
     state.selected_campaign.set(None);
