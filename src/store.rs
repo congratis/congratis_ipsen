@@ -15,9 +15,15 @@ const LIKES_TABLE: &str = "greeting_likes";
 pub const LEGACY_CAMPAIGN_ID: &str = "legacy-default";
 const INDEX_PROBE_TOKEN: &str = "__congratis_index_probe__";
 
-fn active_campaign_status() -> String { "active".to_owned() }
+fn active_campaign_status() -> String {
+    "active".to_owned()
+}
 
-fn validate_campaign_deletion(campaign_id: &str, campaign_name: &str, confirmation: &str) -> Result<()> {
+fn validate_campaign_deletion(
+    campaign_id: &str,
+    campaign_name: &str,
+    confirmation: &str,
+) -> Result<()> {
     if campaign_id == LEGACY_CAMPAIGN_ID {
         bail!("the legacy campaign cannot be deleted");
     }
@@ -64,9 +70,11 @@ impl ConnectionConfig {
             .port(self.port)
             .user(self.user.clone())
             .password(self.password.clone());
-        Ok(tokio::time::timeout(Duration::from_secs(10), r.connect(options))
-            .await
-            .context("timed out connecting to RethinkDB")??)
+        Ok(
+            tokio::time::timeout(Duration::from_secs(10), r.connect(options))
+                .await
+                .context("timed out connecting to RethinkDB")??,
+        )
     }
 }
 
@@ -195,11 +203,7 @@ impl Store {
         }
 
         let indexes = self
-            .first::<Vec<String>>(
-                r.db(self.database.as_str())
-                    .table(TABLE)
-                    .index_list(),
-            )
+            .first::<Vec<String>>(r.db(self.database.as_str()).table(TABLE).index_list())
             .await?
             .ok_or_else(|| anyhow!("RethinkDB returned no index list"))?;
 
@@ -216,31 +220,37 @@ impl Store {
 
         self.wait_for_token_index().await?;
 
-        let tables = self.first::<Vec<String>>(
-            r.db(self.database.as_str()).table_list()
-        ).await?.ok_or_else(|| anyhow!("RethinkDB returned no table list"))?;
+        let tables = self
+            .first::<Vec<String>>(r.db(self.database.as_str()).table_list())
+            .await?
+            .ok_or_else(|| anyhow!("RethinkDB returned no table list"))?;
         if !tables.iter().any(|name| name == SESSIONS_TABLE) {
-            let _: Option<Value> = self.first(
-                r.db(self.database.as_str()).table_create(SESSIONS_TABLE)
-            ).await.context("creating auth_sessions table")?;
+            let _: Option<Value> = self
+                .first(r.db(self.database.as_str()).table_create(SESSIONS_TABLE))
+                .await
+                .context("creating auth_sessions table")?;
         }
 
-        let tables = self.first::<Vec<String>>(
-            r.db(self.database.as_str()).table_list()
-        ).await?.ok_or_else(|| anyhow!("RethinkDB returned no table list"))?;
+        let tables = self
+            .first::<Vec<String>>(r.db(self.database.as_str()).table_list())
+            .await?
+            .ok_or_else(|| anyhow!("RethinkDB returned no table list"))?;
         if !tables.iter().any(|name| name == CAMPAIGNS_TABLE) {
-            let _: Option<Value> = self.first(
-                r.db(self.database.as_str()).table_create(CAMPAIGNS_TABLE)
-            ).await.context("creating campaigns table")?;
+            let _: Option<Value> = self
+                .first(r.db(self.database.as_str()).table_create(CAMPAIGNS_TABLE))
+                .await
+                .context("creating campaigns table")?;
         }
 
-        let tables = self.first::<Vec<String>>(
-            r.db(self.database.as_str()).table_list()
-        ).await?.ok_or_else(|| anyhow!("RethinkDB returned no table list"))?;
+        let tables = self
+            .first::<Vec<String>>(r.db(self.database.as_str()).table_list())
+            .await?
+            .ok_or_else(|| anyhow!("RethinkDB returned no table list"))?;
         if !tables.iter().any(|name| name == LIKES_TABLE) {
-            let _: Option<Value> = self.first(
-                r.db(self.database.as_str()).table_create(LIKES_TABLE)
-            ).await.context("creating greeting_likes table")?;
+            let _: Option<Value> = self
+                .first(r.db(self.database.as_str()).table_create(LIKES_TABLE))
+                .await
+                .context("creating greeting_likes table")?;
         }
 
         self.migrate_legacy_campaign().await?;
@@ -264,23 +274,28 @@ impl Store {
         }
         drop(sessions_stream);
 
-        let mut needs_legacy_campaign = ornaments.iter().any(|item| {
-            item.campaign_id.as_deref().is_none_or(str::is_empty)
-        });
+        let mut needs_legacy_campaign = ornaments
+            .iter()
+            .any(|item| item.campaign_id.as_deref().is_none_or(str::is_empty));
 
         for session in &sessions {
             if session.get("role").and_then(Value::as_str) != Some("participant")
                 || session.get("revoked").and_then(Value::as_bool) == Some(true)
-                || session.get("campaign_id").and_then(Value::as_str).is_some_and(|id| !id.is_empty())
+                || session
+                    .get("campaign_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !id.is_empty())
             {
                 continue;
             }
 
-            let subject = session.get("subject_id").and_then(Value::as_str)
+            let subject = session
+                .get("subject_id")
+                .and_then(Value::as_str)
                 .and_then(|value| value.parse::<i16>().ok());
-            if let Some(ornament) = subject.and_then(|number| {
-                ornaments.iter().find(|item| item.ornament_number == number)
-            }) {
+            if let Some(ornament) = subject
+                .and_then(|number| ornaments.iter().find(|item| item.ornament_number == number))
+            {
                 if ornament.campaign_id.as_deref().is_none_or(str::is_empty)
                     || ornament.campaign_id.as_deref() == Some(LEGACY_CAMPAIGN_ID)
                 {
@@ -291,36 +306,50 @@ impl Store {
 
         if needs_legacy_campaign {
             let existing: Option<Value> = self
-                .first(r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(LEGACY_CAMPAIGN_ID))
+                .first(
+                    r.db(self.database.as_str())
+                        .table(CAMPAIGNS_TABLE)
+                        .get(LEGACY_CAMPAIGN_ID),
+                )
                 .await?;
             if existing.is_none() {
                 let now = Utc::now().timestamp();
                 let result = self
                     .first::<WriteResult>(
-                        r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).insert(json!({
-                            "id": LEGACY_CAMPAIGN_ID,
-                            "name": "Существующая кампания",
-                            "status": "active",
-                            "created_at": now,
-                            "updated_at": now
-                        })),
+                        r.db(self.database.as_str())
+                            .table(CAMPAIGNS_TABLE)
+                            .insert(json!({
+                                "id": LEGACY_CAMPAIGN_ID,
+                                "name": "Существующая кампания",
+                                "status": "active",
+                                "created_at": now,
+                                "updated_at": now
+                            })),
                     )
                     .await?
                     .ok_or_else(|| anyhow!("missing legacy campaign insert result"))?;
                 if result.errors != 0 || result.inserted != 1 {
                     let found: Option<Value> = self
-                        .first(r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(LEGACY_CAMPAIGN_ID))
+                        .first(
+                            r.db(self.database.as_str())
+                                .table(CAMPAIGNS_TABLE)
+                                .get(LEGACY_CAMPAIGN_ID),
+                        )
                         .await?;
                     if found.is_none() {
-                        bail!("legacy campaign creation failed: {}", result.first_error.unwrap_or_default());
+                        bail!(
+                            "legacy campaign creation failed: {}",
+                            result.first_error.unwrap_or_default()
+                        );
                     }
                 }
             }
         }
 
-        for ornament in ornaments.iter().filter(|item| {
-            item.campaign_id.as_deref().is_none_or(str::is_empty)
-        }) {
+        for ornament in ornaments
+            .iter()
+            .filter(|item| item.campaign_id.as_deref().is_none_or(str::is_empty))
+        {
             let result = self
                 .first::<WriteResult>(
                     r.db(self.database.as_str())
@@ -342,22 +371,32 @@ impl Store {
         for session in sessions {
             if session.get("role").and_then(Value::as_str) != Some("participant")
                 || session.get("revoked").and_then(Value::as_bool) == Some(true)
-                || session.get("campaign_id").and_then(Value::as_str).is_some_and(|id| !id.is_empty())
+                || session
+                    .get("campaign_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !id.is_empty())
             {
                 continue;
             }
 
-            let id = session.get("id").and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("participant session without an ID during campaign migration"))?
+            let id = session
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    anyhow!("participant session without an ID during campaign migration")
+                })?
                 .to_owned();
-            let subject = session.get("subject_id").and_then(Value::as_str)
+            let subject = session
+                .get("subject_id")
+                .and_then(Value::as_str)
                 .and_then(|value| value.parse::<i16>().ok());
-            let matching_ornament = subject.and_then(|number| {
-                ornaments.iter().find(|item| item.ornament_number == number)
-            });
+            let matching_ornament = subject
+                .and_then(|number| ornaments.iter().find(|item| item.ornament_number == number));
 
             let update = if let Some(ornament) = matching_ornament {
-                let campaign_id = ornament.campaign_id.as_deref()
+                let campaign_id = ornament
+                    .campaign_id
+                    .as_deref()
                     .filter(|value| !value.is_empty())
                     .unwrap_or(LEGACY_CAMPAIGN_ID);
                 json!({"campaign_id": campaign_id})
@@ -377,15 +416,21 @@ impl Store {
                 .await?
                 .ok_or_else(|| anyhow!("missing participant session migration result"))?;
             if result.errors != 0 {
-                bail!("participant session migration failed: {}", result.first_error.unwrap_or_default());
+                bail!(
+                    "participant session migration failed: {}",
+                    result.first_error.unwrap_or_default()
+                );
             }
         }
 
         let migrated = self.list_ornaments().await?;
-        if migrated.iter().any(|item| {
-            item.campaign_id.as_deref().is_none_or(str::is_empty)
-        }) {
-            bail!("campaign migration verification failed: an invitation has no campaign assignment");
+        if migrated
+            .iter()
+            .any(|item| item.campaign_id.as_deref().is_none_or(str::is_empty))
+        {
+            bail!(
+                "campaign migration verification failed: an invitation has no campaign assignment"
+            );
         }
 
         let mut campaign_stream = r
@@ -401,7 +446,9 @@ impl Store {
         drop(campaign_stream);
 
         if migrated.iter().any(|item| {
-            item.campaign_id.as_ref().is_some_and(|id| !campaign_ids.contains(id))
+            item.campaign_id
+                .as_ref()
+                .is_some_and(|id| !campaign_ids.contains(id))
         }) {
             bail!("campaign migration verification failed: an invitation references a missing campaign");
         }
@@ -474,13 +521,21 @@ impl Store {
         while let Some(campaign) = stream.try_next().await? {
             campaigns.push(campaign);
         }
-        campaigns.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.name.cmp(&b.name)));
+        campaigns.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.name.cmp(&b.name))
+        });
         Ok(campaigns)
     }
 
     pub async fn get_campaign(&self, campaign_id: &str) -> Result<Option<Campaign>> {
         let value: Option<Value> = self
-            .first(r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(campaign_id))
+            .first(
+                r.db(self.database.as_str())
+                    .table(CAMPAIGNS_TABLE)
+                    .get(campaign_id),
+            )
             .await?;
         match value {
             None | Some(Value::Null) => Ok(None),
@@ -513,7 +568,10 @@ impl Store {
             .await?
             .ok_or_else(|| anyhow!("missing campaign insert result"))?;
         if result.errors != 0 || result.inserted != 1 {
-            bail!("campaign insert failed: {}", result.first_error.unwrap_or_default());
+            bail!(
+                "campaign insert failed: {}",
+                result.first_error.unwrap_or_default()
+            );
         }
         Ok(campaign)
     }
@@ -527,37 +585,66 @@ impl Store {
         validate_campaign_deletion(campaign_id, &campaign.name, confirmation)?;
 
         let now = Utc::now().timestamp();
-        let marked = self.first::<WriteResult>(
-            r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(campaign_id)
-                .update(json!({"status": "deleting", "updated_at": now}))
-        ).await?.ok_or_else(|| anyhow!("missing campaign deletion marker result"))?;
+        let marked = self
+            .first::<WriteResult>(
+                r.db(self.database.as_str())
+                    .table(CAMPAIGNS_TABLE)
+                    .get(campaign_id)
+                    .update(json!({"status": "deleting", "updated_at": now})),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("missing campaign deletion marker result"))?;
         if marked.errors != 0 {
-            bail!("campaign deletion marker failed: {}", marked.first_error.unwrap_or_default());
+            bail!(
+                "campaign deletion marker failed: {}",
+                marked.first_error.unwrap_or_default()
+            );
         }
 
         // Remove only invitation documents that still carry this campaign ID.
         for ornament in self.list_campaign_ornaments(campaign_id).await? {
-            let result = self.first::<WriteResult>(
-                r.db(self.database.as_str()).table(TABLE).get(ornament.id).delete(())
-            ).await?.ok_or_else(|| anyhow!("missing campaign invitation deletion result"))?;
+            let result = self
+                .first::<WriteResult>(
+                    r.db(self.database.as_str())
+                        .table(TABLE)
+                        .get(ornament.id)
+                        .delete(()),
+                )
+                .await?
+                .ok_or_else(|| anyhow!("missing campaign invitation deletion result"))?;
             if result.errors != 0 {
-                bail!("campaign invitation deletion failed: {}", result.first_error.unwrap_or_default());
+                bail!(
+                    "campaign invitation deletion failed: {}",
+                    result.first_error.unwrap_or_default()
+                );
             }
         }
 
         // Remove likes after the greeting documents have been deleted.
         for like in self.list_campaign_like_rows(campaign_id).await? {
-            let result = self.first::<WriteResult>(
-                r.db(self.database.as_str()).table(LIKES_TABLE).get(like.id).delete(())
-            ).await?.ok_or_else(|| anyhow!("missing campaign like deletion result"))?;
+            let result = self
+                .first::<WriteResult>(
+                    r.db(self.database.as_str())
+                        .table(LIKES_TABLE)
+                        .get(like.id)
+                        .delete(()),
+                )
+                .await?
+                .ok_or_else(|| anyhow!("missing campaign like deletion result"))?;
             if result.errors != 0 {
-                bail!("campaign like deletion failed: {}", result.first_error.unwrap_or_default());
+                bail!(
+                    "campaign like deletion failed: {}",
+                    result.first_error.unwrap_or_default()
+                );
             }
         }
 
         // Delete participant sessions only; administrator sessions have no campaign ID.
         for _ in 0..2 {
-            let mut stream = r.db(self.database.as_str()).table(SESSIONS_TABLE).run::<_, Value>(&self.session);
+            let mut stream = r
+                .db(self.database.as_str())
+                .table(SESSIONS_TABLE)
+                .run::<_, Value>(&self.session);
             let mut session_ids = Vec::new();
             while let Some(session) = stream.try_next().await? {
                 if session.get("role").and_then(Value::as_str) == Some("participant")
@@ -570,21 +657,39 @@ impl Store {
             }
             drop(stream);
             for id in session_ids {
-                let result = self.first::<WriteResult>(
-                    r.db(self.database.as_str()).table(SESSIONS_TABLE).get(id.as_str()).delete(())
-                ).await?.ok_or_else(|| anyhow!("missing participant session deletion result"))?;
+                let result = self
+                    .first::<WriteResult>(
+                        r.db(self.database.as_str())
+                            .table(SESSIONS_TABLE)
+                            .get(id.as_str())
+                            .delete(()),
+                    )
+                    .await?
+                    .ok_or_else(|| anyhow!("missing participant session deletion result"))?;
                 if result.errors != 0 {
-                    bail!("participant session deletion failed: {}", result.first_error.unwrap_or_default());
+                    bail!(
+                        "participant session deletion failed: {}",
+                        result.first_error.unwrap_or_default()
+                    );
                 }
             }
         }
 
         // Delete the campaign record last so an interrupted cleanup can be retried.
-        let result = self.first::<WriteResult>(
-            r.db(self.database.as_str()).table(CAMPAIGNS_TABLE).get(campaign_id).delete(())
-        ).await?.ok_or_else(|| anyhow!("missing campaign record deletion result"))?;
+        let result = self
+            .first::<WriteResult>(
+                r.db(self.database.as_str())
+                    .table(CAMPAIGNS_TABLE)
+                    .get(campaign_id)
+                    .delete(()),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("missing campaign record deletion result"))?;
         if result.errors != 0 {
-            bail!("campaign record deletion failed: {}", result.first_error.unwrap_or_default());
+            bail!(
+                "campaign record deletion failed: {}",
+                result.first_error.unwrap_or_default()
+            );
         }
         Ok(result.deleted == 1)
     }
@@ -593,7 +698,9 @@ impl Store {
         let mut stream = r
             .db(self.database.as_str())
             .table(TABLE)
-            .filter(reql::func!(|document| document.get_field("campaign_id").eq(campaign_id)))
+            .filter(reql::func!(|document| document
+                .get_field("campaign_id")
+                .eq(campaign_id)))
             .run::<_, Ornament>(&self.session);
         let mut ornaments = Vec::new();
         while let Some(ornament) = stream.try_next().await? {
@@ -610,7 +717,11 @@ impl Store {
         campaign_id: &str,
         invitations: &[(i16, String)],
     ) -> Result<()> {
-        if self.get_campaign(campaign_id).await?.is_none_or(|campaign| campaign.status != "active") {
+        if self
+            .get_campaign(campaign_id)
+            .await?
+            .is_none_or(|campaign| campaign.status != "active")
+        {
             bail!("campaign does not exist or is not active");
         }
         if invitations.is_empty() {
@@ -621,16 +732,15 @@ impl Store {
         let occupied: std::collections::HashSet<i16> =
             existing.iter().map(|item| item.ornament_number).collect();
         let all_ornaments = self.list_ornaments().await?;
-        let existing_hashes: std::collections::HashSet<String> =
-            all_ornaments.into_iter().map(|item| item.token_hash).collect();
+        let existing_hashes: std::collections::HashSet<String> = all_ornaments
+            .into_iter()
+            .map(|item| item.token_hash)
+            .collect();
         let mut numbers = std::collections::HashSet::new();
         let mut hashes = std::collections::HashSet::new();
 
         for (number, token_hash) in invitations {
-            if !(1..=35).contains(number)
-                || occupied.contains(number)
-                || !numbers.insert(*number)
-            {
+            if !(1..=35).contains(number) || occupied.contains(number) || !numbers.insert(*number) {
                 bail!("invitation slots must be unique unused values between 1 and 35");
             }
             if existing_hashes.contains(token_hash) || !hashes.insert(token_hash) {
@@ -659,11 +769,7 @@ impl Store {
             .collect();
 
         let result = self
-            .first::<WriteResult>(
-                r.db(self.database.as_str())
-                    .table(TABLE)
-                    .insert(documents),
-            )
+            .first::<WriteResult>(r.db(self.database.as_str()).table(TABLE).insert(documents))
             .await?
             .ok_or_else(|| anyhow!("missing campaign invitation insert result"))?;
         if result.errors != 0 || result.inserted != invitations.len() as u64 {
@@ -683,19 +789,25 @@ impl Store {
     ) -> Result<Vec<ParticipantSummary>> {
         let ornaments = self.list_campaign_ornaments(campaign_id).await?;
         let likes = self.list_campaign_like_rows(campaign_id).await?;
-        Ok(ornaments.into_iter().map(|item| ParticipantSummary {
-            ornament_number: item.ornament_number,
-            activated: item.activated,
-            submitted: item.used,
-            revoked: item.revoked,
-            display_name: item.display_name,
-            surname: item.surname,
-            first_name: item.first_name,
-            avatar_filename: item.avatar_filename,
-            created_at: item.created_at,
-            used_at: item.used_at,
-            like_count: likes.iter().filter(|like| like.target_number == item.ornament_number).count(),
-        }).collect())
+        Ok(ornaments
+            .into_iter()
+            .map(|item| ParticipantSummary {
+                ornament_number: item.ornament_number,
+                activated: item.activated,
+                submitted: item.used,
+                revoked: item.revoked,
+                display_name: item.display_name,
+                surname: item.surname,
+                first_name: item.first_name,
+                avatar_filename: item.avatar_filename,
+                created_at: item.created_at,
+                used_at: item.used_at,
+                like_count: likes
+                    .iter()
+                    .filter(|like| like.target_number == item.ornament_number)
+                    .count(),
+            })
+            .collect())
     }
 
     pub async fn reissue_campaign_invitation(
@@ -708,16 +820,25 @@ impl Store {
         let update = reql::func!(|document| {
             r.branch(
                 r.args((
-                    document.clone().get_field("campaign_id").eq(campaign_id)
-                        .and(document.clone().get_field("activated").default(r.expr(false)).eq(false))
+                    document
+                        .clone()
+                        .get_field("campaign_id")
+                        .eq(campaign_id)
+                        .and(
+                            document
+                                .clone()
+                                .get_field("activated")
+                                .default(r.expr(false))
+                                .eq(false),
+                        )
                         .and(document.clone().get_field("used").eq(false)),
                     document.clone().merge(r.expr(json!({
                         "token_hash": token_hash,
                         "revoked": false,
                         "created_at": Utc::now().timestamp()
                     }))),
-                    document
-                ))
+                    document,
+                )),
             )
         });
         let result = self
@@ -730,7 +851,10 @@ impl Store {
             .await?
             .ok_or_else(|| anyhow!("missing campaign invitation reissue result"))?;
         if result.errors != 0 {
-            bail!("campaign invitation reissue failed: {}", result.first_error.unwrap_or_default());
+            bail!(
+                "campaign invitation reissue failed: {}",
+                result.first_error.unwrap_or_default()
+            );
         }
         Ok(result.replaced == 1)
     }
@@ -744,12 +868,21 @@ impl Store {
         let update = reql::func!(|document| {
             r.branch(
                 r.args((
-                    document.clone().get_field("campaign_id").eq(campaign_id)
-                        .and(document.clone().get_field("activated").default(r.expr(false)).eq(false))
+                    document
+                        .clone()
+                        .get_field("campaign_id")
+                        .eq(campaign_id)
+                        .and(
+                            document
+                                .clone()
+                                .get_field("activated")
+                                .default(r.expr(false))
+                                .eq(false),
+                        )
                         .and(document.clone().get_field("used").eq(false)),
                     document.clone().merge(r.expr(json!({"revoked": true}))),
-                    document
-                ))
+                    document,
+                )),
             )
         });
         let result = self
@@ -762,7 +895,10 @@ impl Store {
             .await?
             .ok_or_else(|| anyhow!("missing campaign invitation revoke result"))?;
         if result.errors != 0 {
-            bail!("campaign invitation revoke failed: {}", result.first_error.unwrap_or_default());
+            bail!(
+                "campaign invitation revoke failed: {}",
+                result.first_error.unwrap_or_default()
+            );
         }
         Ok(result.replaced == 1)
     }
@@ -772,8 +908,12 @@ impl Store {
     }
 
     async fn list_campaign_like_rows(&self, campaign_id: &str) -> Result<Vec<GreetingLike>> {
-        let mut stream = r.db(self.database.as_str()).table(LIKES_TABLE)
-            .filter(reql::func!(|document| document.get_field("campaign_id").eq(campaign_id)))
+        let mut stream = r
+            .db(self.database.as_str())
+            .table(LIKES_TABLE)
+            .filter(reql::func!(|document| document
+                .get_field("campaign_id")
+                .eq(campaign_id)))
             .run::<_, GreetingLike>(&self.session);
         let mut likes = Vec::new();
         while let Some(like) = stream.try_next().await? {
@@ -786,12 +926,16 @@ impl Store {
         let mut ornaments = self.list_campaign_ornaments(campaign_id).await?;
         let likes = self.list_campaign_like_rows(campaign_id).await?;
         for ornament in &mut ornaments {
-            ornament.liked_by = likes.iter()
+            ornament.liked_by = likes
+                .iter()
                 .filter(|like| like.target_number == ornament.ornament_number)
                 .map(|like| like.voter_number)
                 .collect();
         }
-        Ok(ornaments.into_iter().filter(|ornament| ornament.used).collect())
+        Ok(ornaments
+            .into_iter()
+            .filter(|ornament| ornament.used)
+            .collect())
     }
 
     /// Toggles a campaign-scoped like using a deterministic primary key.
@@ -810,50 +954,81 @@ impl Store {
         } else {
             json!(campaign_ornament_key(campaign_id, target_number))
         };
-        let target: Option<Ornament> = self.first(
-            r.db(self.database.as_str()).table(TABLE).get(ornament_id)
-        ).await?;
-        let Some(target) = target else { return Ok(None); };
-        if !target.used || target.campaign_id.as_deref().unwrap_or(LEGACY_CAMPAIGN_ID) != campaign_id {
+        let target: Option<Ornament> = self
+            .first(r.db(self.database.as_str()).table(TABLE).get(ornament_id))
+            .await?;
+        let Some(target) = target else {
+            return Ok(None);
+        };
+        if !target.used
+            || target.campaign_id.as_deref().unwrap_or(LEGACY_CAMPAIGN_ID) != campaign_id
+        {
             return Ok(None);
         }
 
         let like_id = format!("{campaign_id}:{target_number}:{voter_number}");
-        let existing: Option<GreetingLike> = self.first(
-            r.db(self.database.as_str()).table(LIKES_TABLE).get(like_id.clone())
-        ).await?;
+        let existing: Option<GreetingLike> = self
+            .first(
+                r.db(self.database.as_str())
+                    .table(LIKES_TABLE)
+                    .get(like_id.clone()),
+            )
+            .await?;
         let liked = if existing.is_some() {
-            let result = self.first::<WriteResult>(
-                r.db(self.database.as_str()).table(LIKES_TABLE).get(like_id).delete(())
-            ).await?.ok_or_else(|| anyhow!("missing greeting unlike result"))?;
+            let result = self
+                .first::<WriteResult>(
+                    r.db(self.database.as_str())
+                        .table(LIKES_TABLE)
+                        .get(like_id)
+                        .delete(()),
+                )
+                .await?
+                .ok_or_else(|| anyhow!("missing greeting unlike result"))?;
             if result.errors != 0 {
-                bail!("greeting unlike failed: {}", result.first_error.unwrap_or_default());
+                bail!(
+                    "greeting unlike failed: {}",
+                    result.first_error.unwrap_or_default()
+                );
             }
             false
         } else {
-            let result = self.first::<WriteResult>(
-                r.db(self.database.as_str()).table(LIKES_TABLE).insert(json!({
-                    "id": like_id,
-                    "campaign_id": campaign_id,
-                    "target_number": target_number,
-                    "voter_number": voter_number,
-                    "created_at": Utc::now().timestamp()
-                }))
-            ).await?.ok_or_else(|| anyhow!("missing greeting like result"))?;
+            let result = self
+                .first::<WriteResult>(r.db(self.database.as_str()).table(LIKES_TABLE).insert(
+                    json!({
+                        "id": like_id,
+                        "campaign_id": campaign_id,
+                        "target_number": target_number,
+                        "voter_number": voter_number,
+                        "created_at": Utc::now().timestamp()
+                    }),
+                ))
+                .await?
+                .ok_or_else(|| anyhow!("missing greeting like result"))?;
             if result.errors != 0 {
                 // Another request may have inserted the same deterministic key
                 // after our read. Treat that as already liked, not as a 500.
-                let raced: Option<GreetingLike> = self.first(
-                    r.db(self.database.as_str()).table(LIKES_TABLE).get(format!("{campaign_id}:{target_number}:{voter_number}"))
-                ).await?;
+                let raced: Option<GreetingLike> = self
+                    .first(
+                        r.db(self.database.as_str())
+                            .table(LIKES_TABLE)
+                            .get(format!("{campaign_id}:{target_number}:{voter_number}")),
+                    )
+                    .await?;
                 if raced.is_none() {
-                    bail!("greeting like failed: {}", result.first_error.unwrap_or_default());
+                    bail!(
+                        "greeting like failed: {}",
+                        result.first_error.unwrap_or_default()
+                    );
                 }
             }
             true
         };
-        let like_count = self.list_campaign_like_rows(campaign_id).await?
-            .iter().filter(|like| like.target_number == target_number).count();
+        let like_count = self
+            .list_campaign_like_rows(campaign_id)
+            .await?
+            .iter()
+            .filter(|like| like.target_number == target_number)
+            .count();
         Ok(Some((liked, like_count)))
     }
 
@@ -861,7 +1036,8 @@ impl Store {
         // The legacy campaign is a stable system scope even on a fresh database
         // where no pre-existing ornaments were present during startup migration.
         if self.get_campaign(LEGACY_CAMPAIGN_ID).await?.is_none() {
-            self.create_campaign(LEGACY_CAMPAIGN_ID, "Существующая кампания").await?;
+            self.create_campaign(LEGACY_CAMPAIGN_ID, "Существующая кампания")
+                .await?;
         }
         let existing = self.list_ornaments().await?;
         if !existing.is_empty() {
@@ -900,11 +1076,7 @@ impl Store {
             .collect();
 
         let result = self
-            .first::<WriteResult>(
-                r.db(self.database.as_str())
-                    .table(TABLE)
-                    .insert(documents),
-            )
+            .first::<WriteResult>(r.db(self.database.as_str()).table(TABLE).insert(documents))
             .await?
             .ok_or_else(|| anyhow!("RethinkDB returned no insert result"))?;
 
@@ -937,17 +1109,14 @@ impl Store {
                     "message": message,
                     "used_at": Utc::now().timestamp()
                 }))),
-                document
+                document,
             )))
         });
 
         let query = r
             .db(self.database.as_str())
             .table(TABLE)
-            .get_all(r.args((
-                token_hash,
-                token_index_options(),
-            )))
+            .get_all(r.args((token_hash, token_index_options())))
             .limit(1)
             .update(update);
 
@@ -959,7 +1128,9 @@ impl Store {
         if result.errors != 0 {
             bail!(
                 "RethinkDB invitation claim failed: {}",
-                result.first_error.unwrap_or_else(|| "unknown write error".into())
+                result
+                    .first_error
+                    .unwrap_or_else(|| "unknown write error".into())
             );
         }
 
@@ -972,10 +1143,7 @@ impl Store {
         let mut stream = r
             .db(self.database.as_str())
             .table(TABLE)
-            .get_all(r.args((
-                token_hash,
-                token_index_options(),
-            )))
+            .get_all(r.args((token_hash, token_index_options())))
             .limit(1)
             .run::<_, Ornament>(&self.session);
         let claimed = stream
@@ -1009,7 +1177,8 @@ impl Store {
         ready: watch::Sender<bool>,
     ) -> Result<()> {
         let session = self.connection.connect().await?;
-        self.consume_changefeed(&session, sender, Some(&ready)).await
+        self.consume_changefeed(&session, sender, Some(&ready))
+            .await
     }
 
     async fn consume_changefeed(
@@ -1056,13 +1225,14 @@ impl Store {
                 continue;
             }
 
-            let (Some(display_name), Some(message)) =
-                (ornament.display_name, ornament.message)
+            let (Some(display_name), Some(message)) = (ornament.display_name, ornament.message)
             else {
                 continue;
             };
 
-            let campaign_id = ornament.campaign_id.clone()
+            let campaign_id = ornament
+                .campaign_id
+                .clone()
                 .unwrap_or_else(|| LEGACY_CAMPAIGN_ID.to_owned());
             let _ = sender.send(GreetingEvent {
                 campaign_id,
@@ -1095,22 +1265,35 @@ impl Store {
         let update = reql::func!(|document| {
             r.branch(
                 r.args((
-                    document.clone().get_field("activated").default(r.expr(false)).eq(false)
+                    document
+                        .clone()
+                        .get_field("activated")
+                        .default(r.expr(false))
+                        .eq(false)
                         .and(document.clone().get_field("used").eq(false)),
                     document.clone().merge(r.expr(json!({
                         "token_hash": token_hash,
                         "revoked": false,
                         "created_at": Utc::now().timestamp()
                     }))),
-                    document
-                ))
+                    document,
+                )),
             )
         });
-        let result = self.first::<WriteResult>(
-            r.db(self.database.as_str()).table(TABLE).get(ornament_number).update(update)
-        ).await?.ok_or_else(|| anyhow!("missing invitation reissue result"))?;
+        let result = self
+            .first::<WriteResult>(
+                r.db(self.database.as_str())
+                    .table(TABLE)
+                    .get(ornament_number)
+                    .update(update),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("missing invitation reissue result"))?;
         if result.errors != 0 {
-            bail!("invitation reissue failed: {}", result.first_error.unwrap_or_default());
+            bail!(
+                "invitation reissue failed: {}",
+                result.first_error.unwrap_or_default()
+            );
         }
         Ok(result.replaced == 1)
     }
@@ -1119,18 +1302,31 @@ impl Store {
         let update = reql::func!(|document| {
             r.branch(
                 r.args((
-                    document.clone().get_field("activated").default(r.expr(false)).eq(false)
+                    document
+                        .clone()
+                        .get_field("activated")
+                        .default(r.expr(false))
+                        .eq(false)
                         .and(document.clone().get_field("used").eq(false)),
                     document.clone().merge(r.expr(json!({"revoked": true}))),
-                    document
-                ))
+                    document,
+                )),
             )
         });
-        let result = self.first::<WriteResult>(
-            r.db(self.database.as_str()).table(TABLE).get(ornament_number).update(update)
-        ).await?.ok_or_else(|| anyhow!("missing invitation revoke result"))?;
+        let result = self
+            .first::<WriteResult>(
+                r.db(self.database.as_str())
+                    .table(TABLE)
+                    .get(ornament_number)
+                    .update(update),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("missing invitation revoke result"))?;
         if result.errors != 0 {
-            bail!("invitation revoke failed: {}", result.first_error.unwrap_or_default());
+            bail!(
+                "invitation revoke failed: {}",
+                result.first_error.unwrap_or_default()
+            );
         }
         Ok(result.replaced == 1)
     }
@@ -1169,49 +1365,99 @@ pub struct ParticipantSummary {
 }
 impl Store {
     pub async fn activate_invitation(&self, token_hash: &str) -> Result<Option<(i16, String)>> {
-        let mut existing = r.db(self.database.as_str()).table(TABLE)
+        let mut existing = r
+            .db(self.database.as_str())
+            .table(TABLE)
             .get_all(r.args((token_hash, token_index_options())))
-            .limit(1).run::<_, Ornament>(&self.session);
+            .limit(1)
+            .run::<_, Ornament>(&self.session);
         let Some(invitation) = existing.try_next().await? else {
             return Ok(None);
         };
         drop(existing);
-        let campaign_id = invitation.campaign_id.as_deref().unwrap_or(LEGACY_CAMPAIGN_ID);
-        if self.get_campaign(campaign_id).await?.is_none_or(|campaign| campaign.status != "active") {
+        let campaign_id = invitation
+            .campaign_id
+            .as_deref()
+            .unwrap_or(LEGACY_CAMPAIGN_ID);
+        if self
+            .get_campaign(campaign_id)
+            .await?
+            .is_none_or(|campaign| campaign.status != "active")
+        {
             return Ok(None);
         }
 
         let update = reql::func!(|document| {
-            r.branch(r.args((
-                document.clone().get_field("activated").default(r.expr(false)).eq(false)
-                    .and(document.clone().get_field("revoked").default(r.expr(false)).eq(false))
-                    .and(document.clone().get_field("used").eq(false)),
-                document.clone().merge(r.expr(json!({
-                    "activated": true, "activated_at": Utc::now().timestamp()
-                }))),
-                document
-            )))
+            r.branch(
+                r.args((
+                    document
+                        .clone()
+                        .get_field("activated")
+                        .default(r.expr(false))
+                        .eq(false)
+                        .and(
+                            document
+                                .clone()
+                                .get_field("revoked")
+                                .default(r.expr(false))
+                                .eq(false),
+                        )
+                        .and(document.clone().get_field("used").eq(false)),
+                    document.clone().merge(r.expr(json!({
+                        "activated": true, "activated_at": Utc::now().timestamp()
+                    }))),
+                    document,
+                )),
+            )
         });
-        let query = r.db(self.database.as_str()).table(TABLE)
+        let query = r
+            .db(self.database.as_str())
+            .table(TABLE)
             .get_all(r.args((token_hash, token_index_options())))
-            .limit(1).update(update);
-        let result = self.first::<WriteResult>(query).await?
+            .limit(1)
+            .update(update);
+        let result = self
+            .first::<WriteResult>(query)
+            .await?
             .ok_or_else(|| anyhow!("missing invitation activation result"))?;
-        if result.errors != 0 { bail!("invitation activation failed: {}", result.first_error.unwrap_or_default()); }
-        if result.replaced != 1 { return Ok(None); }
-        let mut stream = r.db(self.database.as_str()).table(TABLE)
+        if result.errors != 0 {
+            bail!(
+                "invitation activation failed: {}",
+                result.first_error.unwrap_or_default()
+            );
+        }
+        if result.replaced != 1 {
+            return Ok(None);
+        }
+        let mut stream = r
+            .db(self.database.as_str())
+            .table(TABLE)
             .get_all(r.args((token_hash, token_index_options())))
-            .limit(1).run::<_, Ornament>(&self.session);
-        let item = stream.try_next().await?.ok_or_else(|| anyhow!("activated invitation disappeared"))?;
-        let campaign_id = item.campaign_id.unwrap_or_else(|| LEGACY_CAMPAIGN_ID.to_owned());
+            .limit(1)
+            .run::<_, Ornament>(&self.session);
+        let item = stream
+            .try_next()
+            .await?
+            .ok_or_else(|| anyhow!("activated invitation disappeared"))?;
+        let campaign_id = item
+            .campaign_id
+            .unwrap_or_else(|| LEGACY_CAMPAIGN_ID.to_owned());
         Ok(Some((item.ornament_number, campaign_id)))
     }
     pub async fn create_auth_session(&self, session: &AuthSession) -> Result<()> {
-        let result = self.first::<WriteResult>(
-            r.db(self.database.as_str()).table(SESSIONS_TABLE).insert(session)
-        ).await?.ok_or_else(|| anyhow!("missing session insert result"))?;
+        let result = self
+            .first::<WriteResult>(
+                r.db(self.database.as_str())
+                    .table(SESSIONS_TABLE)
+                    .insert(session),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("missing session insert result"))?;
         if result.errors != 0 || result.inserted != 1 {
-            bail!("session insert failed: {}", result.first_error.unwrap_or_default());
+            bail!(
+                "session insert failed: {}",
+                result.first_error.unwrap_or_default()
+            );
         }
         Ok(())
     }
@@ -1225,61 +1471,101 @@ impl Store {
         }
     }
     pub async fn revoke_auth_session(&self, id: &str) -> Result<()> {
-        let _: Option<Value> = self.first(
-            r.db(self.database.as_str()).table(SESSIONS_TABLE).get(id)
-                .update(json!({"revoked": true}))
-        ).await?;
+        let _: Option<Value> = self
+            .first(
+                r.db(self.database.as_str())
+                    .table(SESSIONS_TABLE)
+                    .get(id)
+                    .update(json!({"revoked": true})),
+            )
+            .await?;
         Ok(())
     }
     pub async fn list_participants(&self) -> Result<Vec<ParticipantSummary>> {
         self.list_campaign_participants(LEGACY_CAMPAIGN_ID).await
     }
-    pub async fn claim_greeting(&self, campaign_id: &str, number: i16, surname: &str, first_name: &str, avatar_filename: Option<&str>, message: &str) -> Result<bool> {
-        if self.get_campaign(campaign_id).await?.is_none_or(|campaign| campaign.status != "active") {
+    pub async fn claim_greeting(
+        &self,
+        campaign_id: &str,
+        number: i16,
+        surname: &str,
+        first_name: &str,
+        avatar_filename: Option<&str>,
+        message: &str,
+    ) -> Result<bool> {
+        if self
+            .get_campaign(campaign_id)
+            .await?
+            .is_none_or(|campaign| campaign.status != "active")
+        {
             return Ok(false);
         }
         let update = reql::func!(|document| {
-            r.branch(r.args((
-                document.clone().get_field("activated").default(r.expr(false))
-                    .and(document.clone().get_field("revoked").default(r.expr(false)).eq(false))
-                    .and(document.clone().get_field("used").eq(false)),
-                document.clone().merge(r.expr(json!({
-                    "used": true,
-                    "surname": surname,
-                    "first_name": first_name,
-                    "display_name": format!("{} {}", surname, first_name),
-                    "avatar_filename": avatar_filename,
-                    "message": message,
-                    "used_at": Utc::now().timestamp()
-                }))),
-                document
-            )))
+            r.branch(
+                r.args((
+                    document
+                        .clone()
+                        .get_field("activated")
+                        .default(r.expr(false))
+                        .and(
+                            document
+                                .clone()
+                                .get_field("revoked")
+                                .default(r.expr(false))
+                                .eq(false),
+                        )
+                        .and(document.clone().get_field("used").eq(false)),
+                    document.clone().merge(r.expr(json!({
+                        "used": true,
+                        "surname": surname,
+                        "first_name": first_name,
+                        "display_name": format!("{} {}", surname, first_name),
+                        "avatar_filename": avatar_filename,
+                        "message": message,
+                        "used_at": Utc::now().timestamp()
+                    }))),
+                    document,
+                )),
+            )
         });
         let id = if campaign_id == LEGACY_CAMPAIGN_ID {
             json!(number)
         } else {
             json!(campaign_ornament_key(campaign_id, number))
         };
-        let result = self.first::<WriteResult>(
-            r.db(self.database.as_str()).table(TABLE).get(id).update(update)
-        ).await?.ok_or_else(|| anyhow!("missing greeting claim result"))?;
-        if result.errors != 0 { bail!("greeting claim failed: {}", result.first_error.unwrap_or_default()); }
+        let result = self
+            .first::<WriteResult>(
+                r.db(self.database.as_str())
+                    .table(TABLE)
+                    .get(id)
+                    .update(update),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("missing greeting claim result"))?;
+        if result.errors != 0 {
+            bail!(
+                "greeting claim failed: {}",
+                result.first_error.unwrap_or_default()
+            );
+        }
         Ok(result.replaced == 1)
     }
 }
 
 impl Store {
     pub async fn rollback_invitation_activation(&self, token_hash: &str) -> Result<()> {
-        let _: Option<Value> = self.first(
-            r.db(self.database.as_str()).table(TABLE)
-                .get_all(r.args((token_hash, token_index_options())))
-                .limit(1)
-                .update(json!({"activated": false}))
-        ).await?;
+        let _: Option<Value> = self
+            .first(
+                r.db(self.database.as_str())
+                    .table(TABLE)
+                    .get_all(r.args((token_hash, token_index_options())))
+                    .limit(1)
+                    .update(json!({"activated": false})),
+            )
+            .await?;
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod campaign_storage_model_tests {
@@ -1320,7 +1606,10 @@ mod campaign_storage_model_tests {
     fn identical_ornament_numbers_have_distinct_campaign_keys() {
         assert_eq!(campaign_ornament_key("campaign-a", 1), "campaign-a:1");
         assert_eq!(campaign_ornament_key("campaign-b", 1), "campaign-b:1");
-        assert_ne!(campaign_ornament_key("campaign-a", 1), campaign_ornament_key("campaign-b", 1));
+        assert_ne!(
+            campaign_ornament_key("campaign-a", 1),
+            campaign_ornament_key("campaign-b", 1)
+        );
     }
 }
 
@@ -1341,7 +1630,8 @@ mod campaign_migration_compat_tests {
             "message": null,
             "created_at": 1,
             "used_at": null
-        })).expect("legacy ornament should deserialize");
+        }))
+        .expect("legacy ornament should deserialize");
         assert_eq!(ornament.campaign_id, None);
     }
 
@@ -1359,11 +1649,11 @@ mod campaign_migration_compat_tests {
             "message": null,
             "created_at": 1,
             "used_at": null
-        })).expect("campaign-scoped ornament should deserialize");
+        }))
+        .expect("campaign-scoped ornament should deserialize");
         assert_eq!(ornament.campaign_id.as_deref(), Some("legacy-default"));
     }
 }
-
 
 #[cfg(test)]
 mod campaign_deletion_validation_tests {
@@ -1378,6 +1668,11 @@ mod campaign_deletion_validation_tests {
 
     #[test]
     fn legacy_campaign_is_never_deletable() {
-        assert!(validate_campaign_deletion(LEGACY_CAMPAIGN_ID, "Существующая кампания", "Существующая кампания").is_err());
+        assert!(validate_campaign_deletion(
+            LEGACY_CAMPAIGN_ID,
+            "Существующая кампания",
+            "Существующая кампания"
+        )
+        .is_err());
     }
 }

@@ -68,8 +68,7 @@ async fn main() -> Result<()> {
         bail!("database {database:?} does not exist; refusing to create or reset anything");
     }
 
-    let tables: Vec<String> =
-        first(r.db(database.as_str()).table_list(), &session).await?;
+    let tables: Vec<String> = first(r.db(database.as_str()).table_list(), &session).await?;
     for table in ["ornaments", "auth_sessions", "campaigns"] {
         if !tables.iter().any(|name| name == table) {
             bail!("required table {database}.{table} does not exist; nothing was cleared");
@@ -117,7 +116,10 @@ async fn main() -> Result<()> {
             bail!("{database}.{table} is not empty after reset");
         }
 
-        println!("{table}: {before} records found, {} deleted, verified empty", result.deleted);
+        println!(
+            "{table}: {before} records found, {} deleted, verified empty",
+            result.deleted
+        );
     }
 
     println!("Database reset completed. Application records were deleted; tables, indexes and database were preserved.");

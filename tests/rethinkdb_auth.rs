@@ -13,13 +13,26 @@ async fn invitation_activates_once_and_session_can_be_revoked() {
         return;
     }
     env::set_var("RETHINKDB_DB", "congratis_auth_ci");
-    let store = Store::connect().await.expect("connect to auth test database");
-    let token = format!("auth-{}", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let store = Store::connect()
+        .await
+        .expect("connect to auth test database");
+    let token = format!(
+        "auth-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
     let token_hash = hash(&token);
-    store.insert_invitations(&[(1, token_hash.clone())]).await.expect("seed invitation");
+    store
+        .insert_invitations(&[(1, token_hash.clone())])
+        .await
+        .expect("seed invitation");
 
-    assert_eq!(store.activate_invitation(&token_hash).await.unwrap(), Some((1, "legacy-default".to_owned())));
+    assert_eq!(
+        store.activate_invitation(&token_hash).await.unwrap(),
+        Some((1, "legacy-default".to_owned()))
+    );
     assert_eq!(store.activate_invitation(&token_hash).await.unwrap(), None);
 
     let session = AuthSession {
@@ -32,13 +45,43 @@ async fn invitation_activates_once_and_session_can_be_revoked() {
         revoked: false,
         campaign_id: Some("legacy-default".into()),
     };
-    store.create_auth_session(&session).await.expect("create session");
-    let loaded = store.get_auth_session(&session.id).await.unwrap().expect("load session");
+    store
+        .create_auth_session(&session)
+        .await
+        .expect("create session");
+    let loaded = store
+        .get_auth_session(&session.id)
+        .await
+        .unwrap()
+        .expect("load session");
     assert_eq!(loaded.subject_id, "1");
     assert_eq!(loaded.role, "participant");
-    store.revoke_auth_session(&session.id).await.expect("revoke session");
-    assert!(store.get_auth_session(&session.id).await.unwrap().unwrap().revoked);
+    store
+        .revoke_auth_session(&session.id)
+        .await
+        .expect("revoke session");
+    assert!(
+        store
+            .get_auth_session(&session.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .revoked
+    );
 
-    assert!(store.claim_greeting("legacy-default", 1, "Tester", "First", None, "One greeting only").await.unwrap());
-    assert!(!store.claim_greeting("legacy-default", 1, "Tester", "Second", None, "Replay").await.unwrap());
+    assert!(store
+        .claim_greeting(
+            "legacy-default",
+            1,
+            "Tester",
+            "First",
+            None,
+            "One greeting only"
+        )
+        .await
+        .unwrap());
+    assert!(!store
+        .claim_greeting("legacy-default", 1, "Tester", "Second", None, "Replay")
+        .await
+        .unwrap());
 }
