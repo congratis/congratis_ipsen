@@ -781,8 +781,10 @@ async fn main() -> anyhow::Result<()> {
     let feed_store = store.clone();
     let feed_events = events.clone();
     tokio::spawn(async move { feed_store.supervise_changefeed(feed_events).await; });
+    let (presence_events, _) = broadcast::channel(512);
     let state = AppState {
-        store, events,
+        store, events, presence_events,
+        presence: Arc::new(Mutex::new(HashMap::new())),
         cookie_secure: env::var("COOKIE_SECURE").map(|v| v != "false").unwrap_or(true),
     };
     let app = Router::new()
@@ -791,7 +793,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/auth/admin/login", post(admin_login))
         .route("/api/auth/logout", post(logout))
         .route("/api/me", get(me))
-        .route("/api/events", get(sse_events))\n        .route("/api/presence", get(presence_ws))
+        .route("/api/events", get(sse_events))
+        .route("/api/presence", get(presence_ws))
         .route("/api/greetings", get(list_greetings).post(submit))
         .route("/api/campaign", get(campaign_summary))
         .route("/api/admin/campaign", post(admin_create_campaign))
