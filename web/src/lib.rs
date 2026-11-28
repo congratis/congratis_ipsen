@@ -167,6 +167,25 @@ fn trace(msg: &str) {
     web_sys::console::log_1(&format!("[congratis] {msg}").into());
 }
 
+async fn response_error(response: gloo_net::http::Response) -> String {
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&body) {
+        if let Some(message) = value.get("message").and_then(serde_json::Value::as_str) {
+            if !message.trim().is_empty() {
+                return message.to_owned();
+            }
+        }
+    }
+
+    if body.trim().is_empty() {
+        format!("HTTP {status}")
+    } else {
+        body
+    }
+}
+
 async fn fetch_me() -> Result<Option<User>, String> {
     let response = Request::get("/api/me").send().await.map_err(|error| error.to_string())?;
     let status = response.status();
@@ -174,7 +193,7 @@ async fn fetch_me() -> Result<Option<User>, String> {
         return Ok(None);
     }
     if !response.ok() {
-        return Err(response.text().await.unwrap_or_else(|_| format!("HTTP {status}")));
+        return Err(response_error(response).await);
     }
     response.json::<User>().await.map(Some).map_err(|error| error.to_string())
 }
@@ -205,29 +224,50 @@ async fn restore_session(state: &AppState, during_exchange: bool) -> Result<(), 
 
 async fn get_json<T: for<'de> Deserialize<'de>>(path: &str) -> Result<T, String> {
     let response = Request::get(path).send().await.map_err(|e| e.to_string())?;
-    if !response.ok() { return Err(response.text().await.unwrap_or_else(|_| "Ошибка запроса".into())); }
+    if !response.ok() {
+        return Err(response_error(response).await);
+    }
     response.json::<T>().await.map_err(|e| e.to_string())
 }
+
 async fn post_json<T: for<'de> Deserialize<'de>>(path: &str, body: &impl Serialize, csrf: Option<&str>) -> Result<T, String> {
     let mut request = Request::post(path).header("content-type", "application/json");
-    if let Some(token) = csrf { request = request.header("x-csrf-token", token); }
+    if let Some(token) = csrf {
+        request = request.header("x-csrf-token", token);
+    }
     let response = request.json(body).map_err(|e| e.to_string())?.send().await.map_err(|e| e.to_string())?;
-    if !response.ok() { return Err(response.text().await.unwrap_or_else(|_| format!("HTTP {}", response.status()))); }
+    if !response.ok() {
+        return Err(response_error(response).await);
+    }
     response.json::<T>().await.map_err(|e| e.to_string())
 }
+
 async fn post_empty(path: &str, csrf: &str) -> Result<(), String> {
-    let response = Request::post(path).header("x-csrf-token", csrf).send().await.map_err(|e| e.to_string())?;
-    if response.ok() { Ok(()) } else { Err(response.text().await.unwrap_or_else(|_| format!("HTTP {}", response.status()))) }
+    let response = Request::post(path)
+        .header("x-csrf-token", csrf)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if response.ok() {
+        Ok(())
+    } else {
+        Err(response_error(response).await)
+    }
 }
 
 async fn delete_json(path: &str, body: &impl Serialize, csrf: &str) -> Result<(), String> {
     let response = Request::delete(path)
         .header("content-type", "application/json")
         .header("x-csrf-token", csrf)
-        .json(body).map_err(|error| error.to_string())?
-        .send().await.map_err(|error| error.to_string())?;
-    if response.ok() { Ok(()) } else {
-        Err(response.text().await.unwrap_or_else(|_| format!("HTTP {}", response.status())))
+        .json(body)
+        .map_err(|error| error.to_string())?
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if response.ok() {
+        Ok(())
+    } else {
+        Err(response_error(response).await)
     }
 }
 fn set_note(state: &AppState, value: impl Into<String>) { state.note.set(value.into()); }
