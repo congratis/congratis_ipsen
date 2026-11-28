@@ -50,22 +50,7 @@ jobs:
               - 'src/**'
               - 'tests/**'
               - '.github/workflows/**'
-            security:
-    name: Security · Cargo Audit
-    needs: changes
-    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-      - name: Audit backend dependencies
-        run: cargo audit --file Cargo.lock
-      - name: Audit WASM frontend dependencies
-        run: cargo audit --file web/Cargo.lock
-
-  infrastructure:
+            infrastructure:
               - 'Dockerfile'
               - 'docker-compose.yml'
               - '.dockerignore'
@@ -181,6 +166,21 @@ jobs:
           RETHINKDB_HOST: 127.0.0.1
           RETHINKDB_PORT: "28015"
         run: cargo run --bin rethinkdb-probe
+
+  security:
+    name: Security · Cargo Audit
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit backend dependencies
+        run: cargo audit --file Cargo.lock
+      - name: Audit WASM frontend dependencies
+        run: cargo audit --file web/Cargo.lock
 
   infrastructure:
     name: Infrastructure · Compose + Nginx
