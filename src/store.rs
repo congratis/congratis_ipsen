@@ -768,7 +768,7 @@ impl Store {
     }
 
     pub async fn list_greetings(&self) -> Result<Vec<Ornament>> {
-        Ok(self.list_campaign_greetings(LEGACY_CAMPAIGN_ID).await?)
+        self.list_campaign_greetings(LEGACY_CAMPAIGN_ID).await
     }
 
     async fn list_campaign_like_rows(&self, campaign_id: &str) -> Result<Vec<GreetingLike>> {
