@@ -5,7 +5,7 @@ WORKDIR /app
 COPY Cargo.toml ./
 COPY Cargo.lock ./
 COPY src ./src
-RUN cargo build --release --bins
+RUN cargo build --release --bins --locked
 COPY frontend ./frontend
 COPY web ./web
 WORKDIR /app/web
