@@ -1,4 +1,5 @@
 use argon2::{password_hash::{PasswordHash, PasswordVerifier}, Argon2};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use axum::{
     extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
@@ -34,12 +35,16 @@ struct AppState {
 struct Greeting {
     ornament_number: i16,
     display_name: String,
+    surname: String,
+    first_name: String,
+    avatar_url: Option<String>,
     message: String,
 }
 #[derive(Serialize)]
 struct CampaignSummary {
     participant_count: usize,
     submitted_count: usize,
+    campaign_name: String,
 }
 #[derive(Deserialize)]
 struct ParticipantExchange { token: String }
@@ -69,7 +74,7 @@ struct CreateCampaignResponse {
 #[derive(Serialize)]
 struct CreatedInvitation { ornament_number: i16, token: String }
 #[derive(Deserialize)]
-struct SubmitGreeting { display_name: String, message: String }
+struct SubmitGreeting { surname: String, first_name: String, message: String, #[serde(default)] avatar_data_url: Option<String> }
 #[derive(Serialize)]
 struct ApiMessage { message: &'static str }
 #[derive(Serialize)]
