@@ -786,7 +786,8 @@ fn participant_tree(state: AppState, user: User) -> Dom {
                 .text(&pill_label)
             }))
             .child(html!("span", {
-                .class("pill online-count")
+                .class("pill")
+                .class("online-count")
                 .attr("aria-label", "Участников онлайн")
                 .text_signal(state.online_count.signal().map(|count| format!("● {count} онлайн")))
             }))
