@@ -261,7 +261,7 @@ test("participant can attach an optional image avatar to a greeting", async ({ p
     mimeType: "image/png",
     buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "base64")
   });
-  await expect(page.locator(".note")).toContainText("Фотография добавлена");
+  await expect(page.getByRole("dialog").locator(".note")).toContainText("Фотография добавлена");
   await page.getByRole("button", { name: "Опубликовать поздравление" }).click();
   await expect.poll(() => submitted).not.toBeNull();
   expect(submitted.surname).toBe("Иванов");
